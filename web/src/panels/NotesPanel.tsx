@@ -1,211 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Snapshot } from '../../../shared/types';
-import { fetchNote, type NoteContent } from '../api';
+import { fetchNote, saveNote, NoteConflictError, type NoteContent } from '../api';
 import { Panel, RelTime, EmptyState, Row, CopyText } from '../components/ui';
+import { renderMarkdown } from '../components/markdown';
 
-// ---------- tiny markdown renderer (module-local, no deps) ----------
-// Builds React elements from text — React escapes everything, no raw html ever
-// (no dangerouslySetInnerHTML). Covers the obsidian-note subset: h1-h4, bold,
-// italic, inline code, fenced code, lists, blockquotes, links, wikilinks, hr.
-
-const LINK_SCHEME_RE = /^(https?|obsidian):/i;
-const INLINE_RE = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[\[[^\]]+\]\])|(\[[^\]]*\]\([^)\s]*\))/g;
-
-function renderInline(text: string, keyBase: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  const re = new RegExp(INLINE_RE.source, 'g');
-  let last = 0;
-  let k = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const tok = m[0];
-    const key = `${keyBase}.${k++}`;
-    if (m[1]) {
-      out.push(
-        <code key={key} className="rounded bg-white/5 px-1 font-mono text-xs">
-          {tok.slice(1, -1)}
-        </code>,
-      );
-    } else if (m[2]) {
-      out.push(
-        <strong key={key} className="font-semibold text-mist">
-          {tok.slice(2, -2)}
-        </strong>,
-      );
-    } else if (m[3]) {
-      out.push(<em key={key}>{tok.slice(1, -1)}</em>);
-    } else if (m[4]) {
-      // [[wikilink]] / [[target|alias]] — slate-glow text, non-navigating
-      const inner = tok.slice(2, -2);
-      const label = inner.includes('|') ? inner.slice(inner.indexOf('|') + 1) : inner;
-      out.push(
-        <span key={key} className="text-slate-glow">
-          {label}
-        </span>,
-      );
-    } else {
-      const lm = tok.match(/^\[([^\]]*)\]\(([^)\s]*)\)$/);
-      const label = lm?.[1] ?? '';
-      const url = lm?.[2] ?? '';
-      if (lm && LINK_SCHEME_RE.test(url)) {
-        out.push(
-          <a key={key} href={url} target="_blank" rel="noopener noreferrer" className="text-slate-glow hover:underline">
-            {label}
-          </a>,
-        );
-      } else {
-        out.push(tok); // unknown scheme (javascript:, data:, relative): plain text
-      }
-    }
-    last = m.index + tok.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-const HEADING_CLASS: Record<number, string> = {
-  1: 'mb-2 mt-5 text-lg font-semibold text-mist first:mt-0',
-  2: 'mb-2 mt-4 text-base font-semibold text-mist first:mt-0',
-  3: 'mb-1.5 mt-4 text-sm font-semibold text-mist first:mt-0',
-  4: 'mb-1.5 mt-3 text-sm font-medium text-mist-dim first:mt-0',
-};
-
-const HR_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
-const UL_RE = /^\s*[-*]\s+/;
-const OL_RE = /^\s*\d+[.)]\s+/;
-const QUOTE_RE = /^>\s?/;
-
-function isBlockStart(line: string): boolean {
-  return (
-    /^#{1,4}\s/.test(line) ||
-    line.startsWith('```') ||
-    QUOTE_RE.test(line) ||
-    HR_RE.test(line) ||
-    UL_RE.test(line) ||
-    OL_RE.test(line)
-  );
-}
-
-function renderMarkdown(content: string): ReactNode[] {
-  const lines = content.split('\n');
-  const out: ReactNode[] = [];
-  let i = 0;
-  let key = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (line.startsWith('```')) {
-      const buf: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith('```')) {
-        buf.push(lines[i]);
-        i++;
-      }
-      i++; // closing fence (or EOF)
-      out.push(
-        <pre
-          key={key++}
-          className="glass my-3 whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed text-mist-dim"
-        >
-          {buf.join('\n')}
-        </pre>,
-      );
-      continue;
-    }
-
-    const h = line.match(/^(#{1,4})\s+(.*)$/);
-    if (h) {
-      const level = h[1].length;
-      const Tag = `h${level}` as 'h1' | 'h2' | 'h3' | 'h4';
-      const k = key++;
-      out.push(
-        <Tag key={k} className={HEADING_CLASS[level]}>
-          {renderInline(h[2], `h${k}`)}
-        </Tag>,
-      );
-      i++;
-      continue;
-    }
-
-    if (HR_RE.test(line)) {
-      out.push(<hr key={key++} className="my-4 hairline" />);
-      i++;
-      continue;
-    }
-
-    if (QUOTE_RE.test(line)) {
-      const buf: string[] = [];
-      while (i < lines.length && QUOTE_RE.test(lines[i])) {
-        buf.push(lines[i].replace(QUOTE_RE, ''));
-        i++;
-      }
-      const k = key++;
-      out.push(
-        <blockquote key={k} className="hairline my-2 border-l-2 pl-3 text-sm leading-relaxed text-mist-dim">
-          {buf.map((b, j) => (
-            <div key={j}>{renderInline(b, `q${k}.${j}`)}</div>
-          ))}
-        </blockquote>,
-      );
-      continue;
-    }
-
-    if (UL_RE.test(line) || OL_RE.test(line)) {
-      const ordered = OL_RE.test(line);
-      const re = ordered ? OL_RE : UL_RE;
-      const items: string[] = [];
-      while (i < lines.length && re.test(lines[i])) {
-        items.push(lines[i].replace(re, ''));
-        i++;
-      }
-      const k = key++;
-      const lis = items.map((it, j) => (
-        <li key={j} className="text-sm leading-relaxed text-mist">
-          {renderInline(it, `l${k}.${j}`)}
-        </li>
-      ));
-      out.push(
-        ordered ? (
-          <ol key={k} className="my-2 list-decimal space-y-1 pl-5 marker:text-mist-faint">
-            {lis}
-          </ol>
-        ) : (
-          <ul key={k} className="my-2 list-disc space-y-1 pl-5 marker:text-mist-faint">
-            {lis}
-          </ul>
-        ),
-      );
-      continue;
-    }
-
-    if (line.trim() === '') {
-      i++;
-      continue;
-    }
-
-    // paragraph: consume until blank line or the start of another block
-    const buf: string[] = [line];
-    i++;
-    while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])) {
-      buf.push(lines[i]);
-      i++;
-    }
-    const k = key++;
-    const parts: ReactNode[] = [];
-    buf.forEach((b, j) => {
-      if (j > 0) parts.push(<br key={`br${j}`} />);
-      parts.push(...renderInline(b, `p${k}.${j}`));
-    });
-    out.push(
-      <p key={k} className="my-2 text-sm leading-relaxed text-mist first:mt-0">
-        {parts}
-      </p>,
-    );
-  }
-  return out;
-}
+// markdown rendering (h1-h4, bold, italic, inline code, fenced code, lists,
+// blockquotes, links, wikilinks, hr) lives in ../components/markdown so the notes
+// panel and the github reader share one escaped, no-dangerouslySetInnerHTML renderer.
 
 // ---------- panel ----------
 
@@ -217,8 +18,69 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
   const [noteErr, setNoteErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // edit mode
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false); // changed-on-disk — offer reload/overwrite
+  const [saved, setSaved] = useState(false); // transient "saved" flash
+  const [discardArm, setDiscardArm] = useState(false); // two-step unsaved-changes guard
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const dirty = editing && note !== null && draft !== note.content;
+
   const absPath = (path: string): string =>
     path.startsWith('/') ? path : vaultPath ? `${vaultPath}/${path}` : path;
+
+  // leave edit mode and clear all edit-scoped transient state
+  const resetEdit = (): void => {
+    setEditing(false);
+    setDraft('');
+    setSaveErr(null);
+    setConflict(false);
+    setDiscardArm(false);
+  };
+
+  // request to leave the current note (close or switch). If editing with unsaved
+  // changes, arm an inline "discard?" instead of dropping the edits silently.
+  const requestLeave = (next: string | null): void => {
+    if (dirty && !discardArm) {
+      setDiscardArm(true);
+      setTimeout(() => setDiscardArm(false), 4000); // disarm if they don't confirm
+      return;
+    }
+    resetEdit();
+    setOpenPath(next);
+  };
+
+  const beginEdit = (): void => {
+    if (!note) return;
+    setDraft(note.content);
+    setSaveErr(null);
+    setConflict(false);
+    setDiscardArm(false);
+    setEditing(true);
+  };
+
+  // when overwrite=true the conflict guard is dropped (baseModifiedAt omitted)
+  const doSave = async (overwrite = false): Promise<void> => {
+    if (!note || saving) return;
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      const { modifiedAt } = await saveNote(note.path, draft, overwrite ? undefined : note.modifiedAt);
+      setNote({ ...note, content: draft, modifiedAt });
+      resetEdit();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err: unknown) {
+      if (err instanceof NoteConflictError) setConflict(true);
+      else setSaveErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!openPath) return;
@@ -226,6 +88,7 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
     setLoading(true);
     setNote(null);
     setNoteErr(null);
+    resetEdit();
     fetchNote(openPath)
       .then((n) => {
         if (!stale) setNote(n);
@@ -241,14 +104,43 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
     };
   }, [openPath]);
 
+  // re-fetch the open note from disk (reload after a conflict, discarding the draft)
+  const reloadNote = (): void => {
+    if (!openPath) return;
+    setLoading(true);
+    setNoteErr(null);
+    resetEdit();
+    fetchNote(openPath)
+      .then(setNote)
+      .catch((err: unknown) => setNoteErr(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  };
+
+  // focus the textarea when entering edit mode
+  useEffect(() => {
+    if (editing) textareaRef.current?.focus();
+  }, [editing]);
+
   useEffect(() => {
     if (!openPath) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenPath(null);
+      // Cmd/Ctrl+S saves while editing (and only then) — let the browser save dialog
+      // fire normally when we're just reading
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        if (editing) {
+          e.preventDefault();
+          void doSave();
+        }
+        return;
+      }
+      // Escape closes the reader; while editing with unsaved changes it arms the
+      // inline discard guard first (second Escape confirms), never window.confirm
+      if (e.key === 'Escape') requestLeave(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openPath]);
+    // onKey closes over editing/draft/note/discardArm/saving — re-bind when they change
+  }, [openPath, editing, draft, note, discardArm, saving]);
 
   const body = useMemo(() => (note ? renderMarkdown(note.content) : null), [note]);
 
@@ -272,7 +164,7 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
             return (
               <Row
                 key={n.path}
-                onClick={() => setOpenPath(n.path)}
+                onClick={() => requestLeave(n.path)}
                 title={`read ${n.title}`}
                 className={openPath === n.path ? 'bg-white/[0.05]' : ''}
               >
@@ -317,7 +209,7 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
         <header className="mb-3 flex min-w-0 items-baseline gap-3">
           <button
             type="button"
-            onClick={() => setOpenPath(null)}
+            onClick={() => requestLeave(null)}
             title="back to notes"
             className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist lg:hidden"
           >
@@ -331,32 +223,106 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
               {relPath}
             </div>
           </div>
+
+          {saved && <span className="shrink-0 font-mono text-[11px] text-jade">saved</span>}
           <RelTime iso={modifiedAt} />
-          <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
-            copy path
-          </CopyText>
-          <a
-            href={`obsidian://open?path=${encodeURIComponent(abs)}`}
-            title="open in obsidian"
-            className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
-          >
-            obsidian
-          </a>
-          <button
-            type="button"
-            onClick={() => setOpenPath(null)}
-            title="close (esc)"
-            className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
-          >
-            close
-          </button>
+
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void doSave()}
+                disabled={saving || !dirty}
+                title="save (⌘/ctrl+s)"
+                className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-amber transition-colors hover:text-mist disabled:cursor-default disabled:text-mist-faint"
+              >
+                {saving ? '…' : 'save'}
+              </button>
+              <button
+                type="button"
+                onClick={() => requestLeave(openPath)}
+                title={dirty ? 'discard changes' : 'cancel edit'}
+                className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+                  discardArm ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
+                }`}
+              >
+                {discardArm ? 'discard?' : 'cancel'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={beginEdit}
+                disabled={!note}
+                title="edit this note"
+                className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber disabled:cursor-default disabled:opacity-40"
+              >
+                edit
+              </button>
+              <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
+                copy path
+              </CopyText>
+              <a
+                href={`obsidian://open?path=${encodeURIComponent(abs)}`}
+                title="open in obsidian"
+                className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+              >
+                obsidian
+              </a>
+              <button
+                type="button"
+                onClick={() => requestLeave(null)}
+                title="close (esc)"
+                className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+              >
+                close
+              </button>
+            </>
+          )}
         </header>
+
+        {/* changed-on-disk: offer reload (drop my edits) or overwrite (force my save) */}
+        {conflict && (
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
+            <span className="min-w-0 flex-1">changed on disk — reload or overwrite</span>
+            <button
+              type="button"
+              onClick={reloadNote}
+              className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+            >
+              reload
+            </button>
+            <button
+              type="button"
+              onClick={() => void doSave(true)}
+              disabled={saving}
+              className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-amber transition-colors hover:text-mist disabled:cursor-default disabled:text-mist-faint"
+            >
+              {saving ? '…' : 'overwrite'}
+            </button>
+          </div>
+        )}
+        {saveErr && (
+          <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">{saveErr}</div>
+        )}
 
         {loading && <div className="animate-pulse px-1 py-6 text-sm text-mist-faint">loading…</div>}
         {noteErr && (
           <div className="rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">{noteErr}</div>
         )}
-        {body && <div className="max-h-[70vh] overflow-y-auto break-words pr-1">{body}</div>}
+
+        {editing ? (
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+            className="glass h-[70vh] w-full resize-none break-words rounded-lg p-3 font-mono text-sm leading-relaxed text-mist outline-none focus:ring-1 focus:ring-amber/30"
+          />
+        ) : (
+          body && <div className="max-h-[70vh] overflow-y-auto break-words pr-1">{body}</div>
+        )}
       </section>
     </div>
   );

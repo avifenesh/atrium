@@ -275,6 +275,44 @@ export interface SurrealState {
   error: string | null;
 }
 
+// ---------- github item detail (in-app reader) ----------
+
+export interface GithubComment {
+  id: string;
+  author: string;
+  body: string; // markdown
+  createdAt: string;
+  association: string | null; // MEMBER / CONTRIBUTOR / ...
+  kind: 'comment' | 'review';
+  reviewState: string | null; // APPROVED / CHANGES_REQUESTED / COMMENTED when kind=review
+}
+
+export interface GithubItemDetail {
+  kind: 'issue' | 'pr';
+  repo: string;
+  number: number;
+  title: string;
+  state: string; // open / closed / merged
+  author: string;
+  body: string; // markdown
+  url: string;
+  labels: string[];
+  createdAt: string;
+  updatedAt: string;
+  comments: GithubComment[]; // chronological; PR reviews folded in
+  pr: {
+    isDraft: boolean;
+    merged: boolean;
+    reviewDecision: string | null;
+    ci: string | null;
+    additions: number;
+    deletions: number;
+    changedFiles: number;
+    headRef: string;
+    baseRef: string;
+  } | null;
+}
+
 // ---------- mutes ----------
 
 export type MuteKind =
@@ -327,6 +365,9 @@ export interface Flag {
 // POST /api/refresh/:section   -> force collector run, returns { ok }
 // POST /api/eigen/dispatch     -> body { title, prompt?, url?, repo?, sourceId?, dry? } -> EigenDispatch (dry: returns plan, runs nothing)
 // POST /api/notifications/read -> body { id } (thread id) or { all: true } -> { ok }
+// GET  /api/github/item?repo=owner/repo&number=N -> GithubItemDetail
+// POST /api/github/comment     -> body { repo, number, body } -> { ok, comment: GithubComment }
+// POST /api/notes/write        -> body { path, content, baseModifiedAt? } -> { ok, modifiedAt } (409 when file changed since baseModifiedAt)
 // GET  /api/google/status      -> CommsState['google']
 // GET  /api/google/auth-url    -> { url } (open in browser; consent lands on /api/google/callback)
 // GET  /api/google/callback    -> completes oauth, stores atrium-owned token, returns html

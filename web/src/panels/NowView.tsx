@@ -50,10 +50,12 @@ export default function NowView({
   snapshot,
   onNavigate,
   onOpenQuiet,
+  onOpenItem,
 }: {
   snapshot: Snapshot;
   onNavigate: (viewId: string) => void;
   onOpenQuiet?: () => void;
+  onOpenItem: (repo: string, number: number) => void;
 }) {
   const { github, agents, system, comms } = snapshot;
 
@@ -102,12 +104,22 @@ export default function NowView({
         ) : (
           <div className="max-h-[26rem] space-y-0.5 overflow-y-auto">
             {actNow.slice(0, 12).map((it) => (
-              <Row key={it.id} href={it.url} title={it.title}>
+              <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
                 <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
                 <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{it.repo}</span>
                 <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
                 <RelTime iso={it.updatedAt} />
                 <span className="flex shrink-0 items-center gap-1">
+                  <a
+                    href={it.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title="open on github"
+                    className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                  >
+                    github
+                  </a>
                   <SendToEigen
                     title={it.title}
                     url={it.url}

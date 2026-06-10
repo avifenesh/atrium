@@ -24,6 +24,30 @@ function Chip({ className = '', children }: { className?: string; children: Reac
   );
 }
 
+/** Hover-cluster external link to the real github page — the row itself opens the
+ *  in-app slide-over; this is the explicit "take me to the site" door. */
+function GithubLink({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title="open on github"
+      className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+    >
+      github
+    </a>
+  );
+}
+
+/** Parse owner/repo + number out of a github issues/pull html url. */
+function parseItemUrl(url: string): { repo: string; number: number } | null {
+  const m = url.match(/github\.com\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/);
+  if (!m) return null;
+  return { repo: m[1], number: Number(m[2]) };
+}
+
 /** Hover cluster tail: quiet THIS line first, then fainter repo / org variants. */
 function RepoMutes({ repo, itemId }: { repo: string; itemId?: string }) {
   const owner = repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : repo;
@@ -45,19 +69,22 @@ function notMuted(snapshot: Snapshot) {
 function ItemRow({
   item,
   dispatches,
+  onOpenItem,
   accent = false,
 }: {
   item: GithubItem;
   dispatches: EigenDispatch[];
+  onOpenItem: (repo: string, number: number) => void;
   accent?: boolean;
 }) {
   return (
-    <Row href={item.url} title={item.title}>
+    <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title}>
       {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
       <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{item.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
       <RelTime iso={item.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
+        <GithubLink href={item.url} />
         <SendToEigen title={item.title} url={item.url} repo={item.repo} sourceId={item.id} dispatches={dispatches} />
         <RepoMutes repo={item.repo} itemId={item.id} />
       </span>
@@ -65,10 +92,18 @@ function ItemRow({
   );
 }
 
-function PRRow({ pr, dispatches }: { pr: GithubPR; dispatches: EigenDispatch[] }) {
+function PRRow({
+  pr,
+  dispatches,
+  onOpenItem,
+}: {
+  pr: GithubPR;
+  dispatches: EigenDispatch[];
+  onOpenItem: (repo: string, number: number) => void;
+}) {
   const decision = pr.reviewDecision ? DECISION[pr.reviewDecision] : null;
   return (
-    <Row href={pr.url} title={pr.title}>
+    <Row onClick={() => onOpenItem(pr.repo, pr.number)} title={pr.title}>
       <Dot status={ciStatus(pr.ci)} />
       <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{pr.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{pr.title}</span>
@@ -76,6 +111,7 @@ function PRRow({ pr, dispatches }: { pr: GithubPR; dispatches: EigenDispatch[] }
       {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
       <RelTime iso={pr.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
+        <GithubLink href={pr.url} />
         <SendToEigen title={pr.title} url={pr.url} repo={pr.repo} sourceId={pr.id} dispatches={dispatches} />
         <RepoMutes repo={pr.repo} itemId={pr.id} />
       </span>
@@ -87,18 +123,25 @@ function NotificationRow({
   n,
   dispatches,
   onClear,
+  onOpenItem,
 }: {
   n: GithubNotification;
   dispatches: EigenDispatch[];
   onClear: (id: string) => void;
+  onOpenItem: (repo: string, number: number) => void;
 }) {
+  // subject is an issue/PR -> open the slide-over; otherwise the row is a plain
+  // external link (commit/release/discussion notifications etc.)
+  const item = parseItemUrl(n.url);
+  const rowProps = item ? { onClick: () => onOpenItem(item.repo, item.number) } : { href: n.url };
   return (
-    <Row href={n.url} title={n.title}>
+    <Row {...rowProps} title={n.title}>
       <Chip className="text-mist-dim">{n.reason}</Chip>
       <span className="w-32 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-40">{n.repo}</span>
       <span className={`min-w-0 flex-1 truncate text-sm ${n.unread ? 'text-mist' : 'text-mist-dim'}`}>{n.title}</span>
       <RelTime iso={n.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
+        {item && <GithubLink href={n.url} />}
         <SendToEigen title={n.title} url={n.url} repo={n.repo} sourceId={n.id} dispatches={dispatches} />
         <button
           type="button"
@@ -122,9 +165,11 @@ function NotificationRow({
 export default function TasksPanel({
   snapshot,
   onOpenQuiet,
+  onOpenItem,
 }: {
   snapshot: Snapshot;
   onOpenQuiet?: () => void;
+  onOpenItem: (repo: string, number: number) => void;
 }) {
   const g = snapshot.github;
   const dispatches = snapshot.agents.dispatches;
@@ -200,7 +245,7 @@ export default function TasksPanel({
           ) : (
             <div className="max-h-72 space-y-0.5 overflow-y-auto">
               {actNow.map((it) => (
-                <ItemRow key={it.id} item={it} dispatches={dispatches} accent />
+                <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} accent />
               ))}
             </div>
           )}
@@ -218,7 +263,7 @@ export default function TasksPanel({
           ) : (
             <div className="max-h-80 space-y-0.5 overflow-y-auto">
               {myPRs.map((pr) => (
-                <PRRow key={pr.id} pr={pr} dispatches={dispatches} />
+                <PRRow key={pr.id} pr={pr} dispatches={dispatches} onOpenItem={onOpenItem} />
               ))}
             </div>
           )}
@@ -236,7 +281,7 @@ export default function TasksPanel({
           ) : (
             <div className="max-h-80 space-y-0.5 overflow-y-auto">
               {mentions.map((it) => (
-                <ItemRow key={it.id} item={it} dispatches={dispatches} />
+                <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
               ))}
             </div>
           )}
@@ -262,7 +307,7 @@ export default function TasksPanel({
               {teamQueue.length === 0 ? (
                 <EmptyState>queue empty</EmptyState>
               ) : (
-                teamQueue.map((pr) => <PRRow key={pr.id} pr={pr} dispatches={dispatches} />)
+                teamQueue.map((pr) => <PRRow key={pr.id} pr={pr} dispatches={dispatches} onOpenItem={onOpenItem} />)
               )}
             </div>
           )}
@@ -294,7 +339,7 @@ export default function TasksPanel({
           ) : (
             <div className="max-h-96 space-y-0.5 overflow-y-auto">
               {notifications.map((n) => (
-                <NotificationRow key={n.id} n={n} dispatches={dispatches} onClear={clearOne} />
+                <NotificationRow key={n.id} n={n} dispatches={dispatches} onClear={clearOne} onOpenItem={onOpenItem} />
               ))}
             </div>
           )}

@@ -10,7 +10,7 @@
 // Secrets never leave this module: not in returned HTML, not in errors, not in logs.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from './config.js';
 import { readJson } from './util.js';
@@ -75,9 +75,15 @@ async function loadClientId(): Promise<string | null> {
 /** Atomic 0600 write of a small json file under ~/.config/atrium. */
 async function saveJson(path: string, value: unknown): Promise<void> {
   await mkdir(config.configDir, { recursive: true });
-  const tmp = `${path}.tmp`;
+  // unique tmp so concurrent writes don't race on a shared tmp path
+  const tmp = `${path}.${process.pid}-${Date.now()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await rename(tmp, path);
+  try {
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => {}); // never leave a secret-bearing tmp behind
+    throw err;
+  }
 }
 
 // ---------- setup (one-time client id paste from the subs panel) ----------

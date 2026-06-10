@@ -6,8 +6,11 @@ import { mutes } from './mutes.js';
 import { runAgentAction } from './actions.js';
 import { dispatchToEigen } from './eigen-dispatch.js';
 import { markNotificationRead } from './github-actions.js';
+import { githubItemDetail, githubComment } from './github-detail.js';
+import { writeNote } from './collectors/notes.js';
 import { googleStatus, googleAuthUrl, googleCallback } from './google.js';
 import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js';
+import { xaiSetKey } from './xai-connect.js';
 import { readNote } from './collectors/notes.js';
 import type { MuteRequest } from '../../shared/types.js';
 
@@ -189,6 +192,31 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    if (method === 'GET' && path === '/api/github/item') {
+      try {
+        const detail = await githubItemDetail(url.searchParams.get('repo') ?? '', url.searchParams.get('number') ?? '');
+        return json(res, 200, detail);
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/github/comment') {
+      const body = await readBody(req).catch(() => ({}));
+      const result = await githubComment(body);
+      return json(res, result.ok ? 200 : 400, result);
+    }
+
+    if (method === 'POST' && path === '/api/notes/write') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, await writeNote(body));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return json(res, msg.startsWith('conflict:') ? 409 : 400, { error: msg });
+      }
+    }
+
     if (method === 'GET' && path === '/api/notes/read') {
       const rel = url.searchParams.get('path') ?? '';
       try {
@@ -202,6 +230,17 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       try {
         await spotifySetClient(body?.clientId);
+        return json(res, 200, { ok: true });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/xai/key') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        await xaiSetKey(body?.key);
+        void runOnce('subs');
         return json(res, 200, { ok: true });
       } catch (err) {
         return json(res, 400, { error: err instanceof Error ? err.message : String(err) });

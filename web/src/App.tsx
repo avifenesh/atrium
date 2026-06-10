@@ -10,6 +10,7 @@ import SchedulePanel from './panels/SchedulePanel';
 import NotesPanel from './panels/NotesPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
+import ItemDetail from './components/ItemDetail';
 
 // labels lowercase sans — DESIGN v2 typography
 const VIEWS = [
@@ -67,6 +68,8 @@ export default function App() {
   const { snapshot, connected } = useSnapshot();
   const [view, setView] = useState<ViewId>('now');
   const [mutesOpen, setMutesOpen] = useState(false);
+  // github item slide-over: read + comment without leaving atrium
+  const [item, setItem] = useState<{ repo: string; number: number } | null>(null);
 
   if (!snapshot) {
     return (
@@ -81,6 +84,7 @@ export default function App() {
     if (isViewId(v)) setView(v);
   };
   const openQuiet = () => setMutesOpen(true);
+  const openItem = (repo: string, number: number) => setItem({ repo, number });
 
   const navButton = (v: (typeof VIEWS)[number]) => (
     <button
@@ -131,8 +135,10 @@ export default function App() {
         {/* main */}
         <main className="min-w-0 flex-1">
           <FlagStrip snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} />
-          {view === 'now' && <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} />}
-          {view === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {view === 'now' && (
+            <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
+          )}
+          {view === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
           {view === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {view === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {view === 'comms' && <CommsPanel snapshot={snapshot} />}
@@ -143,6 +149,7 @@ export default function App() {
       </div>
 
       {mutesOpen && <MutesDrawer snapshot={snapshot} onClose={() => setMutesOpen(false)} />}
+      {item && <ItemDetail repo={item.repo} number={item.number} onClose={() => setItem(null)} />}
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { readdir } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
+import { getCursorUsage } from '../cursor-usage.js';
 import { getSpotifyAccessToken } from '../spotify.js';
+import { getXaiUsage } from '../xai-usage.js';
 import { store } from '../state.js';
 import { ago, iso, mtime, readJson, readText, shTry, tailLines } from '../util.js';
 import type { Collector } from './registry.js';
@@ -280,20 +281,62 @@ async function grokService(): Promise<SubService | null> {
   const src = config.paths.grokAuth;
   const auth = await readJson<any>(src);
   if (!auth) return null;
-  // researched 2026-06-10: management-api.x.ai needs a separate management key;
-  // no public usage/credits endpoint accepts the CLI's oidc token.
+
+  // local session count is always shown; usage/credits come from xai-usage:
+  //   PATH A (internal token tier, zero-config) or PATH B (pasted management key).
   const stats = grokSqliteStats();
+  const sessionPart = stats ? `${stats.n} local sessions; last activity ${ago(stats.lastMs)}` : null;
+
+  const xai = await getXaiUsage();
+
+  if ('error' in xai) {
+    // only a hint (no key pasted, RPC unavailable) — surface the hint, NOT an error dump,
+    // and keep the local session-count detail the block already computes.
+    const parts: string[] = [];
+    if (sessionPart) parts.push(sessionPart);
+    parts.push(xai.hint);
+    return {
+      id: 'grok',
+      name: 'Grok',
+      status: 'active',
+      plan: 'x.ai oauth',
+      detail: parts.join('; '),
+      usage: null,
+      source: stats ? `${src} + sessions/session_search.sqlite` : src,
+    };
+  }
+
+  // usable usage from PATH A or PATH B
   const parts: string[] = [];
-  if (stats) parts.push(`${stats.n} local sessions`, `last activity ${ago(stats.lastMs)}`);
-  parts.push('x.ai oauth — no public usage API; credits at console.x.ai');
+  if (sessionPart) parts.push(sessionPart);
+  parts.push(xai.detail);
+
+  // a usage bar only where a real number exists: spend-vs-limit when both known.
+  let usage: SubService['usage'] = null;
+  if (typeof xai.spend === 'number' && typeof xai.limit === 'number' && xai.limit > 0) {
+    usage = [
+      {
+        label: 'spend',
+        usedPct: Math.min(100, Math.max(0, Math.round((xai.spend / xai.limit) * 1000) / 10)),
+        resetAt: null,
+      },
+    ];
+  }
+
+  const plan = xai.tier ? `x.ai ${xai.tier}` : xai.source === 'mgmt' ? 'x.ai billing' : 'x.ai oauth';
+  const sourceTag =
+    xai.source === 'mgmt'
+      ? 'management-api.x.ai billing (key via in-app paste)'
+      : 'x.ai internal token';
+
   return {
     id: 'grok',
     name: 'Grok',
     status: 'active',
-    plan: 'x.ai oauth',
+    plan,
     detail: parts.join('; '),
-    usage: null,
-    source: stats ? `${src} + sessions/session_search.sqlite` : src,
+    usage,
+    source: `${stats ? `${src} + sessions/session_search.sqlite + ` : `${src} + `}${sourceTag}`,
   };
 }
 
@@ -475,7 +518,11 @@ async function copilotService(): Promise<SubService> {
   };
 }
 
-// ---------- cursor (local account/config; no usage API) ----------
+// ---------- cursor (live current-period usage via cursor-agent's own bearer) ----------
+
+function usd(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
 
 async function cursorService(): Promise<SubService | null> {
   const agentDir = config.paths.cursorAgent;
@@ -485,27 +532,39 @@ async function cursorService(): Promise<SubService | null> {
   if (!cliConfig && !installed) return null;
 
   const authInfo = cliConfig?.authInfo;
-  const parts: string[] = [];
-  if (typeof authInfo?.email === 'string') parts.push(`logged in as ${authInfo.email}`);
-  const model = cliConfig?.model?.displayName;
-  if (typeof model === 'string') parts.push(`default model ${model}`);
-  try {
-    const versions = (await readdir(join(agentDir, 'versions'))).sort();
-    const latest = versions[versions.length - 1];
-    if (latest) parts.push(`cursor-agent ${latest}`);
-  } catch {
-    /* no versions dir */
+  const usage = await getCursorUsage();
+
+  if ('error' in usage) {
+    // never blank a card that worked: safe() recalls last-good. With no cached card,
+    // fall back to a quiet local-config summary carrying the calm hint (not an error dump).
+    if (recall('cursor')) return recall('cursor');
+    const parts: string[] = [];
+    if (typeof authInfo?.email === 'string') parts.push(`logged in as ${authInfo.email}`);
+    parts.push(usage.hint);
+    return {
+      id: 'cursor',
+      name: 'Cursor',
+      status: authInfo ? 'active' : 'unknown',
+      plan: null,
+      detail: parts.join('; '),
+      usage: null,
+      source: cliConfig ? cliConfigPath : agentDir,
+    };
   }
-  parts.push('no usage API');
+
+  const detail =
+    usage.limit > 0
+      ? `${usd(usage.totalSpend)} of ${usd(usage.limit)} this cycle`
+      : `${usage.percentUsed}% of included usage this cycle`;
 
   return {
     id: 'cursor',
     name: 'Cursor',
-    status: authInfo ? 'active' : 'unknown',
-    plan: null,
-    detail: parts.join('; '),
-    usage: null,
-    source: cliConfig ? cliConfigPath : agentDir,
+    status: 'active',
+    plan: usage.plan,
+    detail,
+    usage: [{ label: 'spend', usedPct: usage.percentUsed, resetAt: usage.periodEnd }],
+    source: `${cliConfig ? cliConfigPath : agentDir} + cursor dashboard usage API`,
   };
 }
 

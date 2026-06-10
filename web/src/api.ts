@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Snapshot, MuteRequest, Mute, SectionName } from '../../shared/types';
+import type {
+  Snapshot,
+  MuteRequest,
+  Mute,
+  SectionName,
+  GithubItemDetail,
+  GithubComment,
+} from '../../shared/types';
 
 const BASE = ''; // same origin (vite proxies /api in dev)
 
@@ -84,6 +91,60 @@ export async function fetchNote(relPath: string): Promise<NoteContent> {
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(body?.error ?? `note read failed ${res.status}`);
   return body as NoteContent;
+}
+
+/** Thrown by saveNote when the file changed on disk since it was opened (HTTP 409).
+ *  The panel detects this to offer reload-vs-overwrite instead of a plain error. */
+export class NoteConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NoteConflictError';
+  }
+}
+
+/** Save a note back to the vault. Pass baseModifiedAt to guard against a concurrent
+ *  edit on disk (omit it to force an overwrite). Resolves to the new mtime; throws the
+ *  server's error message on failure, or a typed NoteConflictError on 409. */
+export async function saveNote(
+  relPath: string,
+  content: string,
+  baseModifiedAt?: string,
+): Promise<{ modifiedAt: string }> {
+  const res = await fetch(`${BASE}/api/notes/write`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: relPath, content, baseModifiedAt }),
+  });
+  const body = await res.json().catch(() => null);
+  if (res.status === 409) throw new NoteConflictError(body?.error ?? 'file changed on disk');
+  if (!res.ok) throw new Error(body?.error ?? `note write failed ${res.status}`);
+  return { modifiedAt: body.modifiedAt as string };
+}
+
+/** Fetch one github issue/PR with its comment thread for the in-app reader.
+ *  Throws the server's error message on failure. */
+export async function fetchGithubItem(repo: string, number: number): Promise<GithubItemDetail> {
+  const res = await fetch(`${BASE}/api/github/item?repo=${encodeURIComponent(repo)}&number=${number}`);
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error ?? `github item failed ${res.status}`);
+  return body as GithubItemDetail;
+}
+
+/** Post a comment to an issue/PR. Returns the created comment for optimistic append.
+ *  Throws the server's error message on failure. */
+export async function postGithubComment(
+  repo: string,
+  number: number,
+  body: string,
+): Promise<{ comment: GithubComment }> {
+  const res = await fetch(`${BASE}/api/github/comment`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo, number, body }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok || !data?.comment) throw new Error(data?.error ?? `comment failed ${res.status}`);
+  return { comment: data.comment as GithubComment };
 }
 
 /** Start the in-app google connect flow: opens consent in a new tab. */
