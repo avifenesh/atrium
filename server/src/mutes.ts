@@ -1,0 +1,259 @@
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import type { Mute, MuteKind, MuteRequest } from '../../shared/types.js';
+import { config } from './config.js';
+import { store } from './state.js';
+import { iso, readJson, sh } from './util.js';
+
+const FILE = join(config.configDir, 'mutes.json');
+
+const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+const JOB_RE = /^[\w-]+$/;
+
+const MUTE_KINDS: ReadonlySet<string> = new Set<MuteKind>([
+  'github-repo',
+  'github-org',
+  'github-reason',
+  'agent',
+  'agent-resource',
+  'schedule',
+  'service',
+  'flag',
+]);
+
+let current: Mute[] = [];
+
+interface Adapter {
+  enforcedBy: string;
+  enforce(): Promise<void>;
+  unenforce(): Promise<void>;
+}
+
+function systemctl(verb: 'start' | 'stop', unit: string): Promise<string> {
+  return sh('systemctl', ['--user', verb, unit]);
+}
+
+function hermesCronAdapter(jobId: string): Adapter | null {
+  if (!JOB_RE.test(jobId)) return null;
+  return {
+    enforcedBy: 'hermes cli cron pause',
+    enforce: async () => {
+      await sh(config.paths.hermesCli, ['cron', 'pause', jobId]);
+    },
+    unenforce: async () => {
+      await sh(config.paths.hermesCli, ['cron', 'resume', jobId]);
+    },
+  };
+}
+
+async function writeIdleWatcherSuppression(suppressedUntilEpochS: number): Promise<void> {
+  const path = config.paths.idleWatcherState;
+  // merge so last_ping (and anything else the watcher tracks) survives
+  const existing = (await readJson<Record<string, unknown>>(path)) ?? {};
+  await mkdir(dirname(path), { recursive: true });
+  await atomicWrite(path, JSON.stringify({ ...existing, suppressed_until: suppressedUntilEpochS }));
+}
+
+/** Returns the real-enforcement adapter for a mute, or null when only ui mode is possible. */
+function adapterFor(kind: MuteKind, target: string, until: string | null): Adapter | null {
+  // hermes cron jobs are reachable as both agent-resource and schedule targets
+  if ((kind === 'agent-resource' || kind === 'schedule') && target.startsWith('hermes:')) {
+    return hermesCronAdapter(target.slice('hermes:'.length));
+  }
+
+  if (kind === 'agent-resource' && target.startsWith('revuto:')) {
+    const repo = target.slice('revuto:'.length);
+    if (!REPO_RE.test(repo)) return null;
+    return {
+      enforcedBy: 'revuto cli pause',
+      enforce: async () => {
+        await sh('node', [config.paths.revutoCli, 'pause', repo]);
+      },
+      unenforce: async () => {
+        await sh('node', [config.paths.revutoCli, 'resume', repo]);
+      },
+    };
+  }
+
+  if (kind === 'agent' && target === 'revuto') {
+    return {
+      enforcedBy: 'systemctl --user stop revuto-guard.timer + revuto.service',
+      enforce: async () => {
+        // ORDER MATTERS: the guard timer restarts dead units within 5 min — stop it first
+        await systemctl('stop', 'revuto-guard.timer');
+        try {
+          await systemctl('stop', 'revuto.service');
+        } catch (err) {
+          // don't leave the watchdog dead while the daemon keeps running
+          await systemctl('start', 'revuto-guard.timer').catch(() => {});
+          throw err;
+        }
+      },
+      unenforce: async () => {
+        await systemctl('start', 'revuto-guard.timer');
+        await systemctl('start', 'revuto.service');
+      },
+    };
+  }
+
+  if (kind === 'agent' && target === 'hermes') {
+    return {
+      enforcedBy: 'systemctl --user stop hermes-gateway.service',
+      enforce: async () => {
+        await systemctl('stop', 'hermes-gateway.service');
+      },
+      unenforce: async () => {
+        await systemctl('start', 'hermes-gateway.service');
+      },
+    };
+  }
+
+  if (kind === 'schedule' && target.startsWith('crontab:')) {
+    // only the idle-watcher crontab entry has a suppression hook; other crontab lines stay ui-only.
+    // crontab ids are command-derived slugs (schedule.ts cronId), so the script name appears in the id
+    if (!/idle[-_](proactive[-_])?watcher/i.test(target)) return null;
+    const untilMs = until !== null ? new Date(until).getTime() : NaN;
+    const untilEpochS = Number.isFinite(untilMs)
+      ? Math.floor(untilMs / 1000)
+      : Math.floor(Date.now() / 1000) + 10 * 365 * 86400; // "forever" (or unparseable) = +10 years
+    return {
+      enforcedBy: 'idle-watcher state suppressed_until',
+      enforce: () => writeIdleWatcherSuppression(untilEpochS),
+      unenforce: () => writeIdleWatcherSuppression(0),
+    };
+  }
+
+  if (kind === 'service') {
+    if (!config.watchedUnits.includes(target)) return null; // arbitrary units are not enforceable
+    const guardFirst = target.startsWith('revuto') && target !== 'revuto-guard.timer';
+    return {
+      enforcedBy: `systemctl --user stop ${target}`,
+      enforce: async () => {
+        if (guardFirst) await systemctl('stop', 'revuto-guard.timer'); // guard would restart the unit
+        try {
+          await systemctl('stop', target);
+        } catch (err) {
+          // don't leave the watchdog dead while the unit keeps running
+          if (guardFirst) await systemctl('start', 'revuto-guard.timer').catch(() => {});
+          throw err;
+        }
+      },
+      unenforce: async () => {
+        if (guardFirst) await systemctl('start', 'revuto-guard.timer');
+        await systemctl('start', target);
+      },
+    };
+  }
+
+  // github-* kinds, 'flag', and anything unmatched: no source to pause
+  return null;
+}
+
+async function atomicWrite(path: string, data: string): Promise<void> {
+  const tmp = `${path}.tmp-${process.pid}`;
+  await writeFile(tmp, data, 'utf8');
+  await rename(tmp, path);
+}
+
+async function persist(): Promise<void> {
+  try {
+    await mkdir(config.configDir, { recursive: true });
+    await atomicWrite(FILE, JSON.stringify(current, null, 2));
+  } catch (err) {
+    console.error('[mutes] persist failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+async function unenforceBestEffort(mute: Mute): Promise<void> {
+  if (mute.mode !== 'enforced') return;
+  const adapter = adapterFor(mute.kind, mute.target, mute.until);
+  if (!adapter) return;
+  try {
+    await adapter.unenforce();
+  } catch (err) {
+    console.error(`[mutes] un-enforce ${mute.id} failed:`, err instanceof Error ? err.message : err);
+  }
+}
+
+async function sweepExpired(): Promise<void> {
+  const now = Date.now();
+  const expired = current.filter((m) => m.until !== null && new Date(m.until).getTime() <= now);
+  if (expired.length === 0) return;
+  for (const m of expired) await unenforceBestEffort(m);
+  const dead = new Set(expired.map((m) => m.id));
+  current = current.filter((m) => !dead.has(m.id));
+  await persist();
+  store.setMutes(current);
+}
+
+const sweepTimer = setInterval(() => {
+  void sweepExpired();
+}, 60_000);
+sweepTimer.unref();
+
+export const mutes = {
+  async load(): Promise<void> {
+    try {
+      await mkdir(config.configDir, { recursive: true });
+      const saved = await readJson<Mute[]>(FILE);
+      current = Array.isArray(saved)
+        ? saved.filter((m): m is Mute => !!m && typeof m.id === 'string' && typeof m.target === 'string')
+        : [];
+    } catch (err) {
+      console.error('[mutes] load failed:', err instanceof Error ? err.message : err);
+      current = [];
+    }
+    await sweepExpired(); // also resumes anything that expired while the server was down
+    store.setMutes(current);
+  },
+
+  /** Throws on invalid request shape — the HTTP layer maps that to 400. */
+  async add(req: MuteRequest): Promise<Mute> {
+    if (typeof req?.kind !== 'string' || !MUTE_KINDS.has(req.kind)) {
+      throw new Error(`invalid mute kind: ${JSON.stringify(req?.kind)}`);
+    }
+    if (typeof req.target !== 'string' || req.target.trim() === '') {
+      throw new Error('mute target must be a non-empty string');
+    }
+    const until = req.until ?? null;
+    if (until !== null && (typeof until !== 'string' || Number.isNaN(Date.parse(until)))) {
+      // NaN until would compare false in the expiry sweep forever — a typo becomes a silent forever-mute
+      throw new Error(`invalid mute until (must be ISO timestamp or null): ${JSON.stringify(until)}`);
+    }
+    const id = `${req.kind}:${req.target}`;
+    const existing = current.find((m) => m.id === id);
+    let mode: Mute['mode'] = 'ui';
+    let enforcedBy: string | null = null;
+    if (req.enforce) {
+      const adapter = adapterFor(req.kind, req.target, until);
+      if (adapter) {
+        try {
+          await adapter.enforce();
+          mode = 'enforced';
+          enforcedBy = adapter.enforcedBy;
+        } catch (err) {
+          // adapter failure never rejects the mute — degrade to ui-only
+          enforcedBy = `enforce failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 300)}`;
+        }
+      }
+    }
+    // replacing an enforced mute with a non-enforced one must not strand the source paused
+    if (existing && existing.mode === 'enforced' && mode !== 'enforced') {
+      await unenforceBestEffort(existing);
+    }
+    const mute: Mute = { id, kind: req.kind, target: req.target, until, mode, enforcedBy, createdAt: iso() };
+    current = [...current.filter((m) => m.id !== id), mute];
+    await persist();
+    store.setMutes(current);
+    return mute;
+  },
+
+  async remove(id: string): Promise<void> {
+    const mute = current.find((m) => m.id === id);
+    if (!mute) return;
+    await unenforceBestEffort(mute);
+    current = current.filter((m) => m.id !== id);
+    await persist();
+    store.setMutes(current);
+  },
+};

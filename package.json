@@ -1,0 +1,17 @@
+{
+  "name": "atrium",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Personal life-management dashboard: GitHub tasks, local AI agents, system health, email/calendar, subscriptions — with a global quiet switch.",
+  "workspaces": [
+    "server",
+    "web",
+    "mcp"
+  ],
+  "scripts": {
+    "build": "npm run build -w server && npm run build -w web && npm run build -w mcp",
+    "start": "node server/dist/server/src/index.js",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web"
+  }
+}

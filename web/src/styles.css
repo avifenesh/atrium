@@ -1,0 +1,130 @@
+@import 'tailwindcss';
+@import '@fontsource/hanken-grotesk/400.css';
+@import '@fontsource/hanken-grotesk/500.css';
+@import '@fontsource/hanken-grotesk/600.css';
+@import '@fontsource/instrument-serif/400.css';
+@import '@fontsource/instrument-serif/400-italic.css';
+@import '@fontsource/spline-sans-mono/400.css';
+@import '@fontsource/spline-sans-mono/500.css';
+
+@theme {
+  --font-display: 'Instrument Serif', serif;
+  --font-sans: 'Hanken Grotesk', sans-serif;
+  --font-mono: 'Spline Sans Mono', monospace;
+
+  /* glass observatory palette */
+  --color-ink: #0a0e14; /* page base */
+  --color-ink-2: #0e141d;
+  --color-mist: #e8edf4; /* primary text */
+  --color-mist-dim: #8b96a5; /* secondary text */
+  --color-mist-faint: #525d6d; /* tertiary */
+  --color-amber: #f0b35e; /* THE accent — act-now, attention */
+  --color-amber-dim: #b9854240;
+  --color-jade: #6fd0a8; /* ok / running */
+  --color-coral: #e8796f; /* error / crit */
+  --color-slate-glow: #7ba3c9; /* info / links */
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-ink);
+  color: var(--color-mist);
+  font-family: var(--font-sans);
+  /* aurora atmosphere: two faint radial washes + grain via svg noise */
+  background-image:
+    radial-gradient(60rem 40rem at 12% -10%, rgba(50, 90, 110, 0.22), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 8%, rgba(70, 60, 110, 0.16), transparent 55%),
+    radial-gradient(40rem 50rem at 50% 110%, rgba(35, 70, 60, 0.14), transparent 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* film grain overlay — keeps the glass from feeling sterile */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  z-index: 50;
+}
+
+/* ---- glass primitives (use these, do not reinvent) ---- */
+
+.glass {
+  background: rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 12px 40px -18px rgba(0, 0, 0, 0.7);
+}
+
+.glass-raised {
+  background: rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(22px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 18px 50px -20px rgba(0, 0, 0, 0.8);
+}
+
+.hairline {
+  border-color: rgba(255, 255, 255, 0.07);
+}
+
+/* muted resources render dimmed, never removed */
+.muted-dim {
+  opacity: 0.32;
+  filter: saturate(0.4);
+  transition: opacity 160ms ease;
+}
+.muted-dim:hover {
+  opacity: 0.7;
+}
+
+/* staggered load-in: apply .rise to panels with --rise-i index */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--rise-i, 0) * 70ms);
+}
+
+/* status dot */
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.dot-running { background: var(--color-jade); box-shadow: 0 0 8px var(--color-jade); }
+.dot-active { background: var(--color-amber); box-shadow: 0 0 8px var(--color-amber); animation: pulse 1.6s ease-in-out infinite; }
+.dot-idle { background: var(--color-mist-dim); }
+.dot-off { background: var(--color-mist-faint); }
+.dot-error { background: var(--color-coral); box-shadow: 0 0 8px var(--color-coral); }
+.dot-unknown { background: var(--color-mist-faint); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
