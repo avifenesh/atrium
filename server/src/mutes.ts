@@ -11,6 +11,7 @@ const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 const JOB_RE = /^[\w-]+$/;
 
 const MUTE_KINDS: ReadonlySet<string> = new Set<MuteKind>([
+  'github-item',
   'github-repo',
   'github-org',
   'github-reason',

@@ -4,6 +4,7 @@ import { addMute, removeMute } from '../api';
 import { SectionLabel, EmptyState } from './ui';
 
 const KINDS: { kind: MuteKind; placeholder: string }[] = [
+  { kind: 'github-item', placeholder: 'owner/repo#123' },
   { kind: 'github-repo', placeholder: 'owner/repo' },
   { kind: 'github-org', placeholder: 'org' },
   { kind: 'github-reason', placeholder: 'review_requested' },

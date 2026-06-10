@@ -278,6 +278,7 @@ export interface SurrealState {
 // ---------- mutes ----------
 
 export type MuteKind =
+  | 'github-item' // target: "owner/repo#123" — one issue/PR, not the repo
   | 'github-repo' // target: "owner/repo"
   | 'github-org' // target: "org"
   | 'github-reason' // target: notification reason

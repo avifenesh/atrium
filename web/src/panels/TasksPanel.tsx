@@ -24,19 +24,22 @@ function Chip({ className = '', children }: { className?: string; children: Reac
   );
 }
 
-/** Hover cluster tail: quiet the repo, then a fainter quiet for its whole org. */
-function RepoMutes({ repo }: { repo: string }) {
+/** Hover cluster tail: quiet THIS line first, then fainter repo / org variants. */
+function RepoMutes({ repo, itemId }: { repo: string; itemId?: string }) {
   const owner = repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : repo;
   return (
     <>
-      <MuteButton kind="github-repo" target={repo} />
-      <MuteButton kind="github-org" target={owner} className="opacity-60" />
+      {itemId && <MuteButton kind="github-item" target={itemId} />}
+      <MuteButton kind="github-repo" target={repo} label="repo" className={itemId ? 'opacity-60' : ''} />
+      <MuteButton kind="github-org" target={owner} label="org" className="opacity-60" />
     </>
   );
 }
 
 function notMuted(snapshot: Snapshot) {
-  return (x: { repo: string }) => !isMuted(snapshot, 'github-repo', x.repo);
+  // github-item cascades through repo and org mutes inside isMuted
+  return (x: { repo: string; id?: string }) =>
+    x.id ? !isMuted(snapshot, 'github-item', x.id) : !isMuted(snapshot, 'github-repo', x.repo);
 }
 
 function ItemRow({
@@ -56,7 +59,7 @@ function ItemRow({
       <RelTime iso={item.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
         <SendToEigen title={item.title} url={item.url} repo={item.repo} sourceId={item.id} dispatches={dispatches} />
-        <RepoMutes repo={item.repo} />
+        <RepoMutes repo={item.repo} itemId={item.id} />
       </span>
     </Row>
   );
@@ -74,7 +77,7 @@ function PRRow({ pr, dispatches }: { pr: GithubPR; dispatches: EigenDispatch[] }
       <RelTime iso={pr.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
         <SendToEigen title={pr.title} url={pr.url} repo={pr.repo} sourceId={pr.id} dispatches={dispatches} />
-        <RepoMutes repo={pr.repo} />
+        <RepoMutes repo={pr.repo} itemId={pr.id} />
       </span>
     </Row>
   );
@@ -136,7 +139,10 @@ export default function TasksPanel({
   const mentions = g.mentions.filter(visible);
   const teamQueue = g.teamQueue.filter(visible);
   const notifAll = g.notifications.filter((n) => !cleared.has(n.id));
-  const notifications = notifAll.filter((n) => visible(n) && !isMuted(snapshot, 'github-reason', n.reason));
+  // notification ids are thread ids, not owner/repo#N — check repo mutes only
+  const notifications = notifAll.filter(
+    (n) => visible({ repo: n.repo }) && !isMuted(snapshot, 'github-reason', n.reason),
+  );
   const ownRepos = g.ownRepos.filter(visible);
 
   const clearOne = (id: string) => {

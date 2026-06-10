@@ -365,6 +365,7 @@ server.registerTool(
       'Mute a noise source. Default mode hides/dims in the dashboard only; enforce=true actually pauses the source (revuto repo reviewers, hermes cron jobs, systemd units) when supported.',
     inputSchema: {
       kind: z.enum([
+        'github-item',
         'github-repo',
         'github-org',
         'github-reason',
@@ -377,7 +378,7 @@ server.registerTool(
       target: z
         .string()
         .describe(
-          'per kind: "owner/repo", org, notification reason, agent id, "<agentId>:<resourceId>", schedule entry id, systemd unit, flag id',
+          'per kind: "owner/repo#123" (one issue/PR), "owner/repo", org, notification reason, agent id, "<agentId>:<resourceId>", schedule entry id, systemd unit, flag id',
         ),
       until: z.string().optional().describe('ISO timestamp; omit = forever'),
       enforce: z.boolean().optional().describe('attempt real enforcement at the source'),

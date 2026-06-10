@@ -223,11 +223,13 @@ export function MuteButton({
   target,
   enforce = false,
   className = '',
+  label = 'quiet',
 }: {
   kind: MuteKind;
   target: string;
   enforce?: boolean;
   className?: string;
+  label?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -261,7 +263,7 @@ export function MuteButton({
         armed || failed ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-amber'
       } ${className}`}
     >
-      {busy ? '…' : failed ? 'failed' : armed ? 'sure?' : 'quiet'}
+      {busy ? '…' : failed ? 'failed' : armed ? 'sure?' : label}
     </button>
   );
 }

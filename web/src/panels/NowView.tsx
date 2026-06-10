@@ -58,7 +58,7 @@ export default function NowView({
   const { github, agents, system, comms } = snapshot;
 
   // quiet = archive: muted items are GONE; the panel chip carries the hidden count
-  const actNow = github.actNow.filter((it) => !isMuted(snapshot, 'github-repo', it.repo));
+  const actNow = github.actNow.filter((it) => !isMuted(snapshot, 'github-item', it.id));
   const actNowHidden = github.actNow.length - actNow.length;
   const working = agents.agents.filter((a) => a.status === 'active' || a.status === 'running');
   const ticker = agents.activity.slice(-14).reverse();
@@ -115,7 +115,8 @@ export default function NowView({
                     sourceId={it.id}
                     dispatches={agents.dispatches}
                   />
-                  <MuteButton kind="github-repo" target={it.repo} />
+                  <MuteButton kind="github-item" target={it.id} />
+                  <MuteButton kind="github-repo" target={it.repo} label="repo" className="opacity-60" />
                 </span>
               </Row>
             ))}

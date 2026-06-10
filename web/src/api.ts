@@ -124,13 +124,17 @@ export function useSnapshot(): { snapshot: Snapshot | null; connected: boolean }
   return { snapshot, connected };
 }
 
-/** True when this target (or its org for repos) is muted. */
+/** True when this target is muted — cascades: item ⊂ repo ⊂ org. */
 export function isMuted(snapshot: Snapshot, kind: string, target: string): boolean {
   const now = Date.now();
+  const repo = kind === 'github-item' ? target.split('#')[0] : kind === 'github-repo' ? target : null;
   return snapshot.mutes.some((m) => {
     if (m.until && new Date(m.until).getTime() < now) return false;
     if (m.kind === kind && m.target === target) return true;
-    if (kind === 'github-repo' && m.kind === 'github-org' && target.startsWith(`${m.target}/`)) return true;
+    if (repo !== null) {
+      if (m.kind === 'github-repo' && m.target === repo) return true;
+      if (m.kind === 'github-org' && repo.startsWith(`${m.target}/`)) return true;
+    }
     return false;
   });
 }
