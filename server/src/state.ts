@@ -62,6 +62,10 @@ export function emptySnapshot(): Snapshot {
     subs: { updatedAt: null, services: [], error: null },
     notes: { updatedAt: null, vaultPath: null, recent: [], error: null },
     surreal: { updatedAt: null, up: false, endpoint: '', version: null, namespaces: [], error: null },
+    revuto: {
+      updatedAt: null, up: false, counts: null, schedules: null, limits: null, store: null,
+      services: [], models: [], reviewers: [], jobs: [], logs: [], error: null,
+    },
     mutes: [],
     flags: [],
   };

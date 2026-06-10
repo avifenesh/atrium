@@ -1,0 +1,508 @@
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { agentAction, isMuted } from '../api';
+import { CopyText, Dot, EmptyState, MuteButton, Panel, RelTime, Row } from '../components/ui';
+import type {
+  RevutoJob,
+  RevutoLog,
+  RevutoModel,
+  RevutoReviewer,
+  RevutoService,
+  Snapshot,
+} from '../../../shared/types';
+
+/** one duration format for probes and jobs: 5538 → "5.5s", 42 → "42ms". */
+function fmtMs(ms: number | null): string | null {
+  if (ms === null) return null;
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function serviceDot(s: RevutoService): string {
+  if (s.activeState === 'active') return s.subState === 'running' ? 'running' : 'idle';
+  if (s.activeState === 'failed') return 'error';
+  if (s.activeState === 'inactive') return 'off';
+  return 'unknown';
+}
+
+function probeDot(state: RevutoModel['probe']['state']): string {
+  return state === 'ok' ? 'running' : state === 'failed' ? 'error' : state === 'disabled' ? 'off' : 'unknown';
+}
+
+/** classify a job row: 'real' (a non-zero review — the rare gem), 'quiet' (poll
+ *  noise — the mass of reviewed=0 / skipped=0 must read as texture), 'failed'. */
+function jobClass(j: RevutoJob): 'failed' | 'real' | 'quiet' | 'unknown' {
+  if (j.status === 'failed') return 'failed';
+  if (j.status === 'unknown') return 'unknown';
+  // only a non-zero review earns jade — skips are routine (the counts strip agrees)
+  const m = j.summary.match(/reviewed=(\d+)\s*\/\s*skipped=(\d+)/);
+  return m && Number(m[1]) > 0 ? 'real' : 'quiet';
+}
+
+const JOB_DOT: Record<ReturnType<typeof jobClass>, string> = {
+  failed: 'error',
+  real: 'running',
+  quiet: 'idle',
+  unknown: 'unknown',
+};
+
+function ServiceRow({ s }: { s: RevutoService }) {
+  return (
+    // 'since' is a systemd human string, not ISO — tooltip only, never RelTime
+    <Row className="group" title={s.since ? `since ${s.since}` : undefined}>
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <Dot status={serviceDot(s)} />
+        <span className="shrink-0 text-sm lowercase text-mist">{s.label}</span>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <CopyText text={s.id}>
+            <span className="block truncate text-left font-mono text-xs text-mist-faint" title={s.id}>
+              {s.id}
+            </span>
+          </CopyText>
+        </div>
+        {s.kind === 'timer' && (
+          <span
+            className="max-w-40 shrink-0 truncate rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-faint"
+            title={s.nextElapse ?? 'timer'}
+          >
+            {s.nextElapse ? `next ${s.nextElapse}` : 'timer'}
+          </span>
+        )}
+        <span className="shrink-0 font-mono text-[11px] text-mist-faint">
+          {s.activeState === 'active' ? s.subState : s.activeState}
+        </span>
+      </div>
+    </Row>
+  );
+}
+
+/** services panel owns the daemon start/stop controls — stop is destructive, so it
+ *  uses the same two-click arm pattern as AgentsPanel fire(). */
+function ServicesCard({ services, riseIndex }: { services: RevutoService[]; riseIndex: number }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ text: string; isError: boolean } | null>(null);
+  const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resultTimer.current) clearTimeout(resultTimer.current);
+    },
+    [],
+  );
+
+  const run = async (action: 'start' | 'stop') => {
+    setBusy(action);
+    try {
+      const res = await agentAction('revuto', action);
+      setResult({
+        text: res.error ?? res.output ?? (res.ok ? 'ok' : 'failed'),
+        isError: !res.ok || !!res.error,
+      });
+    } catch (e) {
+      setResult({ text: e instanceof Error ? e.message : String(e), isError: true });
+    } finally {
+      setBusy(null);
+      if (resultTimer.current) clearTimeout(resultTimer.current);
+      resultTimer.current = setTimeout(() => setResult(null), 8000);
+    }
+  };
+
+  const fire = (action: 'start' | 'stop') => {
+    if (action === 'stop' && !armed) {
+      setArmed(true);
+      setTimeout(() => setArmed(false), 4000);
+      return;
+    }
+    setArmed(false);
+    void run(action);
+  };
+
+  return (
+    <Panel
+      title="services"
+      riseIndex={riseIndex}
+      right={
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={busy === 'stop'}
+            onClick={() => fire('stop')}
+            className={`cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-coral transition-colors hover:text-coral ${
+              armed ? 'glass-raised' : 'glass'
+            }`}
+          >
+            {busy === 'stop' ? '◌' : armed ? 'sure?' : 'stop'}
+          </button>
+          <button
+            type="button"
+            disabled={busy === 'start'}
+            onClick={() => fire('start')}
+            className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-mist-dim transition-colors glass hover:text-mist"
+          >
+            {busy === 'start' ? '◌' : 'start'}
+          </button>
+        </span>
+      }
+    >
+      {result && (
+        <div
+          className={`mb-1 truncate px-2.5 font-mono text-xs ${result.isError ? 'text-coral' : 'text-mist-faint'}`}
+          title={result.text}
+        >
+          {result.text}
+        </div>
+      )}
+      {services.length === 0 ? (
+        <EmptyState>no services</EmptyState>
+      ) : (
+        services.map((s) => <ServiceRow key={s.id} s={s} />)
+      )}
+    </Panel>
+  );
+}
+
+function ModelRow({ m }: { m: RevutoModel }) {
+  return (
+    <Row className="group">
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <Dot status={probeDot(m.probe.state)} />
+        <span className={`w-16 shrink-0 text-sm ${m.enabled ? 'text-mist' : 'text-mist-faint'}`}>{m.role}</span>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <CopyText text={m.model}>
+            <span className="block truncate text-left font-mono text-xs text-mist-dim" title={m.model}>
+              {m.model}
+            </span>
+          </CopyText>
+        </div>
+        <span className="shrink-0 font-mono text-[10px] text-mist-faint">{m.name}</span>
+        {m.probe.error && (
+          <span className="min-w-0 max-w-32 truncate font-mono text-[11px] text-coral" title={m.probe.error}>
+            {m.probe.error}
+          </span>
+        )}
+        <span
+          className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-mist-faint"
+          title={m.probe.checkedAt ? `probed ${new Date(m.probe.checkedAt).toLocaleString()}` : undefined}
+        >
+          {fmtMs(m.probe.ms) ?? '—'}
+        </span>
+      </div>
+    </Row>
+  );
+}
+
+function ReviewerRow({ r }: { r: RevutoReviewer }) {
+  return (
+    <Row
+      className="group"
+      title={`review ${r.reviewSchedule}${r.autoActivate ? ' · auto-activate' : ''}`}
+    >
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <Dot status={r.paused ? 'off' : 'running'} />
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <CopyText text={r.repo}>
+            <span className="block truncate text-left font-mono text-xs text-mist" title={r.repo}>
+              {r.repo}
+            </span>
+          </CopyText>
+        </div>
+        {r.paused ? (
+          <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-faint">
+            paused
+          </span>
+        ) : (
+          // enforce really pauses the repo via the revuto cli — the mute engine handles it
+          <MuteButton kind="agent-resource" target={`revuto:${r.repo}`} enforce label="pause" />
+        )}
+      </div>
+    </Row>
+  );
+}
+
+function JobRow({ j }: { j: RevutoJob }) {
+  const cls = jobClass(j);
+  const repoTone = cls === 'real' || cls === 'failed' ? 'text-mist' : 'text-mist-faint';
+  const summaryTone = cls === 'failed' ? 'text-coral' : cls === 'real' ? 'text-jade' : 'text-mist-faint';
+  return (
+    <Row className="group">
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <Dot status={JOB_DOT[cls]} />
+        <span className="w-9 shrink-0 text-right">
+          <RelTime iso={j.timestamp} />
+        </span>
+        {/* fixed chip slot — 'review' vs 'learn'/'decay' must not jog the repo column */}
+        <span
+          className={`w-14 shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-center font-mono text-[10px] ${
+            cls === 'quiet' ? 'text-mist-faint' : 'text-mist-dim'
+          }`}
+        >
+          {j.job}
+        </span>
+        <div className="w-32 shrink-0 overflow-hidden xl:w-40">
+          <CopyText text={j.repo}>
+            <span className={`block truncate text-left font-mono text-xs ${repoTone}`} title={j.repo}>
+              {j.repo}
+            </span>
+          </CopyText>
+        </div>
+        <span className={`min-w-0 flex-1 truncate font-mono text-xs ${summaryTone}`} title={j.summary}>
+          {j.summary}
+        </span>
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-mist-faint">
+          {fmtMs(j.durationMs) ?? ''}
+        </span>
+      </div>
+    </Row>
+  );
+}
+
+function LogLine({ l }: { l: RevutoLog }) {
+  // two tones only (AgentsPanel activity idiom) — upstream tags routine skip cycles
+  // 'warn', and amber on poll noise would burn the act-now signal
+  const tone = l.level === 'error' ? 'text-coral' : 'text-mist-dim';
+  return (
+    <div className="flex items-baseline gap-2 py-0.5">
+      {/* fixed time slot so the mono feed reads as columns ('29s' vs '1m' must not shift) */}
+      <span className="w-9 shrink-0 text-right">
+        <RelTime iso={l.timestamp} />
+      </span>
+      <span className={`min-w-0 truncate ${tone}`} title={l.message}>
+        {l.message}
+      </span>
+    </div>
+  );
+}
+
+export default function RevutoPanel({
+  snapshot,
+  onOpenQuiet,
+}: {
+  snapshot: Snapshot;
+  onOpenQuiet: () => void;
+}) {
+  const r = snapshot.revuto;
+  // rollout skew: a web bundle ahead of a not-yet-restarted server has no revuto
+  // section — render a hint instead of taking down the whole tree
+  if (!r) {
+    return (
+      <Panel title="revuto">
+        <EmptyState>server snapshot has no revuto section — restart the atrium daemon</EmptyState>
+      </Panel>
+    );
+  }
+  const { counts, schedules, limits, store } = r;
+
+  // quiet = archive: muted reviewers unmount; the quiet chip is the way back
+  const visibleReviewers = r.reviewers.filter(
+    (rv) => !isMuted(snapshot, 'agent-resource', `revuto:${rv.repo}`),
+  );
+  const quietReviewers = r.reviewers.length - visibleReviewers.length;
+
+  const jobs = r.jobs; // newest first from the server; header count must match the list
+  const logs = r.logs;
+
+  // never polled (failure paths always set error) or polled but upstream still warming up
+  const fresh =
+    (!r.up && r.updatedAt === null && r.error === null) ||
+    (r.up &&
+      !counts &&
+      r.services.length === 0 &&
+      r.models.length === 0 &&
+      r.reviewers.length === 0 &&
+      r.jobs.length === 0 &&
+      r.logs.length === 0);
+  if (fresh) {
+    return (
+      <Panel title="revuto">
+        <EmptyState>waiting for first snapshot</EmptyState>
+      </Panel>
+    );
+  }
+
+  return (
+    <div>
+      {!r.up && (
+        // the daemon self-heals the dashboard service — surface staleness, keep last-known data below
+        <div className="mb-3 flex min-w-0 items-center gap-2 px-1 font-mono text-xs">
+          <Dot status="error" />
+          <span className="shrink-0 text-coral">dashboard unreachable</span>
+          {r.error && (
+            <span className="min-w-0 truncate text-mist-faint" title={r.error}>
+              {r.error}
+            </span>
+          )}
+          <span className="shrink-0 text-mist-faint">— atrium is restarting it</span>
+          <span className="ml-auto flex shrink-0 items-baseline gap-1.5 text-[11px] text-mist-faint">
+            last data <RelTime iso={r.updatedAt} />
+          </span>
+        </div>
+      )}
+
+      {/* upstream config errors arrive with up=true (dashboard serving, daemon misconfigured) */}
+      {r.up && r.error && (
+        <div className="mb-3 flex min-w-0 items-center gap-2 px-1 font-mono text-xs">
+          <Dot status="error" />
+          <span className="min-w-0 truncate text-coral" title={r.error}>
+            {r.error}
+          </span>
+        </div>
+      )}
+
+      {counts && (
+        <section
+          className="glass rise mb-4 flex flex-wrap items-baseline gap-x-8 gap-y-3 px-4 py-4 xl:px-5"
+          style={{ '--rise-i': 0 } as CSSProperties}
+        >
+          <div className="flex items-baseline gap-1.5">
+            <span className="font-mono text-xl leading-none tabular-nums text-mist">{counts.reviewers}</span>
+            <span className="text-[11px] text-mist-faint">reviewers</span>
+            {counts.pausedReviewers > 0 && (
+              <span className="font-mono text-[11px] tabular-nums text-mist-faint">
+                · {counts.pausedReviewers} paused
+              </span>
+            )}
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="font-mono text-xl leading-none tabular-nums text-mist">{counts.recentJobs}</span>
+            <span className="text-[11px] text-mist-faint">jobs</span>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span
+              className={`font-mono text-xl leading-none tabular-nums ${
+                counts.recentFailures > 0 ? 'text-coral' : 'text-mist-faint'
+              }`}
+            >
+              {counts.recentFailures}
+            </span>
+            <span className="text-[11px] text-mist-faint">failures</span>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span
+              className={`font-mono text-xl leading-none tabular-nums ${
+                counts.reviewed > 0 ? 'text-jade' : 'text-mist-faint'
+              }`}
+            >
+              {counts.reviewed}
+            </span>
+            <span className="text-[11px] text-mist-faint">reviewed ·</span>
+            <span className="font-mono text-xl leading-none tabular-nums text-mist-dim">{counts.skipped}</span>
+            <span className="text-[11px] text-mist-faint">skipped</span>
+          </div>
+          <span className="ml-auto flex shrink-0 items-baseline gap-1.5 font-mono text-[11px] text-mist-faint">
+            updated <RelTime iso={r.updatedAt} />
+          </span>
+        </section>
+      )}
+
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+        <ServicesCard services={r.services} riseIndex={1} />
+
+        <Panel title="models" riseIndex={2}>
+          {r.models.length === 0 ? (
+            <EmptyState>no models</EmptyState>
+          ) : (
+            r.models.map((m) => <ModelRow key={m.role} m={m} />)
+          )}
+        </Panel>
+
+        <Panel
+          title="reviewers"
+          riseIndex={3}
+          className="xl:col-span-2"
+          quietCount={quietReviewers || undefined}
+          onQuietClick={onOpenQuiet}
+        >
+          {visibleReviewers.length === 0 ? (
+            <EmptyState>{r.reviewers.length > 0 ? 'all reviewers quieted' : 'no reviewers'}</EmptyState>
+          ) : (
+            <div className="grid gap-x-2 sm:grid-cols-2 2xl:grid-cols-3">
+              {visibleReviewers.map((rv) => (
+                <ReviewerRow key={rv.repo} r={rv} />
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="jobs"
+          riseIndex={4}
+          right={
+            r.jobs.length > 0 ? (
+              <span className="font-mono text-xs tabular-nums text-mist-faint">{r.jobs.length}</span>
+            ) : undefined
+          }
+        >
+          {jobs.length === 0 ? (
+            <EmptyState>no recent jobs</EmptyState>
+          ) : (
+            <div className="max-h-80 overflow-y-auto">
+              {jobs.map((j, i) => (
+                <JobRow key={`${j.timestamp}-${j.repo}-${i}`} j={j} />
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="logs"
+          riseIndex={5}
+          right={
+            r.logs.length > 0 ? (
+              <span className="font-mono text-xs tabular-nums text-mist-faint">{r.logs.length}</span>
+            ) : undefined
+          }
+        >
+          {logs.length === 0 ? (
+            <EmptyState>no logs</EmptyState>
+          ) : (
+            <div className="max-h-80 overflow-y-auto font-mono text-xs">
+              {logs.map((l, i) => (
+                <LogLine key={`${l.timestamp}-${i}`} l={l} />
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        {(schedules || limits || store) && (
+          <Panel title="config" riseIndex={6} className="xl:col-span-2">
+            <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2 px-2.5 font-mono text-xs tabular-nums text-mist-faint">
+              {schedules && (
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  {/* '·' between entries — cron exprs are mostly asterisks and merge without it */}
+                  {(['review', 'learn', 'decay'] as const).map((k, i) => (
+                    <span key={k} className="flex items-baseline gap-x-2">
+                      {i > 0 && <span>·</span>}
+                      <CopyText text={schedules[k]}>
+                        <span className="whitespace-nowrap">
+                          <span className="text-mist-dim">{k}</span> {schedules[k]}
+                        </span>
+                      </CopyText>
+                    </span>
+                  ))}
+                </span>
+              )}
+              {limits && (
+                <span className="whitespace-nowrap">
+                  {limits.dailyReviews} reviews/day · {limits.dailyLearn} learn/day ·{' '}
+                  {(limits.dailyTokens / 1e6).toFixed(1)}M tokens/day · {limits.maxSteps} steps
+                </span>
+              )}
+              {store && (
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="text-mist-dim">{store.backend}</span>
+                  {store.namespace && <span className="whitespace-nowrap">· {store.namespace}</span>}
+                  {store.url && (
+                    <CopyText text={store.url}>
+                      <span className="truncate" title={store.url}>
+                        @ {store.url.replace(/^[a-z+]+:\/\//, '')}
+                      </span>
+                    </CopyText>
+                  )}
+                </span>
+              )}
+            </div>
+          </Panel>
+        )}
+      </div>
+    </div>
+  );
+}

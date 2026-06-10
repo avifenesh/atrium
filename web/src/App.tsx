@@ -4,6 +4,7 @@ import { recordSystemSample, useNow } from './hooks';
 import NowView from './panels/NowView';
 import TasksPanel from './panels/TasksPanel';
 import AgentsPanel from './panels/AgentsPanel';
+import RevutoPanel from './panels/RevutoPanel';
 import SystemPanel from './panels/SystemPanel';
 import CommsPanel from './panels/CommsPanel';
 import SubsPanel from './panels/SubsPanel';
@@ -19,6 +20,7 @@ const VIEWS = [
   { id: 'now', label: 'now' },
   { id: 'tasks', label: 'tasks' },
   { id: 'agents', label: 'agents' },
+  { id: 'revuto', label: 'revuto' },
   { id: 'system', label: 'system' },
   { id: 'comms', label: 'comms' },
   { id: 'subs', label: 'subs' },
@@ -89,7 +91,11 @@ function QuietButton({
 
 export default function App() {
   const { snapshot, connected } = useSnapshot();
-  const [view, setView] = useState<ViewId>('now');
+  // initial view from the url hash — desktop entries deep-link e.g. #revuto
+  const [view, setView] = useState<ViewId>(() => {
+    const h = location.hash.slice(1);
+    return isViewId(h) ? h : 'now';
+  });
   const [mutesOpen, setMutesOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // github item slide-over: read + comment without leaving atrium
@@ -100,7 +106,15 @@ export default function App() {
   // rail badge counts — tasks dedupes act-now/org-queue overlap by item id
   const badges = useMemo(() => {
     if (!snapshot)
-      return { tasks: 0, tasksCls: 'text-mist-faint', comms: 0, agents: 0, system: 0, systemCls: 'text-mist-faint' };
+      return {
+        tasks: 0,
+        tasksCls: 'text-mist-faint',
+        comms: 0,
+        agents: 0,
+        revuto: 0,
+        system: 0,
+        systemCls: 'text-mist-faint',
+      };
     const taskIds = new Set<string>();
     for (const it of [...snapshot.github.actNow, ...snapshot.github.orgQueue]) {
       if (!isMuted(snapshot, 'github-item', it.id)) taskIds.add(it.id);
@@ -119,11 +133,14 @@ export default function App() {
       : flags.some((f) => f.severity === 'warn')
         ? 'text-amber'
         : 'text-mist-faint';
+    // optional-chain both: a stale server snapshot may lack revuto during rollout
+    const revutoFails = snapshot.revuto?.up ? (snapshot.revuto.counts?.recentFailures ?? 0) : 0;
     return {
       tasks: taskIds.size,
       tasksCls: tasksAttention ? 'text-amber' : 'text-mist-faint',
       comms: snapshot.comms.email.unreadCount,
       agents: snapshot.agents.agents.filter((a) => a.status === 'active' || a.status === 'running').length,
+      revuto: revutoFails,
       system: flags.length,
       systemCls,
     };
@@ -138,6 +155,11 @@ export default function App() {
   useEffect(() => {
     if (snapshot) recordSystemSample(snapshot);
   }, [snapshot]);
+
+  // keep the hash in sync — replaceState so view switches never pollute back-button history
+  useEffect(() => {
+    history.replaceState(null, '', view === 'now' ? location.pathname : '#' + view);
+  }, [view]);
 
   // keyboard layer — esc is centralized here so one press closes ONE overlay,
   // topmost first (per-overlay window listeners all fire on a single esc)
@@ -164,7 +186,7 @@ export default function App() {
         setPaletteOpen(true);
       } else if (e.key === 'q') {
         setMutesOpen((o) => !o);
-      } else if (/^[1-8]$/.test(e.key)) {
+      } else if (/^[1-9]$/.test(e.key)) {
         setView(VIEWS[Number(e.key) - 1].id);
       }
     };
@@ -192,6 +214,8 @@ export default function App() {
       tasks: { n: badges.tasks, cls: badges.tasksCls },
       comms: { n: badges.comms, cls: 'text-mist-faint' },
       agents: { n: badges.agents, cls: 'text-jade' },
+      // failures are errors — coral, never amber
+      revuto: { n: badges.revuto, cls: 'text-coral' },
       system: { n: badges.system, cls: badges.systemCls },
     };
     const b = map[id];
@@ -261,6 +285,7 @@ export default function App() {
           )}
           {view === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
           {view === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {view === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {view === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {view === 'comms' && <CommsPanel snapshot={snapshot} />}
           {view === 'subs' && <SubsPanel snapshot={snapshot} />}

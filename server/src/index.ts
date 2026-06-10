@@ -22,6 +22,7 @@ import commsCollector from './collectors/comms.js';
 import subsCollector from './collectors/subs.js';
 import notesCollector from './collectors/notes.js';
 import surrealCollector from './collectors/surreal.js';
+import revutoCollector from './collectors/revuto.js';
 
 for (const c of [
   githubCollector,
@@ -32,6 +33,7 @@ for (const c of [
   subsCollector,
   notesCollector,
   surrealCollector,
+  revutoCollector,
 ]) {
   register(c);
 }

@@ -101,6 +101,7 @@ export const defaults = {
     subsMs: 300_000,
     notesMs: 60_000,
     surrealMs: 60_000,
+    revutoMs: 60_000,
   },
 };
 

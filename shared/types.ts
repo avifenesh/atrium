@@ -9,7 +9,8 @@ export type SectionName =
   | 'comms'
   | 'subs'
   | 'notes'
-  | 'surreal';
+  | 'surreal'
+  | 'revuto';
 
 export interface Snapshot {
   generatedAt: string;
@@ -21,6 +22,7 @@ export interface Snapshot {
   subs: SubsState;
   notes: NotesState;
   surreal: SurrealState;
+  revuto: RevutoState;
   mutes: Mute[];
   flags: Flag[];
 }
@@ -306,6 +308,80 @@ export interface SurrealState {
   endpoint: string;
   version: string | null;
   namespaces: { name: string; databases: string[] }[];
+  error: string | null;
+}
+
+// ---------- revuto (PR-reviewer watch — proxied from the local dashboard service) ----------
+
+export interface RevutoService {
+  id: string; // systemd unit, e.g. "revuto.service"
+  label: string; // human label, e.g. "Revuto daemon"
+  kind: 'service' | 'timer';
+  activeState: string; // systemd ActiveState, e.g. "active"
+  subState: string; // systemd SubState, e.g. "running" | "waiting"
+  since: string | null; // systemd human timestamp string, NOT ISO — display raw
+  nextElapse: string | null; // timers only, systemd human timestamp string
+}
+
+export interface RevutoModel {
+  role: 'review' | 'curator' | 'distill' | 'embedder';
+  enabled: boolean;
+  name: string; // provider, e.g. "bedrock-mantle"
+  model: string; // model id, e.g. "openai.gpt-5.5"
+  probe: {
+    state: 'ok' | 'failed' | 'disabled' | 'unknown';
+    ms: number | null;
+    checkedAt: string | null; // ISO
+    error: string | null;
+  };
+}
+
+export interface RevutoReviewer {
+  repo: string; // "owner/repo"
+  paused: boolean;
+  autoActivate: boolean;
+  reviewSchedule: string; // cron expr of the review job for this repo
+}
+
+export interface RevutoJob {
+  timestamp: string; // ISO with offset, parseable by Date
+  job: 'review' | 'learn' | 'decay';
+  repo: string;
+  status: 'ok' | 'failed' | 'unknown';
+  durationMs: number | null;
+  summary: string; // "reviewed=1 / skipped=0" or failure text
+}
+
+export interface RevutoLog {
+  timestamp: string | null; // ISO with offset
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+export interface RevutoState {
+  updatedAt: string | null;
+  /** dashboard endpoint reachable and returned a snapshot this poll (or last poll kept stale data) */
+  up: boolean;
+  counts: {
+    servicesActive: number;
+    servicesTotal: number;
+    reviewers: number;
+    pausedReviewers: number;
+    recentJobs: number;
+    recentFailures: number;
+    reviewed: number;
+    skipped: number;
+  } | null;
+  schedules: { review: string; learn: string; decay: string } | null;
+  limits: { maxSteps: number; dailyReviews: number; dailyLearn: number; dailyTokens: number } | null;
+  store: { backend: string; url: string | null; namespace: string | null } | null;
+  services: RevutoService[];
+  models: RevutoModel[];
+  reviewers: RevutoReviewer[];
+  /** newest first, capped at 60 */
+  jobs: RevutoJob[];
+  /** newest first, capped at 80 */
+  logs: RevutoLog[];
   error: string | null;
 }
 
