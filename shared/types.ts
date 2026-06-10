@@ -63,11 +63,35 @@ export interface RepoCount {
   pushedAt: string;
 }
 
+/** An open issue/PR on a repo I own or admin, authored by someone else — they are
+ *  waiting on me. Ranked above my own PRs: a person blocked on me beats a status update. */
+export interface OrgItem {
+  id: string; // "owner/repo#123"
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  updatedAt: string;
+  createdAt: string;
+  kind: 'issue' | 'pr';
+  author: string;
+  /** 'org' = one of my watched orgs, 'own' = my personal repo */
+  scope: 'org' | 'own';
+  /** pr-only */
+  isDraft: boolean;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  ci: 'SUCCESS' | 'FAILURE' | 'PENDING' | 'ERROR' | 'EXPECTED' | null;
+  /** computed lane: 'review' = external PR waiting on my review (top), 'triage' = external issue */
+  lane: 'review' | 'triage';
+}
+
 export interface GithubState {
   updatedAt: string | null;
   error: string | null;
   /** direct user-review-requested PRs + issues assigned to me — the act-now lane */
   actNow: GithubItem[];
+  /** external PRs/issues on my repos — people waiting on me, ranked above my own work */
+  orgQueue: OrgItem[];
   myPRs: GithubPR[];
   mentions: GithubItem[];
   /** team review-requested minus direct, minus bots — secondary lane */

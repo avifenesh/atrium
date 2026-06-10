@@ -8,15 +8,26 @@ import type {
   GithubNotification,
   GithubPR,
   GithubState,
+  OrgItem,
   RepoCount,
 } from '../../../shared/types.js';
 
 // noise orgs are excluded from the attention lanes (actNow/mentions/teamQueue), not from my own PRs
 const NOISE_ORGS = config.github.noiseOrgs.map((o) => ` -org:${o}`).join('');
 
+// org queue scope: each watched org plus his own personal repos. GitHub search ORs
+// same-qualifier terms, so `org:agent-sh user:avifenesh` returns items in EITHER
+// (verified: combined issueCount == orgOnly + userOnly). One aliased sub-query, cost 1.
+const OWN_ORGS = new Set(config.github.ownOrgs);
+const ORG_FILTER = [...config.github.ownOrgs.map((o) => `org:${o}`), `user:${config.github.login}`].join(' ');
+// bots authored items are noise. The `app/` prefix excludes GitHub Apps in search; we
+// also defensively drop by author type + login when mapping (imgbot etc. lack the prefix).
+const BOT_AUTHOR_FILTER = ' -author:app/dependabot -author:app/renovate -author:app/github-actions';
+const BOT_LOGINS = new Set(['dependabot', 'github-actions', 'renovate']);
+
 // Single aliased GraphQL search (cost: 1 point). Never use `gh search` here —
 // the REST search pool is only 30 req/min and shared with everything else.
-const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } ... on PullRequest { number title url updatedAt repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
+const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } ... on PullRequest { number title url updatedAt repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } orgExt: search(query: "is:open -author:${config.github.login}${BOT_AUTHOR_FILTER} archived:false ${ORG_FILTER}", type: ISSUE, first: 50){ issueCount nodes { __typename ... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } ... on Issue { number title url createdAt updatedAt author { login __typename } repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
 
 const REPO_FIELDS =
   'nodes { nameWithOwner isPrivate isArchived pushedAt issues(states: OPEN){ totalCount } pullRequests(states: OPEN){ totalCount } }';
@@ -58,6 +69,71 @@ function toPR(n: any): GithubPR {
   const ci = typeof ciState === 'string' && CI_STATES.has(ciState) ? (ciState as GithubPR['ci']) : null;
   return { ...toItem(n, 'pr'), kind: 'pr', isDraft: !!n?.isDraft, reviewDecision: decision, ci };
 }
+
+/** True for any GitHub App / bot author. author.__typename === 'Bot' catches every
+ *  GitHub App (dependabot, renovate, github-actions, imgbot, ...) regardless of login.
+ *  The login checks are belt-and-suspenders for missing/odd type info. */
+function isBotAuthor(author: any): boolean {
+  if (!author) return false;
+  if (author.__typename === 'Bot') return true;
+  const login = typeof author.login === 'string' ? author.login.toLowerCase() : '';
+  return login.endsWith('[bot]') || BOT_LOGINS.has(login);
+}
+
+/** Map an orgExt search node -> OrgItem. Returns null for own/bot-authored nodes (defensive). */
+function toOrgItem(n: any): OrgItem | null {
+  const author = n?.author;
+  const login = typeof author?.login === 'string' ? author.login : '';
+  // his own authored items live in myPRs/actNow, not the org queue; bots are noise
+  if (!login || login === config.github.login || isBotAuthor(author)) return null;
+  const repo = String(n?.repository?.nameWithOwner ?? '');
+  if (!repo) return null;
+  const kind: 'issue' | 'pr' = n?.__typename === 'PullRequest' ? 'pr' : 'issue';
+  const owner = repo.split('/')[0] ?? '';
+  const decision =
+    typeof n?.reviewDecision === 'string' && REVIEW_DECISIONS.has(n.reviewDecision)
+      ? (n.reviewDecision as OrgItem['reviewDecision'])
+      : null;
+  const ciState = n?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state;
+  const ci = typeof ciState === 'string' && CI_STATES.has(ciState) ? (ciState as OrgItem['ci']) : null;
+  return {
+    id: `${repo}#${n.number}`,
+    repo,
+    number: Number(n.number),
+    title: String(n.title ?? ''),
+    url: String(n.url ?? ''),
+    updatedAt: String(n.updatedAt ?? ''),
+    createdAt: String(n.createdAt ?? ''),
+    kind,
+    author: login,
+    scope: OWN_ORGS.has(owner) ? 'org' : 'own',
+    isDraft: kind === 'pr' ? !!n?.isDraft : false,
+    reviewDecision: decision,
+    ci,
+    lane: kind === 'pr' ? 'review' : 'triage',
+  };
+}
+
+/** Rank most-waiting-first: (1) review non-draft PRs oldest updatedAt, (2) review draft
+ *  PRs, (3) triage issues oldest updatedAt. Cap 50. */
+function rankOrgQueue(items: OrgItem[]): OrgItem[] {
+  const tier = (it: OrgItem): number => {
+    if (it.lane === 'review') return it.isDraft ? 1 : 0;
+    return 2;
+  };
+  return items
+    .slice()
+    .sort((a, b) => {
+      const ta = tier(a);
+      const tb = tier(b);
+      if (ta !== tb) return ta - tb;
+      // oldest updatedAt first = longest someone has waited
+      return a.updatedAt.localeCompare(b.updatedAt);
+    })
+    .slice(0, 50);
+}
+
+const ORG_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function nodesOf(section: any): any[] {
   const nodes = section?.nodes;
@@ -148,6 +224,33 @@ const collector: Collector = {
 
       const myPRs: GithubPR[] = nodesOf(data.myPRs).map(toPR);
 
+      // external PRs/issues on repos he owns/admins, authored by others (not him, not bots).
+      // ranked above myPRs: a person blocked on him beats a status update.
+      const orgQueue: OrgItem[] = rankOrgQueue(
+        nodesOf(data.orgExt)
+          .map(toOrgItem)
+          .filter((it): it is OrgItem => it !== null),
+      );
+
+      const staleNow = Date.now();
+      const staleCount = orgQueue.filter(
+        (it) =>
+          it.lane === 'review' &&
+          !it.isDraft &&
+          it.updatedAt !== '' &&
+          staleNow - new Date(it.updatedAt).getTime() > ORG_STALE_MS,
+      ).length;
+      if (staleCount > 0) {
+        flags.push({
+          id: 'github:org-pr-stale',
+          severity: 'info',
+          title: 'External PRs waiting on review',
+          detail: `${staleCount} PR${staleCount === 1 ? '' : 's'} on your repos untouched for over 7 days`,
+          source: 'github',
+          raisedAt: iso(),
+        });
+      }
+
       const rl = data.rateLimit;
       const rateLimit = rl
         ? { remaining: Number(rl.remaining ?? 0), limit: Number(rl.limit ?? 0), resetAt: String(rl.resetAt ?? '') }
@@ -178,6 +281,7 @@ const collector: Collector = {
         updatedAt: iso(),
         error: null,
         actNow,
+        orgQueue,
         myPRs,
         mentions,
         teamQueue,
@@ -201,6 +305,7 @@ const collector: Collector = {
         updatedAt: null,
         error: null,
         actNow: [],
+        orgQueue: [],
         myPRs: [],
         mentions: [],
         teamQueue: [],

@@ -1,7 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { clearAllNotifications, clearNotification, isMuted } from '../api';
-import { Dot, EmptyState, MuteButton, Panel, QuietChip, RelTime, Row, SendToEigen } from '../components/ui';
-import type { EigenDispatch, GithubItem, GithubNotification, GithubPR, Snapshot } from '../../../shared/types';
+import { Dot, EmptyState, MuteButton, Panel, QuietChip, RelTime, Row, SectionLabel, SendToEigen } from '../components/ui';
+import type { EigenDispatch, GithubItem, GithubNotification, GithubPR, OrgItem, Snapshot } from '../../../shared/types';
 
 function ciStatus(ci: GithubPR['ci']): string {
   if (ci === 'SUCCESS') return 'running'; // jade
@@ -119,6 +119,43 @@ function PRRow({
   );
 }
 
+/** An external issue/PR on a repo he owns/admins — someone is blocked on him. Top
+ *  priority; review-lane rows carry the amber hairline. Mirrors PRRow's draft/decision
+ *  chips + ci Dot for PRs, plus a scope chip and the author in the hover cluster. */
+function OrgRow({
+  item,
+  dispatches,
+  onOpenItem,
+}: {
+  item: OrgItem;
+  dispatches: EigenDispatch[];
+  onOpenItem: (repo: string, number: number) => void;
+}) {
+  const isPR = item.kind === 'pr';
+  const decision = isPR && item.reviewDecision ? DECISION[item.reviewDecision] : null;
+  const accent = item.lane === 'review';
+  return (
+    <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title}>
+      {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
+      {isPR && <Dot status={ciStatus(item.ci)} />}
+      <Chip className="text-mist-faint">{item.scope}</Chip>
+      <span className="w-32 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-40">{item.repo}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
+      {isPR && item.isDraft && <Chip className="text-mist-faint">draft</Chip>}
+      {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
+      <RelTime iso={item.updatedAt} />
+      <span className="flex shrink-0 items-center gap-1">
+        <span className="hover-cluster shrink-0 whitespace-nowrap font-mono text-[11px] text-mist-faint">
+          @{item.author}
+        </span>
+        <GithubLink href={item.url} />
+        <SendToEigen title={item.title} url={item.url} repo={item.repo} sourceId={item.id} dispatches={dispatches} />
+        <RepoMutes repo={item.repo} itemId={item.id} />
+      </span>
+    </Row>
+  );
+}
+
 function NotificationRow({
   n,
   dispatches,
@@ -179,7 +216,14 @@ export default function TasksPanel({
   const [clearAllArmed, setClearAllArmed] = useState(false);
 
   const visible = notMuted(snapshot);
-  const actNow = g.actNow.filter(visible);
+  // people blocked on him — review lane (external PRs awaiting his review) ranks above triage
+  const orgQueue = g.orgQueue.filter(visible);
+  const orgReview = orgQueue.filter((it) => it.lane === 'review');
+  const orgTriage = orgQueue.filter((it) => it.lane === 'triage');
+  // orgQueue outranks actNow — if an item is in both (external PR where I'm also a
+  // requested reviewer), show it only in the higher lane
+  const orgIds = new Set(g.orgQueue.map((it) => it.id));
+  const actNow = g.actNow.filter((it) => visible(it) && !orgIds.has(it.id));
   const myPRs = g.myPRs.filter(visible);
   const mentions = g.mentions.filter(visible);
   const teamQueue = g.teamQueue.filter(visible);
@@ -234,8 +278,39 @@ export default function TasksPanel({
 
       <div className="grid grid-cols-12 gap-5">
         <Panel
-          title="act now"
+          title="waiting on you"
           riseIndex={0}
+          className="col-span-12"
+          quietCount={g.orgQueue.length - orgQueue.length}
+          onQuietClick={onOpenQuiet}
+        >
+          {orgQueue.length === 0 ? (
+            <EmptyState>nobody waiting</EmptyState>
+          ) : (
+            <div className="max-h-72 space-y-0.5 overflow-y-auto">
+              {orgReview.length > 0 && (
+                <>
+                  <SectionLabel>review</SectionLabel>
+                  {orgReview.map((it) => (
+                    <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
+                  ))}
+                </>
+              )}
+              {orgTriage.length > 0 && (
+                <>
+                  <SectionLabel>triage</SectionLabel>
+                  {orgTriage.map((it) => (
+                    <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="act now"
+          riseIndex={1}
           className="col-span-12"
           quietCount={g.actNow.length - actNow.length}
           onQuietClick={onOpenQuiet}
@@ -253,7 +328,7 @@ export default function TasksPanel({
 
         <Panel
           title="my open prs"
-          riseIndex={1}
+          riseIndex={2}
           className="col-span-12 lg:col-span-7"
           quietCount={g.myPRs.length - myPRs.length}
           onQuietClick={onOpenQuiet}
@@ -271,7 +346,7 @@ export default function TasksPanel({
 
         <Panel
           title="mentions"
-          riseIndex={2}
+          riseIndex={3}
           className="col-span-12 lg:col-span-5"
           quietCount={g.mentions.length - mentions.length}
           onQuietClick={onOpenQuiet}
@@ -287,7 +362,7 @@ export default function TasksPanel({
           )}
         </Panel>
 
-        <section className="glass rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 3 } as CSSProperties}>
+        <section className="glass rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 4 } as CSSProperties}>
           <header className="flex items-baseline justify-between gap-3">
             <button
               type="button"
@@ -315,7 +390,7 @@ export default function TasksPanel({
 
         <Panel
           title="notifications"
-          riseIndex={4}
+          riseIndex={5}
           className="col-span-12"
           quietCount={notifAll.length - notifications.length}
           onQuietClick={onOpenQuiet}
@@ -347,7 +422,7 @@ export default function TasksPanel({
 
         <Panel
           title="my repos"
-          riseIndex={5}
+          riseIndex={6}
           className="col-span-12"
           quietCount={g.ownRepos.length - ownRepos.length}
           onQuietClick={onOpenQuiet}

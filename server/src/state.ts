@@ -40,7 +40,7 @@ export function emptySnapshot(): Snapshot {
   return {
     generatedAt: iso(),
     github: {
-      updatedAt: null, error: null, actNow: [], myPRs: [], mentions: [],
+      updatedAt: null, error: null, actNow: [], orgQueue: [], myPRs: [], mentions: [],
       teamQueue: [], notifications: [], ownRepos: [], rateLimit: null,
     },
     agents: { updatedAt: null, agents: [], activity: [], dispatches: [] },

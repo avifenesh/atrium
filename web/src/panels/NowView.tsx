@@ -59,9 +59,14 @@ export default function NowView({
 }) {
   const { github, agents, system, comms } = snapshot;
 
-  // quiet = archive: muted items are GONE; the panel chip carries the hidden count
-  const actNow = github.actNow.filter((it) => !isMuted(snapshot, 'github-item', it.id));
-  const actNowHidden = github.actNow.length - actNow.length;
+  // people blocked on him — outranks his own work; review lane = external PRs awaiting his review
+  const orgQueue = github.orgQueue.filter((it) => !isMuted(snapshot, 'github-item', it.id));
+  // quiet = archive: muted items are GONE; the panel chip carries the hidden count.
+  // orgQueue outranks actNow — drop items that also sit in the org queue so they show once
+  const orgIds = new Set(github.orgQueue.map((it) => it.id));
+  const actNow = github.actNow.filter((it) => !isMuted(snapshot, 'github-item', it.id) && !orgIds.has(it.id));
+  const actNowHidden = github.actNow.filter((it) => !orgIds.has(it.id)).length - actNow.length;
+  const orgReview = orgQueue.filter((it) => it.lane === 'review');
   const working = agents.agents.filter((a) => a.status === 'active' || a.status === 'running');
   const ticker = agents.activity.slice(-14).reverse();
   const gpuPct = system.gpu ? system.gpu.utilPct : null;
@@ -73,6 +78,12 @@ export default function NowView({
         className="glass rise col-span-12 flex flex-wrap items-end gap-x-10 gap-y-4 px-6 py-5 lg:gap-x-14"
         style={{ '--rise-i': 0 } as CSSProperties}
       >
+        <Stat
+          value={orgReview.length}
+          label="waiting"
+          accent={orgReview.length > 0}
+          onClick={() => onNavigate('tasks')}
+        />
         <Stat value={actNow.length} label="act now" accent={actNow.length > 0} onClick={() => onNavigate('tasks')} />
         <Stat value={comms.email.unreadCount} label="unread" onClick={() => onNavigate('comms')} />
         <Stat value={comms.calendar.today.length} label="today" onClick={() => onNavigate('comms')} />
@@ -138,7 +149,28 @@ export default function NowView({
 
       {/* right column */}
       <div className="col-span-12 flex flex-col gap-5 lg:col-span-5 xl:col-span-4">
-        <Panel title="today" riseIndex={2}>
+        {orgQueue.length > 0 && (
+          <Panel title="waiting on you" riseIndex={2}>
+            <div className="max-h-64 space-y-0.5 overflow-y-auto">
+              {orgReview.slice(0, 5).map((it) => (
+                <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
+                  <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
+                  <span className="shrink-0 whitespace-nowrap rounded border hairline px-1.5 py-px font-mono text-[10px] text-mist-faint">
+                    {it.scope}
+                  </span>
+                  <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint">{it.repo}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
+                  <span className="hidden shrink-0 whitespace-nowrap font-mono text-[11px] text-mist-faint sm:inline">
+                    @{it.author}
+                  </span>
+                  <RelTime iso={it.updatedAt} />
+                </Row>
+              ))}
+            </div>
+          </Panel>
+        )}
+
+        <Panel title="today" riseIndex={3}>
           {comms.calendar.today.length === 0 ? (
             <EmptyState>no events today</EmptyState>
           ) : (
@@ -155,7 +187,7 @@ export default function NowView({
           )}
         </Panel>
 
-        <Panel title="agents working" riseIndex={3}>
+        <Panel title="agents working" riseIndex={4}>
           {working.length === 0 ? (
             <EmptyState>all quiet</EmptyState>
           ) : (
@@ -171,7 +203,7 @@ export default function NowView({
           )}
         </Panel>
 
-        <Panel title="system" riseIndex={4}>
+        <Panel title="system" riseIndex={5}>
           <Row onClick={() => onNavigate('system')} className="justify-between font-mono text-sm tabular-nums">
             <span>
               <span className="text-[11px] text-mist-faint">cpu </span>
@@ -198,7 +230,7 @@ export default function NowView({
       </div>
 
       {/* activity ticker */}
-      <Panel title="activity" riseIndex={5} className="col-span-12">
+      <Panel title="activity" riseIndex={6} className="col-span-12">
         {ticker.length === 0 ? (
           <EmptyState>nothing happening</EmptyState>
         ) : (
