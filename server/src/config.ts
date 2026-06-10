@@ -11,6 +11,8 @@ export const defaults = {
 
   github: {
     login: 'avifenesh',
+    /** orgs whose repos count as "my repos" in the tasks view */
+    ownOrgs: ['agent-sh'],
     /** orgs excluded from authored-issue noise */
     noiseOrgs: ['zelos-social'],
     pollMs: 60_000,

@@ -18,7 +18,12 @@ const NOISE_ORGS = config.github.noiseOrgs.map((o) => ` -org:${o}`).join('');
 // the REST search pool is only 30 req/min and shared with everything else.
 const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } ... on PullRequest { number title url updatedAt repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
 
-const OWN_REPOS_QUERY = `query { viewer { repositories(first: 100, affiliations: [OWNER], orderBy: {field: PUSHED_AT, direction: DESC}) { nodes { nameWithOwner isPrivate isArchived pushedAt issues(states: OPEN){ totalCount } pullRequests(states: OPEN){ totalCount } } } } }`;
+const REPO_FIELDS =
+  'nodes { nameWithOwner isPrivate isArchived pushedAt issues(states: OPEN){ totalCount } pullRequests(states: OPEN){ totalCount } }';
+// owner treats his orgs' repos exactly like his own (agent-sh: "even more important")
+const OWN_REPOS_QUERY = `query { viewer { repositories(first: 100, affiliations: [OWNER], orderBy: {field: PUSHED_AT, direction: DESC}) { ${REPO_FIELDS} } } ${config.github.ownOrgs
+  .map((o, i) => `org${i}: organization(login: "${o}") { repositories(first: 100, orderBy: {field: PUSHED_AT, direction: DESC}) { ${REPO_FIELDS} } }`)
+  .join(' ')} }`;
 
 /** dependabot-style noise excluded from the team queue */
 const NOISE_TITLE = /^Bump |^build\(deps\)|Updated attribution files/;
@@ -95,8 +100,12 @@ async function fetchOwnRepos(): Promise<RepoCount[] | null> {
   const out = await shTry('gh', ['api', 'graphql', '-f', `query=${OWN_REPOS_QUERY}`], { timeoutMs: 30_000 });
   if (out === null) return null;
   try {
-    const nodes = JSON.parse(out)?.data?.viewer?.repositories?.nodes;
-    if (!Array.isArray(nodes)) return null;
+    const data = JSON.parse(out)?.data;
+    const nodes = [
+      ...(data?.viewer?.repositories?.nodes ?? []),
+      ...config.github.ownOrgs.flatMap((_, i) => data?.[`org${i}`]?.repositories?.nodes ?? []),
+    ];
+    if (nodes.length === 0) return null;
     return nodes
       .filter((r: any) => r && !r.isArchived)
       .map((r: any): RepoCount => ({

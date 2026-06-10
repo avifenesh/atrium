@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { readdir } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
+import { getSpotifyAccessToken } from '../spotify.js';
 import { store } from '../state.js';
 import { ago, iso, mtime, readJson, readText, shTry, tailLines } from '../util.js';
 import type { Collector } from './registry.js';
@@ -508,17 +509,70 @@ async function cursorService(): Promise<SubService | null> {
   };
 }
 
-// ---------- spotify (not connected, CTA only) ----------
+// ---------- spotify (self-serve PKCE connect; live account + now-playing) ----------
 
-function spotifyService(): SubService {
+async function spotifyService(): Promise<SubService> {
+  const tokenSrc = join(config.configDir, 'spotify_token.json');
+  const tok = await getSpotifyAccessToken();
+  if ('error' in tok) {
+    // transient refresh trouble (network/5xx) must not flip a live card to not-connected
+    if (tok.error.includes('refresh failed') && !tok.error.includes('invalid_grant')) {
+      throw new Error(tok.error); // safe() recalls the last-good card
+    }
+    const revoked = tok.error.includes('rejected') || tok.error.includes('invalid_grant');
+    return {
+      id: 'spotify',
+      name: 'Spotify',
+      status: 'not-connected',
+      plan: null,
+      // short on purpose — the subs panel card carries the full two-step setup UI
+      detail: revoked
+        ? 'spotify access was revoked — redo setup: paste the app client id, then connect spotify'
+        : 'two-step setup: paste the spotify app client id, then connect spotify',
+      usage: null,
+      source: tokenSrc,
+    };
+  }
+
+  const res = await fetch('https://api.spotify.com/v1/me', {
+    headers: { authorization: `Bearer ${tok.token}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`); // safe() recalls the last-good card
+  const me: any = await res.json();
+  const product = typeof me?.product === 'string' ? me.product : null; // 'premium' | 'free' | ...
+  const name = typeof me?.display_name === 'string' && me.display_name ? me.display_name : null;
+  let detail = [name, product].filter(Boolean).join(' — ') || 'connected';
+
+  // now playing — best effort; a sleeping player (204) or a flaky fetch never breaks the card
+  try {
+    const p = await fetch('https://api.spotify.com/v1/me/player', {
+      headers: { authorization: `Bearer ${tok.token}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (p.status === 200) {
+      const player: any = await p.json();
+      const track = player?.item?.name;
+      if (player?.is_playing === true && typeof track === 'string') {
+        const artists = (Array.isArray(player?.item?.artists) ? player.item.artists : [])
+          .map((a: any) => (typeof a?.name === 'string' ? a.name : null))
+          .filter(Boolean)
+          .join(', ');
+        detail += `; playing: ${track}${artists ? ` — ${artists}` : ''}`;
+      }
+    }
+  } catch {
+    /* player endpoint is optional */
+  }
+
   return {
     id: 'spotify',
     name: 'Spotify',
-    status: 'not-connected',
-    plan: null,
-    detail: 'connect via: hermes auth login spotify (token lands in ~/.hermes/auth.json)',
+    status: 'active',
+    plan: product,
+    detail,
     usage: null,
-    source: config.paths.hermesAuth,
+    source: 'api.spotify.com /v1/me (token via in-app connect)',
   };
 }
 
@@ -555,17 +609,17 @@ const subs: Collector = {
     let state: SubsState;
     let flags: Flag[] = [];
     try {
-      const [claude, codex, grok, zai, copilot, cursor] = await Promise.all([
+      const [claude, codex, grok, zai, copilot, cursor, spotify] = await Promise.all([
         safe('claude', claudeService),
         safe('codex', codexService),
         safe('grok', grokService),
         safe('zai', zaiService),
         safe('copilot', copilotService),
         safe('cursor', cursorService),
+        safe('spotify', spotifyService),
       ]);
       const services: SubService[] = [];
-      for (const s of [claude, codex, grok, zai, copilot, cursor]) if (s) services.push(s);
-      services.push(spotifyService());
+      for (const s of [claude, codex, grok, zai, copilot, cursor, spotify]) if (s) services.push(s);
       await mergeManual(services);
       state = { updatedAt: iso(), services, error: null };
 

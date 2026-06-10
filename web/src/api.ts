@@ -71,9 +71,45 @@ export async function clearAllNotifications(): Promise<void> {
   if (!res.ok) throw new Error(`clear all failed ${res.status}`);
 }
 
+export interface NoteContent {
+  path: string;
+  title: string;
+  content: string;
+  modifiedAt: string;
+}
+
+/** Fetch one note's markdown for the in-app reader. Throws the server's error message on failure. */
+export async function fetchNote(relPath: string): Promise<NoteContent> {
+  const res = await fetch(`${BASE}/api/notes/read?path=${encodeURIComponent(relPath)}`);
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error ?? `note read failed ${res.status}`);
+  return body as NoteContent;
+}
+
 /** Start the in-app google connect flow: opens consent in a new tab. */
 export async function connectGoogle(): Promise<void> {
   const res = await fetch(`${BASE}/api/google/auth-url`);
+  const body = await res.json();
+  if (!res.ok || !body.url) throw new Error(body.error ?? 'auth-url failed');
+  window.open(body.url, '_blank', 'noopener');
+}
+
+/** One-time spotify setup: store the developer-app Client ID server-side. */
+export async function spotifySetClient(clientId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/spotify/client`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ clientId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `save failed ${res.status}`);
+  }
+}
+
+/** Start the in-app spotify connect flow (PKCE): opens consent in a new tab. */
+export async function connectSpotify(): Promise<void> {
+  const res = await fetch(`${BASE}/api/spotify/auth-url`);
   const body = await res.json();
   if (!res.ok || !body.url) throw new Error(body.error ?? 'auth-url failed');
   window.open(body.url, '_blank', 'noopener');

@@ -7,6 +7,8 @@ import { runAgentAction } from './actions.js';
 import { dispatchToEigen } from './eigen-dispatch.js';
 import { markNotificationRead } from './github-actions.js';
 import { googleStatus, googleAuthUrl, googleCallback } from './google.js';
+import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js';
+import { readNote } from './collectors/notes.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -185,6 +187,41 @@ const server = createServer(async (req, res) => {
       } catch (err) {
         return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
       }
+    }
+
+    if (method === 'GET' && path === '/api/notes/read') {
+      const rel = url.searchParams.get('path') ?? '';
+      try {
+        return json(res, 200, await readNote(rel));
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/spotify/client') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        await spotifySetClient(body?.clientId);
+        return json(res, 200, { ok: true });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'GET' && path === '/api/spotify/auth-url') {
+      try {
+        return json(res, 200, { url: await spotifyAuthUrl() });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'GET' && path === '/api/spotify/callback') {
+      const html = await spotifyCallback(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(html);
+      void runOnce('subs');
+      return;
     }
 
     if (method === 'GET' && path === '/api/google/callback') {
