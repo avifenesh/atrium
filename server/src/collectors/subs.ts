@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
 import { getCursorUsage } from '../cursor-usage.js';
+import { getGrokBilling } from '../grok-usage.js';
 import { getSpotifyAccessToken } from '../spotify.js';
 import { store } from '../state.js';
 import { ago, iso, mtime, readJson, readText, shTry, tailLines } from '../util.js';
@@ -304,20 +305,43 @@ async function grokService(): Promise<SubService | null> {
 
   const stats = grokSqliteStats();
   const tier = grokTier(auth);
+  // live credits: the grok binary speaks JSON-RPC over stdio — we run its own
+  // authenticated _x.ai/billing call (see grok-usage.ts) instead of faking a bar
+  const billing = await getGrokBilling().catch(() => null);
 
   const parts: string[] = [];
   if (stats) parts.push(`${stats.n} local sessions; last activity ${ago(stats.lastMs)}`);
-  // live credits only exist behind grok's gRPC /usage — say so honestly rather than faking a bar
-  parts.push('live credits: run /usage in grok (gRPC-only, no stable API)');
+
+  let usage: SubService['usage'] = null;
+  if (billing) {
+    const usedPct = Math.round(Math.max(0, Math.min(1, billing.creditUsagePercent)) * 100);
+    usage = [{ label: 'monthly credits', usedPct, resetAt: billing.periodEnd }];
+    if (billing.onDemandCap && billing.onDemandCap > 0) {
+      usage.push({
+        label: 'on-demand',
+        usedPct: Math.round((billing.onDemandUsed ?? 0) / billing.onDemandCap * 100),
+        resetAt: billing.periodEnd,
+      });
+    }
+  } else {
+    parts.push('live credits unavailable (grok cli not reachable)');
+  }
+
+  // prefer the live subscription tier from billing over the JWT claim
+  const plan = billing?.subscriptionTier ?? (tier !== null ? `tier ${tier}` : 'subscription');
 
   return {
     id: 'grok',
     name: 'Grok Build',
     status: 'active',
-    plan: tier !== null ? `tier ${tier}` : 'subscription',
-    detail: parts.join('; '),
-    usage: null,
-    source: stats ? `${src} (tier from JWT) + sessions/session_search.sqlite` : `${src} (tier from JWT)`,
+    plan,
+    detail: parts.length ? parts.join('; ') : null,
+    usage,
+    source: billing
+      ? `${src} + grok agent stdio (_x.ai/billing)`
+      : stats
+        ? `${src} (tier from JWT) + sessions/session_search.sqlite`
+        : `${src} (tier from JWT)`,
   };
 }
 

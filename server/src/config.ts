@@ -37,6 +37,7 @@ export const defaults = {
     codexHome: join(HOME, '.codex'),
     codexSessionIndex: join(HOME, '.codex', 'session_index.jsonl'),
     grokAuth: join(HOME, '.grok', 'auth.json'),
+    grokBin: join(HOME, '.grok', 'bin', 'grok'),
     cursorAgent: join(HOME, '.local', 'share', 'cursor-agent'),
     itchConfig: join(HOME, '.config', 'itch'),
     itchRuns: join(HOME, '.config', 'itch', 'runs'),
