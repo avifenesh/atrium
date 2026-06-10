@@ -226,12 +226,15 @@ export function MuteButton({
   enforce = false,
   className = '',
   label = 'quiet',
+  untilActivity = false,
 }: {
   kind: MuteKind;
   target: string;
   enforce?: boolean;
   className?: string;
   label?: string;
+  /** github-item only: quiet auto-lifts when the item moves (new comment/push) */
+  untilActivity?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -239,7 +242,13 @@ export function MuteButton({
   return (
     <button
       type="button"
-      title={enforce ? `quiet ${target} (pauses the source)` : `quiet ${target}`}
+      title={
+        enforce
+          ? `quiet ${target} (pauses the source)`
+          : untilActivity
+            ? `quiet ${target} — comes back on new activity`
+            : `quiet ${target}`
+      }
       disabled={busy}
       onClick={async (e) => {
         e.preventDefault();
@@ -252,7 +261,7 @@ export function MuteButton({
         setArmed(false);
         setBusy(true);
         try {
-          await addMute({ kind, target, enforce });
+          await addMute({ kind, target, enforce, ...(untilActivity ? { untilActivity: true } : {}) });
           setFailed(false);
         } catch {
           setFailed(true);

@@ -243,10 +243,27 @@ export const mutes = {
       await unenforceBestEffort(existing);
     }
     const mute: Mute = { id, kind: req.kind, target: req.target, until, mode, enforcedBy, createdAt: iso() };
+    if (req.untilActivity === true && req.kind === 'github-item') mute.untilActivity = true;
     current = [...current.filter((m) => m.id !== id), mute];
     await persist();
     store.setMutes(current);
     return mute;
+  },
+
+  /** Drop until-activity github-item mutes whose item moved since the mute was set
+   *  (new comment/push bumps updatedAt → the item resurfaces). Called by the github
+   *  collector after each poll with every item id it saw. */
+  async resurface(items: ReadonlyMap<string, string | null>): Promise<void> {
+    const woken = current.filter((m) => {
+      if (m.kind !== 'github-item' || m.untilActivity !== true) return false;
+      const updatedAt = items.get(m.target);
+      return !!updatedAt && new Date(updatedAt).getTime() > new Date(m.createdAt).getTime();
+    });
+    if (woken.length === 0) return;
+    const dead = new Set(woken.map((m) => m.id));
+    current = current.filter((m) => !dead.has(m.id));
+    await persist();
+    store.setMutes(current);
   },
 
   async remove(id: string): Promise<void> {

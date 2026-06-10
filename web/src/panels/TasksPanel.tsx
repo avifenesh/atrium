@@ -53,7 +53,7 @@ function RepoMutes({ repo, itemId }: { repo: string; itemId?: string }) {
   const owner = repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : repo;
   return (
     <>
-      {itemId && <MuteButton kind="github-item" target={itemId} />}
+      {itemId && <MuteButton kind="github-item" target={itemId} untilActivity />}
       <MuteButton kind="github-repo" target={repo} label="repo" className={itemId ? 'opacity-60' : ''} />
       <MuteButton kind="github-org" target={owner} label="org" className="opacity-60" />
     </>

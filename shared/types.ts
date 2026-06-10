@@ -359,6 +359,9 @@ export interface Mute {
   mode: 'ui' | 'enforced';
   enforcedBy: string | null; // what command/file made it real
   createdAt: string;
+  /** github-item only: auto-unmute when the item's updatedAt moves past createdAt
+   *  ("reviewed, waiting for reaction" — a new comment brings it back) */
+  untilActivity?: boolean;
 }
 
 export interface MuteRequest {
@@ -366,6 +369,7 @@ export interface MuteRequest {
   target: string;
   until?: string | null; // ISO or null/omitted = forever
   enforce?: boolean; // attempt real enforcement when available
+  untilActivity?: boolean; // github-item only: resurface on new activity
 }
 
 // ---------- flags (anomalies) ----------

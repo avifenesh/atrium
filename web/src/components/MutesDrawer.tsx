@@ -82,6 +82,33 @@ function RestoreButton({ id }: { id: string }) {
   );
 }
 
+/** Flip an until-activity quiet into a forever one (re-add without the flag). */
+function KeepQuietButton({ m }: { m: Mute }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle');
+  return (
+    <button
+      type="button"
+      disabled={state === 'busy'}
+      title="stop watching — keep this quiet even when it gets new activity"
+      onClick={async () => {
+        setState('busy');
+        try {
+          await addMute({ kind: m.kind, target: m.target, until: m.until });
+          setState('idle');
+        } catch {
+          setState('failed');
+          setTimeout(() => setState('idle'), 4000);
+        }
+      }}
+      className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+        state === 'failed' ? 'text-coral' : 'text-mist-faint hover:text-mist'
+      }`}
+    >
+      {state === 'busy' ? '…' : state === 'failed' ? 'failed' : 'forever'}
+    </button>
+  );
+}
+
 function MuteEntry({ m }: { m: Mute }) {
   return (
     <li className="flex items-center gap-2 rounded border-b px-1 py-2 transition-colors last:border-b-0 hairline hover:bg-white/[0.03]">
@@ -98,7 +125,16 @@ function MuteEntry({ m }: { m: Mute }) {
           <RelTime iso={m.createdAt} />
         </div>
       </div>
-      <Until iso={m.until} />
+      {m.untilActivity ? (
+        <span
+          className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] bg-white/5 text-mist-faint"
+          title="quiet until new activity — a comment or push brings it back"
+        >
+          til activity
+        </span>
+      ) : (
+        <Until iso={m.until} />
+      )}
       <span
         className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] ${
           m.mode === 'enforced' ? 'bg-amber/15 text-amber' : 'bg-white/5 text-mist-faint'
@@ -106,6 +142,7 @@ function MuteEntry({ m }: { m: Mute }) {
       >
         {m.mode === 'enforced' ? 'enforced' : 'ui'}
       </span>
+      {m.untilActivity && <KeepQuietButton m={m} />}
       <RestoreButton id={m.id} />
     </li>
   );

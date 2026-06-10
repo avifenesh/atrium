@@ -172,7 +172,7 @@ export default function NowView({
                       sourceId={it.id}
                       dispatches={agents.dispatches}
                     />
-                    <MuteButton kind="github-item" target={it.id} />
+                    <MuteButton kind="github-item" target={it.id} untilActivity />
                     <MuteButton kind="github-repo" target={it.repo} label="repo" className="opacity-60" />
                   </span>
                 </Row>

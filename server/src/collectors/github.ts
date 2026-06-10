@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { sh, shTry, iso } from '../util.js';
 import { store } from '../state.js';
+import { mutes } from '../mutes.js';
 import type { Collector } from './registry.js';
 import type {
   Flag,
@@ -291,6 +292,16 @@ const collector: Collector = {
       };
       lastGood = state;
       store.setSection('github', state);
+
+      // "quiet until activity" wake-up: any seen item that moved since its mute
+      // was set gets unmuted and resurfaces. Failure here must not fail the poll.
+      const seen = new Map<string, string | null>();
+      for (const it of [...actNow, ...orgQueue, ...myPRs, ...mentions, ...teamQueue]) {
+        seen.set(it.id, it.updatedAt);
+      }
+      await mutes.resurface(seen).catch((e) => {
+        console.error('[github] resurface failed:', e instanceof Error ? e.message : e);
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       flags.push({
