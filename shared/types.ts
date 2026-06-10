@@ -191,7 +191,17 @@ export interface SystemState {
   /** non-obvious user processes worth knowing about */
   processes: { pid: number; cmd: string; cpuPct: number; memPct: number; label: string | null }[];
   services: { unit: string; active: string; sub: string; description: string }[];
+  /** rolling utilization history (percent samples, oldest→newest) for the sparklines;
+   *  server-persisted so the graphs have depth the moment the app opens */
+  history: SystemHistory;
   error: string | null;
+}
+
+export interface SystemHistory {
+  cpu: number[];
+  mem: number[];
+  swap: number[];
+  gpu: number[];
 }
 
 // ---------- schedule (unified cron view) ----------

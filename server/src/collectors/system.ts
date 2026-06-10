@@ -2,6 +2,7 @@ import { cpus } from 'node:os';
 import { config } from '../config.js';
 import { store } from '../state.js';
 import { readText, redactSecrets, shTry, iso } from '../util.js';
+import { getMetricHistory, recordMetrics } from '../metric-history.js';
 import type { Collector } from './registry.js';
 import type { SystemState, Flag } from '../../../shared/types.js';
 
@@ -229,6 +230,8 @@ async function collectServices(): Promise<SystemState['services']> {
 // systemctl is the only spawn-per-unit step; refresh it every 6th cycle, reuse otherwise
 let cycle = 0;
 let servicesCache: SystemState['services'] = [];
+// cpu.pct is 0 on the first poll (no /proc/stat delta yet) — don't log that sample
+let cpuCold = true;
 
 // keep first-raise time stable per flag id so the UI doesn't show "just raised" forever
 const raisedAt = new Map<string, string>();
@@ -250,6 +253,7 @@ async function run(): Promise<void> {
     ports: [],
     processes: [],
     services: [],
+    history: getMetricHistory(),
     error: null,
   };
 
@@ -277,6 +281,13 @@ async function run(): Promise<void> {
   } catch (err) {
     state.error = err instanceof Error ? err.message : String(err);
   }
+
+  // record into the rolling history only on a clean, warm poll. skip on error
+  // (zeroed metrics) and on the very first poll after boot (cpu.pct is always 0
+  // until /proc/stat has two samples to diff) — both would punch false 0% dips.
+  const cold = cpuCold;
+  cpuCold = false;
+  state.history = state.error || cold ? getMetricHistory() : recordMetrics(state);
 
   const flags: Flag[] = [];
   if (state.swap.usedPct > 90) {

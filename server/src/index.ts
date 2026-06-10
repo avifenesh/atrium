@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { store } from './state.js';
 import { register, startAll, runOnce, list } from './collectors/registry.js';
 import { mutes } from './mutes.js';
+import { loadMetricHistory } from './metric-history.js';
 import { runAgentAction } from './actions.js';
 import { dispatchToEigen } from './eigen-dispatch.js';
 import { markNotificationRead } from './github-actions.js';
@@ -321,6 +322,7 @@ async function serveStatic(path: string, res: ServerResponse): Promise<boolean> 
 }
 
 await mutes.load();
+await loadMetricHistory();
 startAll();
 
 server.listen(config.port, config.host, () => {

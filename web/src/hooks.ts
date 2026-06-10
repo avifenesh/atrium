@@ -96,9 +96,20 @@ function push(key: keyof typeof buffers, v: number) {
   if (buf.length > CAP) buf.shift();
 }
 
-/** record one snapshot's system percents; deduped by system.updatedAt. */
+/** Adopt the system metric history. The server now persists this (survives reload
+ *  + daemon restart), so when the snapshot carries it we mirror it wholesale —
+ *  the graphs have depth on the first frame. Only when it's absent (older server)
+ *  do we fall back to accumulating locally, deduped by system.updatedAt. */
 export function recordSystemSample(s: Snapshot): void {
   const sys = s.system;
+  const h = sys.history;
+  if (h && Array.isArray(h.cpu)) {
+    buffers.cpu = h.cpu;
+    buffers.mem = h.mem;
+    buffers.swap = h.swap;
+    buffers.gpu = h.gpu ?? [];
+    return;
+  }
   if (!sys.updatedAt || sys.updatedAt === lastSampleAt) return;
   lastSampleAt = sys.updatedAt;
   push('cpu', sys.cpu.pct);

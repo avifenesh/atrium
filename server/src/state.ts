@@ -49,7 +49,8 @@ export function emptySnapshot(): Snapshot {
       cpu: { load1: 0, load5: 0, load15: 0, cores: 0, pct: 0 },
       mem: { totalB: 0, availableB: 0, usedPct: 0 },
       swap: { totalB: 0, freeB: 0, usedPct: 0 },
-      gpu: null, disks: [], ports: [], processes: [], services: [], error: null,
+      gpu: null, disks: [], ports: [], processes: [], services: [],
+      history: { cpu: [], mem: [], swap: [], gpu: [] }, error: null,
     },
     schedule: { updatedAt: null, entries: [], error: null },
     comms: {
