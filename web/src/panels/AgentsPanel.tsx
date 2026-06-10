@@ -1,23 +1,23 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { agentAction } from '../api';
+import { agentAction, isMuted } from '../api';
 import {
+  CopyText,
   Dot,
   EmptyState,
   MuteButton,
-  Mutable,
   Panel,
+  QuietChip,
   RelTime,
+  Row,
   SectionLabel,
-  UnmuteButton,
 } from '../components/ui';
-import type { AgentControl, AgentInfo, AgentSession, Mute, Snapshot } from '../../../shared/types';
-
-function activeMute(snapshot: Snapshot, kind: Mute['kind'], target: string): Mute | undefined {
-  const now = Date.now();
-  return snapshot.mutes.find(
-    (m) => m.kind === kind && m.target === target && (!m.until || new Date(m.until).getTime() > now),
-  );
-}
+import type {
+  AgentControl,
+  AgentInfo,
+  AgentSession,
+  EigenDispatch,
+  Snapshot,
+} from '../../../shared/types';
 
 function sessionLabel(s: AgentSession): string {
   if (s.title) return s.title;
@@ -29,18 +29,54 @@ function controlKey(c: AgentControl): string {
   return `${c.action}|${c.target ?? ''}`;
 }
 
+/** EigenDispatch.status → .dot-* class: running pulses amber, done is jade, error coral. */
+function dispatchDot(status: EigenDispatch['status']): string {
+  return status === 'running' ? 'active' : status === 'done' ? 'running' : 'error';
+}
+
+function DispatchRow({ d }: { d: EigenDispatch }) {
+  return (
+    <Row className="group">
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <Dot status={dispatchDot(d.status)} />
+        <span className="min-w-0 flex-1 truncate text-sm text-mist" title={d.title}>
+          {d.title}
+        </span>
+        <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim">
+          {d.mode}
+        </span>
+        <RelTime iso={d.startedAt} />
+        {d.logPath && (
+          <CopyText text={d.logPath}>
+            <span className="shrink-0 font-mono text-[10px] text-mist-faint" title={d.logPath}>
+              log
+            </span>
+          </CopyText>
+        )}
+      </div>
+    </Row>
+  );
+}
+
 function AgentCard({
   agent,
   snapshot,
   riseIndex,
+  dispatches,
+  onOpenQuiet,
 }: {
   agent: AgentInfo;
   snapshot: Snapshot;
   riseIndex: number;
+  dispatches: EigenDispatch[];
+  onOpenQuiet: () => void;
 }) {
-  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [armed, setArmed] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // '<repo>' / '<jobId>' style targets are placeholders — collect the concrete one
+  // with an inline in-card input (DESIGN v2: never a native blocking dialog)
+  const [pending, setPending] = useState<{ c: AgentControl; value: string } | null>(null);
   const [result, setResult] = useState<{ text: string; isError: boolean } | null>(null);
   const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,22 +87,8 @@ function AgentCard({
     [],
   );
 
-  const fire = async (c: AgentControl) => {
+  const run = async (c: AgentControl, target: string | undefined) => {
     const key = controlKey(c);
-    // two-click confirm for destructive actions: first click arms, second fires
-    if (c.destructive && armed !== key) {
-      setArmed(key);
-      setTimeout(() => setArmed((a) => (a === key ? null : a)), 4000);
-      return;
-    }
-    setArmed(null);
-    // '<repo>' / '<jobId>' style targets are placeholders, not real resources — ask for the concrete one
-    let target = c.target;
-    if (target && /^<.+>$/.test(target)) {
-      const entered = window.prompt(`${c.label} — enter ${target.slice(1, -1)}:`, '');
-      if (!entered?.trim()) return;
-      target = entered.trim();
-    }
     setBusy(key);
     try {
       const res = await agentAction(agent.id, c.action, target);
@@ -84,152 +106,266 @@ function AgentCard({
     }
   };
 
+  const fire = async (c: AgentControl) => {
+    const key = controlKey(c);
+    // two-click confirm for destructive actions: first click arms, second fires
+    if (c.destructive && armed !== key) {
+      setArmed(key);
+      setTimeout(() => setArmed((a) => (a === key ? null : a)), 4000);
+      return;
+    }
+    setArmed(null);
+    if (c.target && /^<.+>$/.test(c.target)) {
+      setPending({ c, value: '' });
+      return;
+    }
+    await run(c, c.target);
+  };
+
+  // muted resources disappear entirely — the drawer is their archive
+  const visibleResources = agent.resources.filter(
+    (r) => !isMuted(snapshot, 'agent-resource', `${agent.id}:${r.id}`),
+  );
+  const quietResources = agent.resources.length - visibleResources.length;
+
   const sessions = agent.sessions.slice(0, 5);
   const moreSessions = agent.sessions.length - sessions.length;
+  const recentDispatches =
+    agent.id === 'eigen'
+      ? [...dispatches].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 8)
+      : [];
 
   return (
-    <Mutable snapshot={snapshot} kind="agent" target={agent.id}>
-      <section className="glass rise flex h-full flex-col p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
-        <header className="group flex items-center gap-2">
+    <section
+      className="glass rise flex h-full flex-col p-4"
+      style={{ '--rise-i': riseIndex } as CSSProperties}
+    >
+      <Row onClick={() => setExpanded((o) => !o)}>
+        <div className="flex w-full min-w-0 items-center gap-2">
           <Dot status={agent.status} />
-          <span className="font-display text-lg italic lowercase text-mist">{agent.name}</span>
-          <span className="font-mono text-xs text-mist-faint">{agent.status}</span>
+          <span className="min-w-0 truncate text-sm font-semibold lowercase text-mist">
+            {agent.name}
+          </span>
+          <span className="shrink-0 font-mono text-xs text-mist-faint">{agent.status}</span>
           <span className="flex-1" />
+          {quietResources > 0 && (
+            <span onClick={(e) => e.stopPropagation()}>
+              <QuietChip count={quietResources} onClick={onOpenQuiet} />
+            </span>
+          )}
           <MuteButton kind="agent" target={agent.id} enforce />
           <RelTime iso={agent.lastActivity} />
-        </header>
-        {agent.error && <div className="mt-1 truncate font-mono text-xs text-coral">{agent.error}</div>}
-        <div className="mt-1 text-sm text-mist-dim">{agent.detail}</div>
+          <span className="shrink-0 font-mono text-[10px] text-mist-faint">
+            {expanded ? '▾' : '▸'}
+          </span>
+        </div>
+      </Row>
+      {agent.error && (
+        <div className="mt-1 truncate font-mono text-xs text-coral" title={agent.error}>
+          {agent.error}
+        </div>
+      )}
+      <div className="mt-1 truncate text-sm text-mist-dim" title={agent.detail}>
+        {agent.detail}
+      </div>
 
-        {agent.sessions.length > 0 && (
-          <>
-            <SectionLabel>sessions</SectionLabel>
-            <div>
-              {sessions.map((s) => (
-                <div key={s.id} className="flex items-center gap-2 py-1 text-sm">
-                  <Dot status={s.live ? 'running' : 'off'} />
-                  <span className="min-w-0 truncate text-mist">{sessionLabel(s)}</span>
-                  {s.model && <span className="shrink-0 font-mono text-xs text-mist-faint">{s.model}</span>}
-                  <span className="flex-1" />
-                  <RelTime iso={s.updatedAt} />
-                </div>
-              ))}
-              {moreSessions > 0 && (
-                <div className="py-1 font-mono text-[11px] text-mist-faint">{moreSessions} more</div>
-              )}
-            </div>
-          </>
-        )}
+      {recentDispatches.length > 0 && (
+        <>
+          <SectionLabel>dispatches</SectionLabel>
+          <div className="max-h-48 overflow-y-auto">
+            {recentDispatches.map((d) => (
+              <DispatchRow key={d.id} d={d} />
+            ))}
+          </div>
+        </>
+      )}
 
-        {agent.resources.length > 0 && (
-          <>
-            <button
-              onClick={() => setResourcesOpen((o) => !o)}
-              className="mb-1 mt-4 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-mist-faint transition-colors hover:text-mist-dim"
-            >
-              <span>{resourcesOpen ? '▾' : '▸'}</span>
-              resources · {agent.resources.length}
-            </button>
-            {resourcesOpen && (
+      {expanded && (
+        <>
+          {agent.sessions.length > 0 && (
+            <>
+              <SectionLabel>sessions</SectionLabel>
+              <div>
+                {sessions.map((s) => (
+                  <Row key={s.id} className="group">
+                    <div className="flex w-full min-w-0 items-center gap-2">
+                      <Dot status={s.live ? 'running' : 'off'} />
+                      {s.dir ? (
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <CopyText text={s.dir}>
+                            <span className="block truncate text-left text-sm text-mist" title={s.dir}>
+                              {sessionLabel(s)}
+                            </span>
+                          </CopyText>
+                        </div>
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate text-sm text-mist">
+                          {sessionLabel(s)}
+                        </span>
+                      )}
+                      {s.model && (
+                        <span className="shrink-0 font-mono text-xs text-mist-faint">{s.model}</span>
+                      )}
+                      <RelTime iso={s.updatedAt} />
+                    </div>
+                  </Row>
+                ))}
+                {moreSessions > 0 && (
+                  <div className="py-1 font-mono text-[11px] tabular-nums text-mist-faint">
+                    {moreSessions} more
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {visibleResources.length > 0 && (
+            <>
+              <SectionLabel>resources · {visibleResources.length}</SectionLabel>
               <div className="max-h-44 overflow-y-auto">
-                {agent.resources.map((r) => {
+                {visibleResources.map((r) => {
                   const target = `${agent.id}:${r.id}`;
                   // hermes cron resources report 'enabled', not 'active' — only known-stopped states are inactive
                   const isActive = r.state !== 'paused' && r.state !== 'off';
-                  const mute = activeMute(snapshot, 'agent-resource', target);
-                  if (!isActive) {
-                    return (
-                      <div key={r.id} className="muted-dim flex items-center gap-2 py-1 text-sm">
-                        <Dot status="off" />
-                        <span className="min-w-0 truncate text-mist">{r.name}</span>
-                        <span className="flex-1" />
-                        {mute ? (
-                          <UnmuteButton id={mute.id} />
-                        ) : (
-                          <span className="font-mono text-[11px] text-mist-faint">{r.state}</span>
-                        )}
-                      </div>
-                    );
-                  }
-                  // a ui-mode mute on an active resource still dims it (DESIGN rule 5) and offers unquiet inline
                   return (
-                    <div key={r.id} className={`group flex items-center gap-2 py-1 text-sm ${mute ? 'muted-dim' : ''}`}>
-                      <Dot status="running" />
-                      <span className="min-w-0 truncate text-mist">{r.name}</span>
-                      <span className="flex-1" />
-                      {mute ? (
-                        <UnmuteButton id={mute.id} />
-                      ) : (
-                        r.muteable && <MuteButton kind="agent-resource" target={target} enforce />
-                      )}
-                      <span className="font-mono text-[11px] text-mist-faint">{r.state}</span>
-                    </div>
+                    <Row key={r.id} className="group">
+                      <div className="flex w-full min-w-0 items-center gap-2">
+                        <Dot status={isActive ? 'running' : 'off'} />
+                        <span className="min-w-0 flex-1 truncate text-sm text-mist" title={r.name}>
+                          {r.name}
+                        </span>
+                        {r.muteable && <MuteButton kind="agent-resource" target={target} enforce />}
+                        <span className="shrink-0 font-mono text-[11px] text-mist-faint">
+                          {r.state}
+                        </span>
+                      </div>
+                    </Row>
                   );
                 })}
               </div>
-            )}
-          </>
-        )}
+            </>
+          )}
+        </>
+      )}
 
-        {agent.controls.length > 0 && (
-          <div className="mt-auto pt-3">
-            <div className="flex flex-wrap gap-2">
-              {agent.controls.map((c) => {
-                const key = controlKey(c);
-                const isArmed = armed === key;
-                const isBusy = busy === key;
-                return (
-                  <button
-                    key={key}
-                    disabled={isBusy}
-                    onClick={() => {
-                      void fire(c);
-                    }}
-                    className={`rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors ${
-                      isArmed ? 'glass-raised text-coral' : 'glass'
-                    } ${
-                      c.destructive
-                        ? 'text-coral hover:text-coral'
-                        : 'text-mist-dim hover:text-mist'
-                    }`}
-                  >
-                    {isBusy ? '◌' : isArmed ? 'sure?' : c.label}
-                  </button>
-                );
-              })}
-            </div>
-            {result && (
-              <div
-                className={`mt-2 truncate font-mono text-xs ${result.isError ? 'text-coral' : 'text-mist-faint'}`}
-              >
-                {result.text}
-              </div>
-            )}
+      {agent.controls.length > 0 && (
+        <div className="mt-auto pt-3">
+          <div className="flex flex-wrap gap-2">
+            {agent.controls.map((c) => {
+              const key = controlKey(c);
+              const isArmed = armed === key;
+              const isBusy = busy === key;
+              return (
+                <button
+                  key={key}
+                  disabled={isBusy}
+                  onClick={() => {
+                    void fire(c);
+                  }}
+                  className={`rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors ${
+                    isArmed ? 'glass-raised text-coral' : 'glass'
+                  } ${
+                    c.destructive ? 'text-coral hover:text-coral' : 'text-mist-dim hover:text-mist'
+                  }`}
+                >
+                  {isBusy ? '◌' : isArmed ? 'sure?' : c.label}
+                </button>
+              );
+            })}
           </div>
-        )}
-      </section>
-    </Mutable>
+          {pending && (
+            <form
+              className="mt-2 flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const target = pending.value.trim();
+                if (!target) return;
+                setPending(null);
+                void run(pending.c, target);
+              }}
+            >
+              <span className="shrink-0 font-mono text-[11px] text-mist-dim">{pending.c.label}</span>
+              <input
+                autoFocus
+                value={pending.value}
+                onChange={(e) => setPending((p) => (p ? { ...p, value: e.target.value } : p))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setPending(null);
+                }}
+                placeholder={pending.c.target!.slice(1, -1)}
+                className="glass min-w-0 flex-1 rounded-md px-2 py-1 font-mono text-[11px] text-mist outline-none placeholder:text-mist-faint"
+              />
+              <button
+                type="submit"
+                className="shrink-0 cursor-pointer rounded-md px-2 py-1 font-mono text-[11px] text-jade transition-colors glass hover:text-mist"
+              >
+                go
+              </button>
+              <button
+                type="button"
+                onClick={() => setPending(null)}
+                className="shrink-0 cursor-pointer rounded-md px-2 py-1 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+              >
+                cancel
+              </button>
+            </form>
+          )}
+          {result && (
+            <div
+              className={`mt-2 truncate font-mono text-xs ${result.isError ? 'text-coral' : 'text-mist-faint'}`}
+              title={result.text}
+            >
+              {result.text}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
-export default function AgentsPanel({ snapshot }: { snapshot: Snapshot }) {
+export default function AgentsPanel({
+  snapshot,
+  onOpenQuiet: openQuiet,
+}: {
+  snapshot: Snapshot;
+  onOpenQuiet: () => void;
+}) {
   const { agents, activity } = snapshot.agents;
+  const dispatches = snapshot.agents.dispatches ?? [];
+
+  // muted agents disappear from the grid — quiet chip is the way back (drawer = archive)
+  const visible = agents.filter((a) => !isMuted(snapshot, 'agent', a.id));
+  const quietAgents = agents.length - visible.length;
 
   return (
     <div>
-      {agents.length === 0 ? (
-        <Panel title="agents">
+      {quietAgents > 0 && (
+        <div className="mb-3 flex justify-end">
+          <QuietChip count={quietAgents} onClick={openQuiet} />
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <Panel title="agents" quietCount={quietAgents || undefined} onQuietClick={openQuiet}>
           <EmptyState>no agents reporting</EmptyState>
         </Panel>
       ) : (
-        <div className="grid items-stretch gap-4 xl:grid-cols-2">
-          {agents.map((a, i) => (
-            <AgentCard key={a.id} agent={a} snapshot={snapshot} riseIndex={i} />
+        <div className="grid items-stretch gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          {visible.map((a, i) => (
+            <AgentCard
+              key={a.id}
+              agent={a}
+              snapshot={snapshot}
+              riseIndex={i}
+              dispatches={dispatches}
+              onOpenQuiet={openQuiet}
+            />
           ))}
         </div>
       )}
 
-      <Panel title="activity" riseIndex={agents.length} className="mt-4">
+      <Panel title="activity" riseIndex={visible.length} className="mt-4">
         {activity.length === 0 ? (
           <EmptyState>nothing happening</EmptyState>
         ) : (
@@ -239,7 +375,9 @@ export default function AgentsPanel({ snapshot }: { snapshot: Snapshot }) {
               <div key={`${a.time}-${i}`} className="flex items-baseline gap-2 py-0.5">
                 <RelTime iso={a.time} />
                 <span className="shrink-0 text-mist-faint">{a.source}</span>
-                <span className={`min-w-0 truncate ${a.isError ? 'text-coral' : 'text-mist-dim'}`}>{a.text}</span>
+                <span className={`min-w-0 truncate ${a.isError ? 'text-coral' : 'text-mist-dim'}`}>
+                  {a.text}
+                </span>
               </div>
             ))}
           </div>

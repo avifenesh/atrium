@@ -4,6 +4,9 @@ import { store } from './state.js';
 import { register, startAll, runOnce, list } from './collectors/registry.js';
 import { mutes } from './mutes.js';
 import { runAgentAction } from './actions.js';
+import { dispatchToEigen } from './eigen-dispatch.js';
+import { markNotificationRead } from './github-actions.js';
+import { googleStatus, googleAuthUrl, googleCallback } from './google.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -58,10 +61,40 @@ function json(res: ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+// Loopback binding alone does not stop DNS rebinding (attacker.com → 127.0.0.1) or
+// CSRF via CORS-"simple" requests (text/plain POST needs no preflight, and
+// /api/eigen/dispatch spawns an agent with the user's credentials). Standard
+// localhost-daemon defense: strict Host allowlist on every request, plus
+// same-origin-or-absent Origin on state-changing methods.
+const ALLOWED_HOSTS = new Set(
+  [config.host, '127.0.0.1', 'localhost', '[::1]'].map((h) => `${h}:${config.port}`),
+);
+// the vite dev server (changeOrigin proxies /api with the backend host, but the
+// browser still sends its own Origin) — allow its loopback origin too
+const ALLOWED_ORIGIN_HOSTS = new Set([...ALLOWED_HOSTS, '127.0.0.1:5173', 'localhost:5173', '[::1]:5173']);
+
+function hostAllowed(host: string | undefined): boolean {
+  return !!host && ALLOWED_HOSTS.has(host.toLowerCase());
+}
+
+function originAllowed(origin: string | undefined): boolean {
+  if (!origin) return true; // non-browser clients and some same-origin requests omit it
+  try {
+    return ALLOWED_ORIGIN_HOSTS.has(new URL(origin).host.toLowerCase());
+  } catch {
+    return false; // includes Origin: null
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${config.host}:${config.port}`);
   const path = url.pathname;
   const method = req.method ?? 'GET';
+
+  if (!hostAllowed(req.headers.host)) return json(res, 403, { error: 'forbidden host' });
+  if (method !== 'GET' && method !== 'HEAD' && !originAllowed(req.headers.origin)) {
+    return json(res, 403, { error: 'cross-origin request rejected' });
+  }
 
   try {
     if (method === 'GET' && path === '/api/health') return json(res, 200, { ok: true });
@@ -95,7 +128,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && path === '/api/mutes') {
-      const body = (await readBody(req)) as MuteRequest;
+      // malformed JSON is a bad request — {} fails mutes.add shape validation → 400
+      const body = (await readBody(req).catch(() => ({}))) as MuteRequest;
       try {
         const mute = await mutes.add(body);
         return json(res, 201, mute);
@@ -122,6 +156,43 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && refresh) {
       const ok = await runOnce(refresh[1]);
       return json(res, ok ? 200 : 404, { ok, collectors: list() });
+    }
+
+    if (method === 'POST' && path === '/api/eigen/dispatch') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        const dispatch = await dispatchToEigen(body);
+        void runOnce('agents');
+        return json(res, 200, dispatch);
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/notifications/read') {
+      const body = await readBody(req).catch(() => ({}));
+      const result = await markNotificationRead(body);
+      if (result.ok) void runOnce('github');
+      // client-input failures are 400; gh/api failures are the server's 500
+      return json(res, result.ok ? 200 : result.badRequest ? 400 : 500, result);
+    }
+
+    if (method === 'GET' && path === '/api/google/status') return json(res, 200, await googleStatus());
+
+    if (method === 'GET' && path === '/api/google/auth-url') {
+      try {
+        return json(res, 200, { url: await googleAuthUrl() });
+      } catch (err) {
+        return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'GET' && path === '/api/google/callback') {
+      const html = await googleCallback(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(html);
+      void runOnce('comms');
+      return;
     }
 
     // static web ui (built assets), if present

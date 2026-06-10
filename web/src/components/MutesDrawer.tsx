@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { Snapshot, MuteKind } from '../../../shared/types';
-import { addMute } from '../api';
-import { SectionLabel, UnmuteButton, EmptyState } from './ui';
+import type { Snapshot, Mute, MuteKind } from '../../../shared/types';
+import { addMute, removeMute } from '../api';
+import { SectionLabel, EmptyState } from './ui';
 
 const KINDS: { kind: MuteKind; placeholder: string }[] = [
   { kind: 'github-repo', placeholder: 'owner/repo' },
@@ -44,7 +44,7 @@ function Until({ iso }: { iso: string | null }) {
   const rel =
     s <= 0 ? 'now' : s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
   return (
-    <span className="font-mono text-xs text-mist-dim" title={new Date(iso).toLocaleString()}>
+    <span className="font-mono text-xs tabular-nums text-mist-dim" title={new Date(iso).toLocaleString()}>
       {s <= 0 ? rel : `in ${rel}`}
     </span>
   );
@@ -53,6 +53,58 @@ function Until({ iso }: { iso: string | null }) {
 const LABEL = 'mb-1 block font-mono text-[10px] uppercase tracking-widest text-mist-faint';
 const FIELD =
   'w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-sm text-mist placeholder:text-mist-faint focus:border-amber/50 focus:outline-none';
+
+/** UnmuteButton with archive language — the drawer is where things come back from. */
+function RestoreButton({ id }: { id: string }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle');
+  return (
+    <button
+      type="button"
+      disabled={state === 'busy'}
+      onClick={async () => {
+        setState('busy');
+        try {
+          await removeMute(id);
+          setState('idle');
+        } catch {
+          setState('failed');
+          setTimeout(() => setState('idle'), 4000);
+        }
+      }}
+      className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+        state === 'failed' ? 'text-coral' : 'text-amber hover:text-mist'
+      }`}
+    >
+      {state === 'busy' ? '…' : state === 'failed' ? 'failed' : 'restore'}
+    </button>
+  );
+}
+
+function MuteEntry({ m }: { m: Mute }) {
+  return (
+    <li className="flex items-center gap-2 border-b py-2 last:border-b-0 hairline">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-mist" title={m.target}>
+          {m.target}
+        </div>
+        {m.enforcedBy && (
+          <div className="truncate font-mono text-[10px] text-mist-faint" title={m.enforcedBy}>
+            {m.enforcedBy}
+          </div>
+        )}
+      </div>
+      <Until iso={m.until} />
+      <span
+        className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] ${
+          m.mode === 'enforced' ? 'bg-amber/15 text-amber' : 'bg-white/5 text-mist-faint'
+        }`}
+      >
+        {m.mode === 'enforced' ? 'enforced' : 'ui'}
+      </span>
+      <RestoreButton id={m.id} />
+    </li>
+  );
+}
 
 export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot; onClose: () => void }) {
   const [kind, setKind] = useState<MuteKind>('github-repo');
@@ -71,6 +123,16 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
   }, [onClose]);
 
   const active = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
+
+  // group by kind, in KINDS order, then anything unexpected at the end
+  const knownOrder = KINDS.map((k) => k.kind);
+  const groups = new Map<MuteKind, Mute[]>();
+  for (const k of knownOrder) groups.set(k, []);
+  for (const m of active) {
+    const list = groups.get(m.kind);
+    if (list) list.push(m);
+    else groups.set(m.kind, [m]);
+  }
 
   const submit = async () => {
     const t = target.trim();
@@ -94,44 +156,29 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
       <div className="fixed inset-0 z-40 bg-ink/60" onClick={onClose} />
       <aside className="glass-raised fixed inset-y-0 right-0 z-40 flex w-96 flex-col overflow-y-auto p-5">
         <header className="mb-4 flex items-baseline justify-between">
-          <h2 className="font-display text-2xl italic text-mist">quiet</h2>
+          <h2 className="text-sm font-semibold lowercase tracking-wide text-mist">quiet / archive</h2>
           <button onClick={onClose} className="font-mono text-[11px] text-mist-faint hover:text-mist">
             esc
           </button>
         </header>
 
-        <SectionLabel>active</SectionLabel>
         {active.length === 0 ? (
-          <EmptyState>nothing quieted</EmptyState>
+          <EmptyState>quiet things from any list — they land here</EmptyState>
         ) : (
-          <ul>
-            {active.map((m) => (
-              <li key={m.id} className="flex items-center gap-2 border-b py-2 last:border-b-0 hairline">
-                <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim">
-                  {m.kind}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm text-mist" title={m.target}>
-                    {m.target}
-                  </div>
-                  {m.enforcedBy && (
-                    <div className="truncate font-mono text-[10px] text-mist-faint" title={m.enforcedBy}>
-                      {m.enforcedBy}
-                    </div>
-                  )}
-                </div>
-                <Until iso={m.until} />
-                <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] ${
-                    m.mode === 'enforced' ? 'bg-amber/15 text-amber' : 'bg-white/5 text-mist-faint'
-                  }`}
-                >
-                  {m.mode === 'enforced' ? 'enforced' : 'ui'}
-                </span>
-                <UnmuteButton id={m.id} />
-              </li>
-            ))}
-          </ul>
+          [...groups.entries()]
+            .filter(([, list]) => list.length > 0)
+            .map(([k, list]) => (
+              <div key={k}>
+                <SectionLabel>
+                  {k} · {list.length}
+                </SectionLabel>
+                <ul>
+                  {list.map((m) => (
+                    <MuteEntry key={m.id} m={m} />
+                  ))}
+                </ul>
+              </div>
+            ))
         )}
 
         <div className="mt-6">

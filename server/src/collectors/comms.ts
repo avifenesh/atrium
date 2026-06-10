@@ -1,104 +1,18 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { config } from '../config.js';
 import { store } from '../state.js';
-import { iso, readJson } from '../util.js';
+import { iso } from '../util.js';
+import { getAccessToken, googleStatus, invalidateAccessToken } from '../google.js';
 import type { Collector } from './registry.js';
 import type { CalendarEvent, CommsState, EmailThread } from '../../../shared/types.js';
 
-/** Standard authorized_user JSON written by hermes. Read-only — hermes owns rotation of this file. */
-interface GoogleTokenFile {
-  token?: string;
-  refresh_token?: string;
-  token_uri?: string;
-  client_id?: string;
-  client_secret?: string;
-  expiry?: string;
-}
-
-const TOKEN_CACHE_PATH = join(config.configDir, 'google_token_cache.json');
 const TIMEOUT_MS = 10_000;
-
-let mem: { token: string; expiresAt: number } | null = null;
-let seeded = false;
-
-type AuthResult = { token: string } | { status: 'disabled' | 'auth-error'; error: string };
-
-async function getAccessToken(): Promise<AuthResult> {
-  const now = Date.now();
-  if (mem && mem.expiresAt - 60_000 > now) return { token: mem.token };
-
-  const tok = await readJson<GoogleTokenFile>(config.paths.googleToken);
-  if (!tok) {
-    return {
-      status: 'disabled',
-      error: `google token file missing or unreadable: ${config.paths.googleToken} (run hermes google auth to enable)`,
-    };
-  }
-
-  if (!seeded) {
-    seeded = true;
-    // Survive restarts without an extra refresh: prefer our own cache, else the
-    // hermes file's current access token if it hasn't expired yet.
-    const cached = await readJson<{ access_token?: string; expires_at?: number }>(TOKEN_CACHE_PATH);
-    if (cached?.access_token && typeof cached.expires_at === 'number' && cached.expires_at - 60_000 > now) {
-      mem = { token: cached.access_token, expiresAt: cached.expires_at };
-      return { token: mem.token };
-    }
-    if (tok.token && tok.expiry) {
-      const exp = new Date(tok.expiry).getTime();
-      if (Number.isFinite(exp) && exp - 60_000 > now) {
-        mem = { token: tok.token, expiresAt: exp };
-        return { token: mem.token };
-      }
-    }
-  }
-
-  if (!tok.refresh_token || !tok.token_uri || !tok.client_id || !tok.client_secret) {
-    return { status: 'auth-error', error: 'google token file lacks refresh_token/token_uri/client fields' };
-  }
-
-  try {
-    const res = await fetch(tok.token_uri, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: tok.client_id,
-        client_secret: tok.client_secret,
-        refresh_token: tok.refresh_token,
-        grant_type: 'refresh_token',
-      }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    const body: any = await res.json().catch(() => ({}));
-    if (!res.ok || !body.access_token) {
-      const oauthErr = body.error
-        ? `${body.error}${body.error_description ? `: ${body.error_description}` : ''}`
-        : `HTTP ${res.status}`;
-      return { status: 'auth-error', error: `google token refresh failed — ${oauthErr}` };
-    }
-    mem = { token: String(body.access_token), expiresAt: Date.now() + (Number(body.expires_in) || 3600) * 1000 };
-    // Best-effort cache so a restart doesn't force a refresh. 0600 — file holds an access token.
-    try {
-      await mkdir(config.configDir, { recursive: true });
-      await writeFile(TOKEN_CACHE_PATH, JSON.stringify({ access_token: mem.token, expires_at: mem.expiresAt }), {
-        mode: 0o600,
-      });
-    } catch {
-      // cache is optional
-    }
-    return { token: mem.token };
-  } catch (err) {
-    return { status: 'auth-error', error: `google token refresh failed — ${errMsg(err)}` };
-  }
-}
 
 async function gFetch(url: string, token: string): Promise<any> {
   const res = await fetch(url, {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (res.status === 401) mem = null; // token revoked mid-cycle — force refresh on next run
+  if (res.status === 401) invalidateAccessToken(); // token revoked mid-cycle — force refresh on next run
   if (!res.ok) throw new Error(`${new URL(url).pathname}: HTTP ${res.status}`);
   return res.json();
 }
@@ -218,11 +132,14 @@ const comms: Collector = {
     let state: CommsState;
     try {
       const auth = await getAccessToken();
-      if ('status' in auth) {
+      // after the auth attempt, so invalid_grant state is fresh
+      const google = await googleStatus();
+      if ('error' in auth) {
         state = {
           updatedAt: iso(),
-          email: { status: auth.status, unreadCount: 0, threads: [], error: auth.error },
-          calendar: { status: auth.status, today: [], upcoming: [], error: auth.error },
+          google,
+          email: { status: 'auth-error', unreadCount: 0, threads: [], error: auth.hint },
+          calendar: { status: 'auth-error', today: [], upcoming: [], error: auth.hint },
         };
       } else {
         // email and calendar fail independently
@@ -234,12 +151,13 @@ const comms: Collector = {
             (err): CommsState['calendar'] => ({ status: 'error', today: [], upcoming: [], error: errMsg(err) }),
           ),
         ]);
-        state = { updatedAt: iso(), email, calendar };
+        state = { updatedAt: iso(), google, email, calendar };
       }
     } catch (err) {
       const e = errMsg(err);
       state = {
         updatedAt: iso(),
+        google: { connected: false, source: null, hint: e },
         email: { status: 'error', unreadCount: 0, threads: [], error: e },
         calendar: { status: 'error', today: [], upcoming: [], error: e },
       };

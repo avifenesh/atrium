@@ -1,11 +1,40 @@
 import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { readdir } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
 import { store } from '../state.js';
-import { iso, mtime, readJson } from '../util.js';
+import { ago, iso, mtime, readJson, readText, shTry, tailLines } from '../util.js';
 import type { Collector } from './registry.js';
 import type { Flag, SubService, SubsState } from '../../../shared/types.js';
 
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 5_000;
+const ZAI_TIMEOUT_MS = 3_000;
+
+// Last-good card per service id: a transient fetch/read failure must not blank or
+// flicker a card that rendered fine last cycle. Stored/returned as clones so
+// mergeManual overlays never mutate the cache.
+const lastGood = new Map<string, SubService>();
+
+function remember(id: string, s: SubService): SubService {
+  lastGood.set(id, structuredClone(s));
+  return s;
+}
+
+function recall(id: string): SubService | null {
+  const s = lastGood.get(id);
+  return s ? structuredClone(s) : null;
+}
+
+/** Failure isolation per service: one service throwing must not blank the panel. */
+async function safe(id: string, fn: () => Promise<SubService | null>): Promise<SubService | null> {
+  try {
+    const s = await fn();
+    return s ? remember(id, s) : recall(id);
+  } catch {
+    return recall(id);
+  }
+}
 
 // Flag state: only flag the claude usage endpoint when it regresses after having worked.
 let usageEverWorked = false;
@@ -18,6 +47,8 @@ function fmtTokens(n: number): string {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return String(n);
 }
+
+// ---------- claude (live oauth usage API + local stats cache) ----------
 
 /**
  * Walk the oauth usage response for rate-limit windows. Shape is undocumented and
@@ -100,10 +131,14 @@ async function claudeService(): Promise<SubService> {
   } else {
     usageFailed = true; // expired/absent access token also means usage is unavailable
   }
-  if (usageFailed) usageRegressed = usageEverWorked;
+  if (usageFailed) {
+    usageRegressed = usageEverWorked;
+    usage = recall('claude')?.usage ?? null; // last-good bars beat a blank card
+  }
 
   const parts: string[] = [];
   if (oauth.rateLimitTier != null) parts.push(String(oauth.rateLimitTier));
+  if (usageFailed && usage !== null) parts.push('(usage cached)');
   if (usage === null) parts.push('(usage unavailable)');
   const tokens7d = await last7dTokens();
   if (tokens7d) parts.push(tokens7d);
@@ -115,79 +150,365 @@ async function claudeService(): Promise<SubService> {
     plan: oauth.subscriptionType != null ? String(oauth.subscriptionType) : null,
     detail: parts.length > 0 ? parts.join('; ') : null,
     usage,
-    source: src,
+    source: usage !== null ? `${src} + api.anthropic.com oauth usage` : src,
   };
+}
+
+// ---------- codex (local stats via node:sqlite; no usage API for chatgpt plans) ----------
+
+// DatabaseSync blocks the event loop, and the SUM/COUNT aggregates below scan the
+// whole threads B-tree (rows carry content, ~15KB each; 65MB today and growing).
+// Don't pay that on every 300s poll — cache the result and recompute infrequently.
+const CODEX_STATS_TTL_MS = 30 * 60_000;
+let codexStatsCache: { at: number; value: { parts: string[]; src: string } | null } | null = null;
+
+function codexSqliteStatsCached(): { parts: string[]; src: string } | null {
+  if (codexStatsCache && Date.now() - codexStatsCache.at < CODEX_STATS_TTL_MS) {
+    return codexStatsCache.value;
+  }
+  const value = codexSqliteStats();
+  codexStatsCache = { at: Date.now(), value };
+  return value;
+}
+
+/**
+ * Schema discovered 2026-06-10 in ~/.codex/state_5.sqlite:
+ *   threads(id TEXT, tokens_used INTEGER, updated_at INTEGER seconds, updated_at_ms INTEGER, ...)
+ * Aggregates only — never read message content.
+ */
+function codexSqliteStats(): { parts: string[]; src: string } | null {
+  const path = join(config.paths.codexHome, 'state_5.sqlite');
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const all = db
+      .prepare('SELECT COUNT(*) AS n, COALESCE(SUM(tokens_used), 0) AS tok, MAX(updated_at_ms) AS last FROM threads')
+      .get() as any;
+    const n = Number(all?.n) || 0;
+    if (n === 0) return null;
+    const week = db
+      .prepare('SELECT COALESCE(SUM(tokens_used), 0) AS tok FROM threads WHERE updated_at_ms >= ?')
+      .get(Date.now() - 7 * 86_400_000) as any;
+    const parts: string[] = [`${n} local sessions`];
+    const tok = Number(all?.tok) || 0;
+    if (tok > 0) parts.push(`${fmtTokens(tok)} tokens total`);
+    const wtok = Number(week?.tok) || 0;
+    if (wtok > 0) parts.push(`${fmtTokens(wtok)} last 7d`);
+    const last = Number(all?.last) || 0;
+    if (last > 0) parts.push(`last activity ${ago(last)}`);
+    return { parts, src: path };
+  } catch {
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
+/** Fallback when sqlite is unreadable: date of the newest session_index.jsonl entry. */
+async function codexLastSessionDate(): Promise<string | null> {
+  const lines = await tailLines(config.paths.codexSessionIndex, 1);
+  const line = lines[lines.length - 1];
+  if (!line) return null;
+  try {
+    const entry = JSON.parse(line);
+    return typeof entry?.updated_at === 'string' ? entry.updated_at.slice(0, 10) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function codexService(): Promise<SubService | null> {
   const src = join(config.paths.codexHome, 'auth.json');
   const auth = await readJson<any>(src);
   if (!auth) return null;
+  const stats = codexSqliteStatsCached();
+  let detail: string;
+  let source = src;
+  if (stats) {
+    detail = `disabled by user; ${stats.parts.join(', ')} — no usage API for chatgpt plans`;
+    source = `${src} + ${stats.src}`;
+  } else {
+    const lastDate = await codexLastSessionDate();
+    detail = lastDate
+      ? `disabled by user; last session ${lastDate} — no usage API for chatgpt plans`
+      : 'disabled by user; no usage API for ChatGPT plans';
+    if (lastDate) source = `${src} + ${config.paths.codexSessionIndex}`;
+  }
   return {
     id: 'codex',
     name: 'Codex',
     status: 'off', // user disabled codex
     plan: typeof auth.auth_mode === 'string' ? auth.auth_mode : null,
-    detail: 'disabled by user; no usage API for ChatGPT plans',
+    detail,
     usage: null,
-    source: src,
+    source,
   };
+}
+
+// ---------- grok (local session stats; x.ai has no usage API for oauth accounts) ----------
+
+/**
+ * Schema discovered 2026-06-10 in ~/.grok/sessions/session_search.sqlite:
+ *   session_docs(session_id TEXT, cwd TEXT, updated_at INTEGER seconds, title TEXT, ...)
+ */
+function grokSqliteStats(): { n: number; lastMs: number } | null {
+  const path = join(config.paths.grokAuth, '..', 'sessions', 'session_search.sqlite');
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const r = db.prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS last FROM session_docs').get() as any;
+    const n = Number(r?.n) || 0;
+    const last = Number(r?.last) || 0;
+    return n > 0 ? { n, lastMs: last * 1000 } : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      /* already closed */
+    }
+  }
 }
 
 async function grokService(): Promise<SubService | null> {
   const src = config.paths.grokAuth;
   const auth = await readJson<any>(src);
   if (!auth) return null;
+  // researched 2026-06-10: management-api.x.ai needs a separate management key;
+  // no public usage/credits endpoint accepts the CLI's oidc token.
+  const stats = grokSqliteStats();
+  const parts: string[] = [];
+  if (stats) parts.push(`${stats.n} local sessions`, `last activity ${ago(stats.lastMs)}`);
+  parts.push('x.ai oauth — no public usage API; credits at console.x.ai');
   return {
     id: 'grok',
     name: 'Grok',
     status: 'active',
     plan: 'x.ai oauth',
-    detail: null,
+    detail: parts.join('; '),
     usage: null,
-    source: src,
+    source: stats ? `${src} + sessions/session_search.sqlite` : src,
   };
 }
 
-async function hermesPoolServices(): Promise<SubService[]> {
+// ---------- zai (GLM coding plan quota API) ----------
+
+/** Read one var from ~/.hermes/.env (the pool entry stores only a fingerprint). */
+async function hermesEnvVar(name: string): Promise<string | null> {
+  const text = await readText(join(config.paths.hermesHome, '.env'));
+  if (!text) return null;
+  const m = text.match(new RegExp(`^${name}=(.*)$`, 'm'));
+  const v = m?.[1]?.trim().replace(/^["']|["']$/g, '') ?? '';
+  return v || null;
+}
+
+/**
+ * Documented coding-plan monitor endpoint (used by the opencode-glm-quota plugin and
+ * the zai-usage-tracker extension): GET https://api.z.ai/api/monitor/usage/quota/limit
+ * with `Authorization: <key>` (no Bearer prefix). Verified live 2026-06-10; response:
+ * { success, data: { level: 'max', limits: [{ type: 'TOKENS_LIMIT'|'TIME_LIMIT',
+ *   unit: 3=hour 5=day 6=week, number, percentage 0..100, nextResetTime ms,
+ *   usage/currentValue (TIME_LIMIT tool-call cap/used) }] } }
+ */
+async function zaiQuota(
+  token: string,
+): Promise<{ plan: string | null; usage: SubService['usage']; tools: string | null } | null> {
+  const res = await fetch('https://api.z.ai/api/monitor/usage/quota/limit', {
+    headers: { authorization: token, 'accept-language': 'en-US,en', 'content-type': 'application/json' },
+    signal: AbortSignal.timeout(ZAI_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body: any = await res.json();
+  if (body?.success !== true || !Array.isArray(body?.data?.limits)) return null;
+  const UNIT: Record<number, string> = { 3: 'h', 5: 'd', 6: 'w' };
+  const usage: NonNullable<SubService['usage']> = [];
+  let tools: string | null = null;
+  for (const l of body.data.limits) {
+    if (!l || typeof l !== 'object') continue;
+    const span = typeof l.unit === 'number' && UNIT[l.unit] ? `${l.number ?? ''}${UNIT[l.unit]}` : 'window';
+    if (l.type === 'TIME_LIMIT' && typeof l.currentValue === 'number' && typeof l.usage === 'number') {
+      tools = `tools ${l.currentValue}/${l.usage} per ${span}`;
+    } else if (l.type === 'TOKENS_LIMIT' && typeof l.percentage === 'number') {
+      usage.push({
+        label: `tokens ${span}`,
+        usedPct: Math.min(100, Math.max(0, Math.round(l.percentage * 10) / 10)),
+        resetAt: typeof l.nextResetTime === 'number' ? iso(l.nextResetTime) : null,
+      });
+    }
+  }
+  return {
+    plan: typeof body.data.level === 'string' ? body.data.level : null,
+    usage: usage.length > 0 ? usage : null,
+    tools,
+  };
+}
+
+async function zaiService(): Promise<SubService> {
   const src = config.paths.hermesAuth;
   const auth = await readJson<any>(src);
-  const pool = auth?.credential_pool ?? {};
-  const active = typeof auth?.active_provider === 'string' ? auth.active_provider : null;
-  const wanted: [string, string][] = [
-    ['zai', 'Z.ai'],
-    ['copilot', 'GitHub Copilot'],
-  ];
-  return wanted.map(([id, name]) => {
-    const entry = pool[id];
-    const has = Array.isArray(entry) ? entry.length > 0 : entry != null;
+  const entry = Array.isArray(auth?.credential_pool?.zai) ? auth.credential_pool.zai[0] : null;
+  if (!entry) {
     return {
-      id,
-      name,
-      status: has ? ('active' as const) : ('not-connected' as const),
+      id: 'zai',
+      name: 'Z.ai',
+      status: 'not-connected',
       plan: null,
-      detail: auth
-        ? `hermes credential pool${has ? '' : ' (no entry)'}; active provider: ${active ?? 'none'}${active === id ? ' (this)' : ''}`
-        : `hermes auth file missing: ${src}`,
+      detail: auth ? 'no zai entry in hermes credential pool' : `hermes auth file missing: ${src}`,
       usage: null,
       source: src,
     };
-  });
-}
+  }
 
-async function cursorService(): Promise<SubService | null> {
-  const src = config.paths.cursorAgent;
-  if (!(await mtime(src))) return null;
+  let quota: Awaited<ReturnType<typeof zaiQuota>> = null;
+  const token = await hermesEnvVar('GLM_API_KEY');
+  if (token) {
+    // cold TLS handshake to api.z.ai can exceed the 3s budget; one retry rides the warm pool
+    for (let attempt = 0; attempt < 2 && !quota; attempt++) {
+      try {
+        quota = await zaiQuota(token);
+      } catch {
+        quota = null;
+      }
+    }
+  }
+
+  if (quota) {
+    const parts = ['GLM coding plan'];
+    if (quota.tools) parts.push(quota.tools);
+    return {
+      id: 'zai',
+      name: 'Z.ai',
+      status: 'active',
+      plan: quota.plan,
+      detail: parts.join('; '),
+      usage: quota.usage,
+      source: 'api.z.ai quota API (key from ~/.hermes/.env)',
+    };
+  }
+
+  const cached = recall('zai');
+  if (cached?.usage) {
+    // strip any prior staleness suffix so repeated failures don't stack it
+    const base = (cached.detail ?? 'GLM coding plan').replace(/ \(quota fetch failed; last known shown\)$/, '');
+    cached.detail = `${base} (quota fetch failed; last known shown)`;
+    return cached;
+  }
   return {
-    id: 'cursor',
-    name: 'Cursor',
-    status: 'unknown',
+    id: 'zai',
+    name: 'Z.ai',
+    status: 'active',
     plan: null,
-    detail: 'cursor-agent installed; no usage API',
+    detail: 'coding plan active — quota API unreachable right now',
     usage: null,
     source: src,
   };
 }
+
+// ---------- copilot (quota via gh CLI — token stays in the keyring) ----------
+
+async function copilotService(): Promise<SubService> {
+  const src = config.paths.hermesAuth;
+  const auth = await readJson<any>(src);
+  const entry = Array.isArray(auth?.credential_pool?.copilot) ? auth.credential_pool.copilot[0] : null;
+
+  // /copilot_internal/user answers to the gh CLI's gho_ token (verified 2026-06-10);
+  // the documented /users/<login>/settings/billing endpoints 404 without the `user` scope.
+  const out = await shTry('gh', ['api', '/copilot_internal/user'], { timeoutMs: TIMEOUT_MS });
+  if (out) {
+    try {
+      const d: any = JSON.parse(out);
+      const snaps: Record<string, any> = d?.quota_snapshots ?? {};
+      const resetAt =
+        typeof d?.quota_reset_date_utc === 'string'
+          ? d.quota_reset_date_utc
+          : typeof d?.quota_reset_date === 'string'
+            ? d.quota_reset_date
+            : null;
+      const usage: NonNullable<SubService['usage']> = [];
+      for (const [k, s] of Object.entries(snaps)) {
+        if (!s || s.unlimited === true || typeof s.percent_remaining !== 'number') continue;
+        usage.push({
+          label: k.replace(/_/g, ' '),
+          usedPct: Math.min(100, Math.max(0, Math.round((100 - s.percent_remaining) * 10) / 10)),
+          resetAt,
+        });
+      }
+      const parts: string[] = [];
+      if (typeof d?.access_type_sku === 'string') parts.push(d.access_type_sku);
+      const prem = snaps['premium_interactions'];
+      if (prem && typeof prem.entitlement === 'number') parts.push(`${prem.entitlement} premium requests/period`);
+      if (typeof d?.quota_reset_date === 'string') parts.push(`resets ${d.quota_reset_date}`);
+      return {
+        id: 'copilot',
+        name: 'GitHub Copilot',
+        status: 'active',
+        plan: typeof d?.copilot_plan === 'string' ? d.copilot_plan : null,
+        detail: parts.length > 0 ? parts.join('; ') : null,
+        usage: usage.length > 0 ? usage : null,
+        source: 'gh api /copilot_internal/user',
+      };
+    } catch {
+      /* unparseable — fall through to pool presence */
+    }
+  }
+
+  const cached = recall('copilot');
+  if (cached?.usage) return cached;
+  return {
+    id: 'copilot',
+    name: 'GitHub Copilot',
+    status: entry ? 'active' : 'not-connected',
+    plan: null,
+    detail: entry
+      ? 'hermes credential pool (gh token); usage not visible to this token'
+      : auth
+        ? 'no copilot entry in hermes credential pool'
+        : `hermes auth file missing: ${src}`,
+    usage: null,
+    source: src,
+  };
+}
+
+// ---------- cursor (local account/config; no usage API) ----------
+
+async function cursorService(): Promise<SubService | null> {
+  const agentDir = config.paths.cursorAgent;
+  const cliConfigPath = join(homedir(), '.cursor', 'cli-config.json');
+  const cliConfig = await readJson<any>(cliConfigPath);
+  const installed = (await mtime(agentDir)) != null;
+  if (!cliConfig && !installed) return null;
+
+  const authInfo = cliConfig?.authInfo;
+  const parts: string[] = [];
+  if (typeof authInfo?.email === 'string') parts.push(`logged in as ${authInfo.email}`);
+  const model = cliConfig?.model?.displayName;
+  if (typeof model === 'string') parts.push(`default model ${model}`);
+  try {
+    const versions = (await readdir(join(agentDir, 'versions'))).sort();
+    const latest = versions[versions.length - 1];
+    if (latest) parts.push(`cursor-agent ${latest}`);
+  } catch {
+    /* no versions dir */
+  }
+  parts.push('no usage API');
+
+  return {
+    id: 'cursor',
+    name: 'Cursor',
+    status: authInfo ? 'active' : 'unknown',
+    plan: null,
+    detail: parts.join('; '),
+    usage: null,
+    source: cliConfig ? cliConfigPath : agentDir,
+  };
+}
+
+// ---------- spotify (not connected, CTA only) ----------
 
 function spotifyService(): SubService {
   return {
@@ -234,18 +555,16 @@ const subs: Collector = {
     let state: SubsState;
     let flags: Flag[] = [];
     try {
-      const [claude, codex, grok, hermesPool, cursor] = await Promise.all([
-        claudeService(),
-        codexService(),
-        grokService(),
-        hermesPoolServices(),
-        cursorService(),
+      const [claude, codex, grok, zai, copilot, cursor] = await Promise.all([
+        safe('claude', claudeService),
+        safe('codex', codexService),
+        safe('grok', grokService),
+        safe('zai', zaiService),
+        safe('copilot', copilotService),
+        safe('cursor', cursorService),
       ]);
-      const services: SubService[] = [claude];
-      if (codex) services.push(codex);
-      if (grok) services.push(grok);
-      services.push(...hermesPool);
-      if (cursor) services.push(cursor);
+      const services: SubService[] = [];
+      for (const s of [claude, codex, grok, zai, copilot, cursor]) if (s) services.push(s);
       services.push(spotifyService());
       await mergeManual(services);
       state = { updatedAt: iso(), services, error: null };

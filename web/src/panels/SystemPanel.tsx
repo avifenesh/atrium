@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { Dot, EmptyState, MuteButton, Mutable, Panel } from '../components/ui';
+import { isMuted } from '../api';
+import { CopyText, Dot, EmptyState, MuteButton, Panel, Row } from '../components/ui';
 import type { Snapshot } from '../../../shared/types';
 
 const GiB = 1024 ** 3;
@@ -19,52 +20,65 @@ function StatTile({
   children: ReactNode;
 }) {
   return (
-    <div className="glass rise p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
-      <div className="font-mono text-[11px] uppercase tracking-widest text-mist-faint">{label}</div>
+    <div className="glass rise min-w-0 p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
+      <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">{label}</div>
       {children}
     </div>
   );
 }
 
+/** Large numeral — mono per v2 (font-display is reserved for the wordmark + now view). */
 function BigPct({ pct, className = 'text-mist' }: { pct: number; className?: string }) {
   return (
-    <div className={`font-display text-4xl italic leading-tight ${className}`}>
+    <div className={`font-mono text-3xl leading-tight tabular-nums ${className}`}>
       {Math.round(pct)}
-      <span className="text-lg text-mist-dim">%</span>
+      <span className="text-base text-mist-dim">%</span>
     </div>
   );
 }
 
-export default function SystemPanel({ snapshot }: { snapshot: Snapshot }) {
+export default function SystemPanel({
+  snapshot,
+  onOpenQuiet: openQuiet,
+}: {
+  snapshot: Snapshot;
+  onOpenQuiet: () => void;
+}) {
   const sys = snapshot.system;
   const memUsedB = sys.mem.totalB - sys.mem.availableB;
   const swapUsedB = sys.swap.totalB - sys.swap.freeB;
   const swapClass =
     sys.swap.usedPct > 90 ? 'text-coral' : sys.swap.usedPct > 75 ? 'text-amber' : 'text-mist';
 
+  // muted ports/services disappear — counts surface on the panel header chips
+  const visiblePorts = sys.ports.filter((p) => !isMuted(snapshot, 'flag', `system:port:${p.port}`));
+  const quietPorts = sys.ports.length - visiblePorts.length;
+  const visibleServices = sys.services.filter((s) => !isMuted(snapshot, 'service', s.unit));
+  const quietServices = sys.services.length - visibleServices.length;
+
   return (
     <div>
       {sys.error && <div className="mb-3 font-mono text-xs text-coral">{sys.error}</div>}
 
-      <div className="grid grid-cols-2 items-start gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="cpu" riseIndex={0}>
           <BigPct pct={sys.cpu.pct} />
-          <div className="mt-1 font-mono text-xs text-mist-dim">
+          <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
             {sys.cpu.load1.toFixed(2)} / {sys.cpu.load5.toFixed(2)} / {sys.cpu.load15.toFixed(2)} · {sys.cpu.cores}c
           </div>
         </StatTile>
 
         <StatTile label="mem" riseIndex={1}>
           <BigPct pct={sys.mem.usedPct} />
-          <div className="mt-1 font-mono text-xs text-mist-dim">
-            {gb(memUsedB)}/{gb(sys.mem.totalB)} GB
+          <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+            {gb(memUsedB)}/{gb(sys.mem.totalB)} <span className="text-mist-faint">GB</span>
           </div>
         </StatTile>
 
         <StatTile label="swap" riseIndex={2}>
           <BigPct pct={sys.swap.usedPct} className={swapClass} />
-          <div className="mt-1 font-mono text-xs text-mist-dim">
-            {gb(swapUsedB)}/{gb(sys.swap.totalB)} GB
+          <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+            {gb(swapUsedB)}/{gb(sys.swap.totalB)} <span className="text-mist-faint">GB</span>
           </div>
         </StatTile>
 
@@ -72,19 +86,19 @@ export default function SystemPanel({ snapshot }: { snapshot: Snapshot }) {
           {sys.gpu ? (
             <>
               <BigPct pct={sys.gpu.utilPct} />
-              <div className="mt-1 font-mono text-xs text-mist-dim">
-                {sys.gpu.memUsedMiB}/{sys.gpu.memTotalMiB} MiB · {sys.gpu.tempC}°C
+              <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+                {sys.gpu.memUsedMiB}/{sys.gpu.memTotalMiB} <span className="text-mist-faint">MiB</span> · {sys.gpu.tempC}°C
               </div>
-              <div className="font-mono text-[11px] text-mist-faint">
+              <div className="truncate font-mono text-[11px] text-mist-faint">
                 {sys.gpu.name} · {sys.gpu.powerW}W
               </div>
               {sys.gpu.procs.length > 0 && (
                 <div className="mt-2 max-h-24 overflow-y-auto border-t pt-1.5 hairline">
                   {sys.gpu.procs.map((p) => (
                     <div key={p.pid} className="flex items-baseline gap-2 py-0.5 font-mono text-[11px]">
-                      <span className="text-mist-faint">{p.pid}</span>
+                      <span className="tabular-nums text-mist-faint">{p.pid}</span>
                       <span className="min-w-0 truncate text-mist-dim">{p.name}</span>
-                      <span className="ml-auto shrink-0 text-mist-faint">{p.memMiB} MiB</span>
+                      <span className="ml-auto shrink-0 tabular-nums text-mist-faint">{p.memMiB} MiB</span>
                     </div>
                   ))}
                 </div>
@@ -106,8 +120,8 @@ export default function SystemPanel({ snapshot }: { snapshot: Snapshot }) {
                 <div key={d.mount} className="py-1.5">
                   <div className="flex items-baseline justify-between gap-2 text-sm">
                     <span className="min-w-0 truncate text-mist">{d.mount}</span>
-                    <span className="shrink-0 font-mono text-xs text-mist-dim">
-                      {gb(d.usedB)}/{gb(d.sizeB)} GB
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-mist-dim">
+                      {gb(d.usedB)}/{gb(d.sizeB)} <span className="text-mist-faint">GB</span>
                     </span>
                   </div>
                   <div className="mt-1 h-1 rounded-full bg-white/10">
@@ -122,25 +136,39 @@ export default function SystemPanel({ snapshot }: { snapshot: Snapshot }) {
           )}
         </Panel>
 
-        <Panel title="ports" riseIndex={5}>
-          {sys.ports.length === 0 ? (
+        <Panel
+          title="ports"
+          riseIndex={5}
+          quietCount={quietPorts || undefined}
+          onQuietClick={openQuiet}
+        >
+          {visiblePorts.length === 0 ? (
             <EmptyState>no listeners</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
-              {sys.ports.map((p) => (
-                <Mutable key={p.port} snapshot={snapshot} kind="flag" target={`system:port:${p.port}`}>
-                  <div className="group flex items-center gap-2 py-1 text-sm">
-                    <span className={`w-14 shrink-0 font-mono ${p.known ? 'text-mist' : 'text-amber'}`}>
-                      {p.port}
-                    </span>
-                    <span className="min-w-0 truncate text-mist-dim">{p.proc}</span>
-                    <span className="flex-1" />
+              {visiblePorts.map((p) => (
+                <Row key={p.port} className="group">
+                  <div className="flex w-full min-w-0 items-center gap-2">
+                    <CopyText text={String(p.port)}>
+                      <span
+                        className={`w-14 shrink-0 text-left font-mono text-sm tabular-nums ${p.known ? 'text-mist' : 'text-amber'}`}
+                      >
+                        {p.port}
+                      </span>
+                    </CopyText>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <CopyText text={p.proc}>
+                        <span className="block truncate text-left text-sm text-mist-dim" title={p.proc}>
+                          {p.proc}
+                        </span>
+                      </CopyText>
+                    </div>
                     <span className={`shrink-0 font-mono text-xs ${p.known ? 'text-mist-faint' : 'text-amber'}`}>
                       {p.label ?? 'unknown'}
                     </span>
                     {!p.known && <MuteButton kind="flag" target={`system:port:${p.port}`} />}
                   </div>
-                </Mutable>
+                </Row>
               ))}
             </div>
           )}
@@ -151,42 +179,67 @@ export default function SystemPanel({ snapshot }: { snapshot: Snapshot }) {
             <EmptyState>nothing notable</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
-              <div className="grid grid-cols-[3.5rem_1fr_3.5rem_3.5rem] gap-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-mist-faint">
-                <span>pid</span>
-                <span />
-                <span className="text-right">cpu%</span>
-                <span className="text-right">mem%</span>
+              <div className="flex items-baseline gap-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-mist-faint">
+                <span className="w-14 shrink-0">pid</span>
+                <span className="min-w-0 flex-1" />
+                <span className="w-14 shrink-0 text-right">cpu%</span>
+                <span className="w-14 shrink-0 text-right">mem%</span>
               </div>
               {sys.processes.map((p) => (
-                <div key={p.pid} className="grid grid-cols-[3.5rem_1fr_3.5rem_3.5rem] items-baseline gap-2 py-1 text-sm">
-                  <span className="font-mono text-xs text-mist-faint">{p.pid}</span>
-                  <span className={`min-w-0 truncate ${p.label ? 'text-mist' : 'text-mist-dim'}`} title={p.cmd}>
-                    {p.label ?? p.cmd}
-                  </span>
-                  <span className="text-right font-mono text-xs text-mist-dim">{p.cpuPct.toFixed(1)}</span>
-                  <span className="text-right font-mono text-xs text-mist-dim">{p.memPct.toFixed(1)}</span>
-                </div>
+                <Row key={p.pid} className="group">
+                  <div className="flex w-full min-w-0 items-baseline gap-2">
+                    <CopyText text={String(p.pid)}>
+                      <span className="w-14 shrink-0 text-left font-mono text-xs tabular-nums text-mist-faint">
+                        {p.pid}
+                      </span>
+                    </CopyText>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <CopyText text={p.cmd}>
+                        <span
+                          className={`block truncate text-left text-sm ${p.label ? 'text-mist' : 'text-mist-dim'}`}
+                          title={p.cmd}
+                        >
+                          {p.label ?? p.cmd}
+                        </span>
+                      </CopyText>
+                    </div>
+                    <span className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-mist-dim">
+                      {p.cpuPct.toFixed(1)}
+                    </span>
+                    <span className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-mist-dim">
+                      {p.memPct.toFixed(1)}
+                    </span>
+                  </div>
+                </Row>
               ))}
             </div>
           )}
         </Panel>
 
-        <Panel title="services" riseIndex={7}>
-          {sys.services.length === 0 ? (
+        <Panel
+          title="services"
+          riseIndex={7}
+          quietCount={quietServices || undefined}
+          onQuietClick={openQuiet}
+        >
+          {visibleServices.length === 0 ? (
             <EmptyState>no services watched</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
-              {sys.services.map((s) => (
-                <Mutable key={s.unit} snapshot={snapshot} kind="service" target={s.unit}>
-                  <div className="group flex items-center gap-2 py-1.5">
+              {visibleServices.map((s) => (
+                <Row key={s.unit} className="group">
+                  <div className="flex w-full min-w-0 items-center gap-2">
                     <Dot status={s.active === 'active' && s.sub === 'running' ? 'running' : 'error'} />
-                    <span className="shrink-0 font-mono text-sm text-mist">{s.unit}</span>
-                    <span className="min-w-0 truncate text-xs text-mist-dim">{s.description}</span>
-                    <span className="flex-1" />
-                    {/* enforce really stops the unit — destructive coral, important to beat base button colors */}
+                    <CopyText text={s.unit}>
+                      <span className="shrink-0 font-mono text-sm text-mist">{s.unit}</span>
+                    </CopyText>
+                    <span className="min-w-0 flex-1 truncate text-xs text-mist-dim" title={s.description}>
+                      {s.description}
+                    </span>
+                    {/* enforce really stops the unit — two-click arm; coral to beat base button colors */}
                     <MuteButton kind="service" target={s.unit} enforce className="text-coral! hover:text-coral!" />
                   </div>
-                </Mutable>
+                </Row>
               ))}
             </div>
           )}

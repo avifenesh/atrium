@@ -1,5 +1,6 @@
 import type { AgentId, AgentsState, Flag } from '../../../shared/types.js';
 import { config } from '../config.js';
+import { getDispatches } from '../eigen-dispatch.js';
 import { store } from '../state.js';
 import { iso, tailLines } from '../util.js';
 import { baseAgent, pruneFlagPins, type SourceResult } from './agents/common.js';
@@ -73,6 +74,7 @@ const collector: Collector = {
       updatedAt: iso(),
       agents: results.map((r) => r.agent),
       activity,
+      dispatches: getDispatches(),
     };
     store.setSection('agents', state);
     store.setFlags('agents', flags);

@@ -37,6 +37,48 @@ export async function refreshSection(section: string): Promise<void> {
   await fetch(`${BASE}/api/refresh/${section}`, { method: 'POST' });
 }
 
+/** Hand a task to eigen. Pass url/repo when dispatching a github item. */
+export async function dispatchToEigen(req: {
+  title: string;
+  prompt?: string;
+  url?: string;
+  repo?: string;
+  sourceId?: string;
+}): Promise<{ id: string; mode: string } | { error: string }> {
+  const res = await fetch(`${BASE}/api/eigen/dispatch`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  return res.json();
+}
+
+export async function clearNotification(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/notifications/read`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error(`clear failed ${res.status}`);
+}
+
+export async function clearAllNotifications(): Promise<void> {
+  const res = await fetch(`${BASE}/api/notifications/read`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ all: true }),
+  });
+  if (!res.ok) throw new Error(`clear all failed ${res.status}`);
+}
+
+/** Start the in-app google connect flow: opens consent in a new tab. */
+export async function connectGoogle(): Promise<void> {
+  const res = await fetch(`${BASE}/api/google/auth-url`);
+  const body = await res.json();
+  if (!res.ok || !body.url) throw new Error(body.error ?? 'auth-url failed');
+  window.open(body.url, '_blank', 'noopener');
+}
+
 /** Live snapshot via SSE with auto-reconnect. Single subscription for the whole app. */
 export function useSnapshot(): { snapshot: Snapshot | null; connected: boolean } {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);

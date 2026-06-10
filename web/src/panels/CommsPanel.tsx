@@ -1,54 +1,114 @@
-import type { ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { Snapshot, CalendarEvent, CommsState } from '../../../shared/types';
-import { Panel, SectionLabel, RelTime, EmptyState } from '../components/ui';
+import { connectGoogle } from '../api';
+import { Panel, SectionLabel, RelTime, EmptyState, Row } from '../components/ui';
 
 function hm(iso: string): string {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function StatusBanner({ box, hint }: { box: CommsState['email'] | CommsState['calendar']; hint?: string }) {
+/** Non-auth trouble (transient fetch error, disabled) when google IS connected. */
+function StatusBanner({ box }: { box: CommsState['email'] | CommsState['calendar'] }) {
   if (box.status === 'ok') return null;
   if (box.status === 'disabled') {
-    return <div className="mb-3 rounded-lg border border-white/10 bg-white/5 p-3 text-sm text-mist-faint">disabled</div>;
+    return (
+      <div className="mb-3 rounded-lg border border-white/10 bg-white/5 p-3 text-sm text-mist-faint">
+        disabled
+      </div>
+    );
   }
   return (
-    <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 p-3">
-      <div className="text-sm text-coral">{box.error ?? box.status}</div>
-      {box.status === 'auth-error' && hint && (
-        <div className="mt-1 font-mono text-xs text-mist-dim">{hint}</div>
-      )}
+    <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">
+      {box.error ?? box.status}
     </div>
   );
 }
 
-function EventRow({ ev, highlight, showDate }: { ev: CalendarEvent; highlight?: boolean; showDate?: boolean }) {
+/** The in-app google fix — one prominent card replaces both columns when not connected. */
+function ConnectGoogleCard({ hint }: { hint: string | null }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
-    <li
-      className={`flex items-baseline gap-3 py-1.5 ${highlight ? '-ml-2 border-l border-amber pl-2' : ''}`}
-      title={ev.location ? `${ev.title} — ${ev.location}` : ev.title}
+    <section
+      className="glass-raised rise mx-auto mt-6 max-w-xl p-8 text-center"
+      style={{ '--rise-i': 0 } as CSSProperties}
     >
-      <span className="w-24 shrink-0 font-mono text-xs text-mist-dim">
-        {ev.allDay ? 'all day' : `${hm(ev.start)}–${hm(ev.end)}`}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-mist">{ev.title}</span>
-      {showDate && (
-        <span className="shrink-0 font-mono text-xs text-mist-faint">
-          {new Date(ev.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toLowerCase()}
-        </span>
+      <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">google</div>
+      <div className="mt-2 text-sm font-semibold text-mist">mail and calendar are not connected</div>
+      {hint && <div className="mt-2 text-sm text-mist-dim">{hint}</div>}
+      <button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await connectGoogle();
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="mt-5 rounded-lg bg-amber/15 px-6 py-2.5 font-mono text-sm text-amber transition-colors hover:bg-amber/25 disabled:opacity-40"
+      >
+        {busy ? '…' : 'connect google'}
+      </button>
+      {error && (
+        <div className="mt-2 truncate font-mono text-xs text-coral" title={error}>
+          {error}
+        </div>
       )}
-    </li>
+      <div className="mt-3 text-xs text-mist-faint">opens google consent; lands back in atrium</div>
+    </section>
+  );
+}
+
+/** http-shaped ids link directly; otherwise link to the calendar day view, so an
+ *  event row is never a dead click. (The snapshot contract carries no htmlLink.) */
+function eventLink(ev: CalendarEvent): string {
+  if (ev.id.startsWith('http')) return ev.id;
+  const d = new Date(ev.start);
+  return `https://calendar.google.com/calendar/r/day/${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function EventRow({ ev, highlight, showDate }: { ev: CalendarEvent; highlight?: boolean; showDate?: boolean }) {
+  const link = eventLink(ev);
+  return (
+    <Row href={link} className="group">
+      <div
+        className={`flex w-full min-w-0 items-baseline gap-3 ${highlight ? '-ml-2 border-l border-amber pl-2' : ''}`}
+        title={ev.location ? `${ev.title} — ${ev.location}` : ev.title}
+      >
+        <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-mist-dim">
+          {ev.allDay ? 'all day' : `${hm(ev.start)}–${hm(ev.end)}`}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm text-mist">{ev.title}</span>
+        {showDate && (
+          <span className="shrink-0 font-mono text-xs text-mist-faint">
+            {new Date(ev.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toLowerCase()}
+          </span>
+        )}
+      </div>
+    </Row>
   );
 }
 
 export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
-  const { email, calendar } = snapshot.comms;
+  const { google, email, calendar } = snapshot.comms;
   const now = Date.now();
+
+  // not connected → the fix lives here, not in a terminal somewhere else
+  if (google && !google.connected) {
+    return <ConnectGoogleCard hint={google.hint} />;
+  }
 
   const today = [...calendar.today].sort((a, b) => a.start.localeCompare(b.start));
   // highlight the event happening now, else the next one to start today
   let highlightId: string | null = null;
-  const current = today.find((e) => !e.allDay && new Date(e.start).getTime() <= now && now < new Date(e.end).getTime());
+  const current = today.find(
+    (e) => !e.allDay && new Date(e.start).getTime() <= now && now < new Date(e.end).getTime(),
+  );
   if (current) highlightId = current.id;
   else highlightId = today.find((e) => new Date(e.start).getTime() > now)?.id ?? null;
 
@@ -79,35 +139,49 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
       </div>
     ));
 
+  const sourceChip = google?.source ? (
+    <span className="font-mono text-[10px] text-mist-faint">via {google.source} token</span>
+  ) : null;
+
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <Panel title="mail" riseIndex={0} right={<RelTime iso={snapshot.comms.updatedAt} />}>
-        <StatusBanner box={email} hint="token: ~/.hermes/google_token.json" />
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      <Panel
+        title="mail"
+        riseIndex={0}
+        right={
+          <span className="flex items-baseline gap-3">
+            {sourceChip}
+            <RelTime iso={snapshot.comms.updatedAt} />
+          </span>
+        }
+      >
+        <StatusBanner box={email} />
         <div className="mb-4 flex items-baseline gap-3">
-          <span className={`font-display text-5xl italic ${email.unreadCount > 0 ? 'text-amber' : 'text-mist-dim'}`}>
+          <span
+            className={`font-mono text-4xl tabular-nums ${email.unreadCount > 0 ? 'text-amber' : 'text-mist-dim'}`}
+          >
             {email.unreadCount}
           </span>
-          <span className="font-mono text-[11px] uppercase tracking-widest text-mist-faint">unread</span>
+          <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">unread</span>
         </div>
         {email.threads.length === 0 ? (
           <EmptyState>inbox is quiet</EmptyState>
         ) : (
-          <ul className="max-h-[28rem] overflow-y-auto">
+          <div className="max-h-[28rem] overflow-y-auto">
             {email.threads.map((t) => (
-              <li
-                key={t.id}
-                title={t.snippet}
-                className={`flex items-center gap-2 border-b py-1.5 last:border-b-0 hairline ${
-                  t.unread ? 'text-mist' : 'text-mist-dim'
-                }`}
-              >
-                {t.unread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" />}
-                <span className="w-40 shrink-0 truncate text-sm">{t.from}</span>
-                <span className="min-w-0 flex-1 truncate text-sm">{t.subject}</span>
-                <RelTime iso={t.date} />
-              </li>
+              <Row key={t.id} href={`https://mail.google.com/mail/u/0/#inbox/${t.id}`} className="group">
+                <div
+                  className={`flex w-full min-w-0 items-center gap-2 ${t.unread ? 'text-mist' : 'text-mist-dim'}`}
+                  title={t.snippet}
+                >
+                  {t.unread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" />}
+                  <span className="w-40 shrink-0 truncate text-sm">{t.from}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{t.subject}</span>
+                  <RelTime iso={t.date} />
+                </div>
+              </Row>
             ))}
-          </ul>
+          </div>
         )}
       </Panel>
 

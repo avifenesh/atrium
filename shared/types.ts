@@ -127,6 +127,23 @@ export interface AgentsState {
   agents: AgentInfo[];
   /** rolling ticker from eigen observe/events.jsonl and friends */
   activity: { time: string; source: string; text: string; isError: boolean }[];
+  /** tasks handed to eigen via /api/eigen/dispatch */
+  dispatches: EigenDispatch[];
+}
+
+/** A task handed off to eigen ("send to eigen"). */
+export interface EigenDispatch {
+  id: string;
+  title: string;
+  prompt: string;
+  dir: string;
+  mode: 'daemon' | 'headless';
+  status: 'running' | 'done' | 'error';
+  startedAt: string;
+  endedAt: string | null;
+  logPath: string | null;
+  /** source ref when dispatched from a github item, e.g. "owner/repo#123" */
+  sourceId: string | null;
 }
 
 // ---------- system ----------
@@ -197,6 +214,14 @@ export interface CalendarEvent {
 
 export interface CommsState {
   updatedAt: string | null;
+  /** google connection state — drives the in-app "connect google" flow */
+  google: {
+    connected: boolean;
+    /** which token is in use: atrium's own, or the hermes fallback */
+    source: 'atrium' | 'hermes' | null;
+    /** human hint when not connected (what to click, what failed) */
+    hint: string | null;
+  };
   email: {
     status: 'ok' | 'auth-error' | 'disabled' | 'error';
     unreadCount: number;
@@ -299,3 +324,8 @@ export interface Flag {
 // DELETE /api/mutes/:id        -> { ok: true }
 // POST /api/agents/:id/:action -> body { target? }, returns { ok, output? }
 // POST /api/refresh/:section   -> force collector run, returns { ok }
+// POST /api/eigen/dispatch     -> body { title, prompt?, url?, repo?, sourceId?, dry? } -> EigenDispatch (dry: returns plan, runs nothing)
+// POST /api/notifications/read -> body { id } (thread id) or { all: true } -> { ok }
+// GET  /api/google/status      -> CommsState['google']
+// GET  /api/google/auth-url    -> { url } (open in browser; consent lands on /api/google/callback)
+// GET  /api/google/callback    -> completes oauth, stores atrium-owned token, returns html

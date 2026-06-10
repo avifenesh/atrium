@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { Dot, EmptyState, MuteButton, Mutable, Panel, RelTime } from '../components/ui';
-import type { GithubItem, GithubPR, Snapshot } from '../../../shared/types';
+import { clearAllNotifications, clearNotification, isMuted } from '../api';
+import { Dot, EmptyState, MuteButton, Panel, QuietChip, RelTime, Row, SendToEigen } from '../components/ui';
+import type { EigenDispatch, GithubItem, GithubNotification, GithubPR, Snapshot } from '../../../shared/types';
 
 function ciStatus(ci: GithubPR['ci']): string {
   if (ci === 'SUCCESS') return 'running'; // jade
@@ -17,79 +18,162 @@ const DECISION: Record<NonNullable<GithubPR['reviewDecision']>, { label: string;
 
 function Chip({ className = '', children }: { className?: string; children: ReactNode }) {
   return (
-    <span className={`shrink-0 rounded border hairline px-1.5 py-px font-mono text-[10px] ${className}`}>
+    <span className={`shrink-0 whitespace-nowrap rounded border hairline px-1.5 py-px font-mono text-[10px] ${className}`}>
       {children}
     </span>
   );
 }
 
-/** Hover cluster: quiet the repo, then a fainter quiet for its whole org. */
+/** Hover cluster tail: quiet the repo, then a fainter quiet for its whole org. */
 function RepoMutes({ repo }: { repo: string }) {
   const owner = repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : repo;
   return (
-    <span className="flex shrink-0 items-center">
+    <>
       <MuteButton kind="github-repo" target={repo} />
       <MuteButton kind="github-org" target={owner} className="opacity-60" />
-    </span>
+    </>
   );
 }
 
-function ItemRow({ snapshot, item }: { snapshot: Snapshot; item: GithubItem }) {
+function notMuted(snapshot: Snapshot) {
+  return (x: { repo: string }) => !isMuted(snapshot, 'github-repo', x.repo);
+}
+
+function ItemRow({
+  item,
+  dispatches,
+  accent = false,
+}: {
+  item: GithubItem;
+  dispatches: EigenDispatch[];
+  accent?: boolean;
+}) {
   return (
-    <Mutable snapshot={snapshot} kind="github-repo" target={item.repo}>
-      <div className="group flex items-center gap-3 py-1.5">
-        <span className="w-44 shrink-0 truncate font-mono text-xs text-mist-faint">{item.repo}</span>
-        <a
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
-          className="min-w-0 flex-1 truncate text-sm text-mist hover:text-slate-glow"
-        >
-          {item.title}
-        </a>
-        <RelTime iso={item.updatedAt} />
+    <Row href={item.url} title={item.title}>
+      {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
+      <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{item.repo}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
+      <RelTime iso={item.updatedAt} />
+      <span className="flex shrink-0 items-center gap-1">
+        <SendToEigen title={item.title} url={item.url} repo={item.repo} sourceId={item.id} dispatches={dispatches} />
         <RepoMutes repo={item.repo} />
-      </div>
-    </Mutable>
+      </span>
+    </Row>
   );
 }
 
-function PRRow({ snapshot, pr }: { snapshot: Snapshot; pr: GithubPR }) {
+function PRRow({ pr, dispatches }: { pr: GithubPR; dispatches: EigenDispatch[] }) {
   const decision = pr.reviewDecision ? DECISION[pr.reviewDecision] : null;
   return (
-    <Mutable snapshot={snapshot} kind="github-repo" target={pr.repo}>
-      <div className="group flex items-center gap-3 py-1.5">
-        <Dot status={ciStatus(pr.ci)} />
-        <span className="w-40 shrink-0 truncate font-mono text-xs text-mist-faint">{pr.repo}</span>
-        <a
-          href={pr.url}
-          target="_blank"
-          rel="noreferrer"
-          className="min-w-0 flex-1 truncate text-sm text-mist hover:text-slate-glow"
-        >
-          {pr.title}
-        </a>
-        {pr.isDraft && <Chip className="text-mist-faint">draft</Chip>}
-        {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
-        <RelTime iso={pr.updatedAt} />
+    <Row href={pr.url} title={pr.title}>
+      <Dot status={ciStatus(pr.ci)} />
+      <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{pr.repo}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-mist">{pr.title}</span>
+      {pr.isDraft && <Chip className="text-mist-faint">draft</Chip>}
+      {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
+      <RelTime iso={pr.updatedAt} />
+      <span className="flex shrink-0 items-center gap-1">
+        <SendToEigen title={pr.title} url={pr.url} repo={pr.repo} sourceId={pr.id} dispatches={dispatches} />
         <RepoMutes repo={pr.repo} />
-      </div>
-    </Mutable>
+      </span>
+    </Row>
   );
 }
 
-export default function TasksPanel({ snapshot }: { snapshot: Snapshot }) {
+function NotificationRow({
+  n,
+  dispatches,
+  onClear,
+}: {
+  n: GithubNotification;
+  dispatches: EigenDispatch[];
+  onClear: (id: string) => void;
+}) {
+  return (
+    <Row href={n.url} title={n.title}>
+      <Chip className="text-mist-dim">{n.reason}</Chip>
+      <span className="w-32 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-40">{n.repo}</span>
+      <span className={`min-w-0 flex-1 truncate text-sm ${n.unread ? 'text-mist' : 'text-mist-dim'}`}>{n.title}</span>
+      <RelTime iso={n.updatedAt} />
+      <span className="flex shrink-0 items-center gap-1">
+        <SendToEigen title={n.title} url={n.url} repo={n.repo} sourceId={n.id} dispatches={dispatches} />
+        <button
+          type="button"
+          title="mark this notification read"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onClear(n.id);
+          }}
+          className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber"
+        >
+          clear
+        </button>
+        <MuteButton kind="github-reason" target={n.reason} className="opacity-60" />
+        <RepoMutes repo={n.repo} />
+      </span>
+    </Row>
+  );
+}
+
+export default function TasksPanel({
+  snapshot,
+  onOpenQuiet,
+}: {
+  snapshot: Snapshot;
+  onOpenQuiet?: () => void;
+}) {
   const g = snapshot.github;
+  const dispatches = snapshot.agents.dispatches;
   const [teamOpen, setTeamOpen] = useState(false);
+  // optimistic clear — removed ids vanish immediately, restored if the API call fails
+  const [cleared, setCleared] = useState<ReadonlySet<string>>(new Set());
+  const [clearAllArmed, setClearAllArmed] = useState(false);
+
+  const visible = notMuted(snapshot);
+  const actNow = g.actNow.filter(visible);
+  const myPRs = g.myPRs.filter(visible);
+  const mentions = g.mentions.filter(visible);
+  const teamQueue = g.teamQueue.filter(visible);
+  const notifAll = g.notifications.filter((n) => !cleared.has(n.id));
+  const notifications = notifAll.filter((n) => visible(n) && !isMuted(snapshot, 'github-reason', n.reason));
+  const ownRepos = g.ownRepos.filter(visible);
+
+  const clearOne = (id: string) => {
+    setCleared((s) => new Set(s).add(id));
+    clearNotification(id).catch(() => {
+      setCleared((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    });
+  };
+
+  const clearAll = () => {
+    if (!clearAllArmed) {
+      setClearAllArmed(true);
+      setTimeout(() => setClearAllArmed(false), 4000);
+      return;
+    }
+    setClearAllArmed(false);
+    const prev = cleared;
+    setCleared(new Set(g.notifications.map((n) => n.id)));
+    clearAllNotifications().catch(() => setCleared(prev));
+  };
 
   return (
     <div>
-      <header className="mb-5 flex items-baseline justify-between px-1">
-        <h1 className="font-display text-3xl italic text-mist">tasks</h1>
-        <div className="flex items-baseline gap-4 font-mono text-xs text-mist-dim">
-          {g.error && <span className="max-w-96 truncate text-coral">{g.error}</span>}
+      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3 px-1">
+        <h1 className="text-sm font-semibold lowercase tracking-wide text-mist">tasks</h1>
+        <div className="flex min-w-0 items-baseline gap-4 font-mono text-xs text-mist-dim">
+          {g.error && (
+            <span className="max-w-96 truncate text-coral" title={g.error}>
+              {g.error}
+            </span>
+          )}
           {g.rateLimit && (
-            <span title="github rate limit">
+            <span className="tabular-nums" title="github rate limit">
               {g.rateLimit.remaining}/{g.rateLimit.limit}
             </span>
           )}
@@ -98,113 +182,142 @@ export default function TasksPanel({ snapshot }: { snapshot: Snapshot }) {
       </header>
 
       <div className="grid grid-cols-12 gap-5">
-        <Panel title="act now" riseIndex={0} className="col-span-12">
-          {g.actNow.length === 0 ? (
+        <Panel
+          title="act now"
+          riseIndex={0}
+          className="col-span-12"
+          quietCount={g.actNow.length - actNow.length}
+          onQuietClick={onOpenQuiet}
+        >
+          {actNow.length === 0 ? (
             <EmptyState>nothing urgent</EmptyState>
           ) : (
-            <div className="max-h-72 overflow-y-auto">
-              {g.actNow.map((it) => (
-                <ItemRow key={it.id} snapshot={snapshot} item={it} />
+            <div className="max-h-72 space-y-0.5 overflow-y-auto">
+              {actNow.map((it) => (
+                <ItemRow key={it.id} item={it} dispatches={dispatches} accent />
               ))}
             </div>
           )}
         </Panel>
 
-        <Panel title="my open PRs" riseIndex={1} className="col-span-7">
-          {g.myPRs.length === 0 ? (
+        <Panel
+          title="my open prs"
+          riseIndex={1}
+          className="col-span-12 lg:col-span-7"
+          quietCount={g.myPRs.length - myPRs.length}
+          onQuietClick={onOpenQuiet}
+        >
+          {myPRs.length === 0 ? (
             <EmptyState>no open prs</EmptyState>
           ) : (
-            <div className="max-h-80 overflow-y-auto">
-              {g.myPRs.map((pr) => (
-                <PRRow key={pr.id} snapshot={snapshot} pr={pr} />
+            <div className="max-h-80 space-y-0.5 overflow-y-auto">
+              {myPRs.map((pr) => (
+                <PRRow key={pr.id} pr={pr} dispatches={dispatches} />
               ))}
             </div>
           )}
         </Panel>
 
-        <Panel title="mentions" riseIndex={2} className="col-span-5">
-          {g.mentions.length === 0 ? (
+        <Panel
+          title="mentions"
+          riseIndex={2}
+          className="col-span-12 lg:col-span-5"
+          quietCount={g.mentions.length - mentions.length}
+          onQuietClick={onOpenQuiet}
+        >
+          {mentions.length === 0 ? (
             <EmptyState>no mentions</EmptyState>
           ) : (
-            <div className="max-h-80 overflow-y-auto">
-              {g.mentions.map((it) => (
-                <ItemRow key={it.id} snapshot={snapshot} item={it} />
+            <div className="max-h-80 space-y-0.5 overflow-y-auto">
+              {mentions.map((it) => (
+                <ItemRow key={it.id} item={it} dispatches={dispatches} />
               ))}
             </div>
           )}
         </Panel>
 
-        <section className="glass rise col-span-12 p-5" style={{ '--rise-i': 3 } as CSSProperties}>
-          <button
-            onClick={() => setTeamOpen((o) => !o)}
-            className="flex w-full items-baseline gap-2 text-left"
-          >
-            <span className="font-mono text-xs text-mist-faint">{teamOpen ? '▾' : '▸'}</span>
-            <h2 className="font-display text-xl italic text-mist">team queue</h2>
-            <span className="font-mono text-sm text-mist-dim">{g.teamQueue.length}</span>
-          </button>
+        <section className="glass rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 3 } as CSSProperties}>
+          <header className="flex items-baseline justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setTeamOpen((o) => !o)}
+              className="flex min-w-0 cursor-pointer items-baseline gap-2 text-left"
+            >
+              <span className="font-mono text-[11px] text-mist-faint">{teamOpen ? '▾' : '▸'}</span>
+              <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">team queue</h2>
+              <span className="font-mono text-xs tabular-nums text-mist-dim">{teamQueue.length}</span>
+            </button>
+            {g.teamQueue.length - teamQueue.length > 0 && (
+              <QuietChip count={g.teamQueue.length - teamQueue.length} onClick={onOpenQuiet} />
+            )}
+          </header>
           {teamOpen && (
-            <div className="mt-3 max-h-80 overflow-y-auto">
-              {g.teamQueue.length === 0 ? (
+            <div className="mt-3 max-h-80 space-y-0.5 overflow-y-auto">
+              {teamQueue.length === 0 ? (
                 <EmptyState>queue empty</EmptyState>
               ) : (
-                g.teamQueue.map((pr) => <PRRow key={pr.id} snapshot={snapshot} pr={pr} />)
+                teamQueue.map((pr) => <PRRow key={pr.id} pr={pr} dispatches={dispatches} />)
               )}
             </div>
           )}
         </section>
 
-        <Panel title="notifications" riseIndex={4} className="col-span-7">
-          {g.notifications.length === 0 ? (
+        <Panel
+          title="notifications"
+          riseIndex={4}
+          className="col-span-12"
+          quietCount={notifAll.length - notifications.length}
+          onQuietClick={onOpenQuiet}
+          right={
+            notifications.length > 0 ? (
+              <button
+                type="button"
+                onClick={clearAll}
+                title="mark all notifications read"
+                className={`cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+                  clearAllArmed ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-amber'
+                }`}
+              >
+                {clearAllArmed ? 'sure?' : 'clear all'}
+              </button>
+            ) : undefined
+          }
+        >
+          {notifications.length === 0 ? (
             <EmptyState>no notifications</EmptyState>
           ) : (
-            <div className="max-h-96 overflow-y-auto">
-              {g.notifications.map((n) => (
-                <Mutable key={n.id} snapshot={snapshot} kind="github-repo" target={n.repo}>
-                  {/* nested wrapper so reason mutes (the button below) actually dim the row */}
-                  <Mutable snapshot={snapshot} kind="github-reason" target={n.reason}>
-                  <div className="group flex items-center gap-2 py-1.5">
-                    <Chip className="text-mist-dim">{n.reason}</Chip>
-                    <MuteButton kind="github-reason" target={n.reason} className="opacity-60" />
-                    <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint">{n.repo}</span>
-                    <a
-                      href={n.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`min-w-0 flex-1 truncate text-sm hover:text-slate-glow ${
-                        n.unread ? 'text-mist' : 'text-mist-dim'
-                      }`}
-                    >
-                      {n.title}
-                    </a>
-                    <RelTime iso={n.updatedAt} />
-                    <RepoMutes repo={n.repo} />
-                  </div>
-                  </Mutable>
-                </Mutable>
+            <div className="max-h-96 space-y-0.5 overflow-y-auto">
+              {notifications.map((n) => (
+                <NotificationRow key={n.id} n={n} dispatches={dispatches} onClear={clearOne} />
               ))}
             </div>
           )}
         </Panel>
 
-        <Panel title="my repos" riseIndex={5} className="col-span-5">
-          {g.ownRepos.length === 0 ? (
+        <Panel
+          title="my repos"
+          riseIndex={5}
+          className="col-span-12"
+          quietCount={g.ownRepos.length - ownRepos.length}
+          onQuietClick={onOpenQuiet}
+        >
+          {ownRepos.length === 0 ? (
             <EmptyState>no repos</EmptyState>
           ) : (
-            <div className="grid max-h-96 grid-cols-1 gap-2 overflow-y-auto xl:grid-cols-2">
-              {g.ownRepos.map((r) => (
-                <Mutable key={r.repo} snapshot={snapshot} kind="github-repo" target={r.repo}>
-                  <div className="group flex items-center gap-2 rounded-lg border hairline px-3 py-2">
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist">{r.repo}</span>
-                    <span className="shrink-0 font-mono text-xs text-mist-dim">
-                      {r.openIssues}
-                      <span className="text-mist-faint"> iss </span>
-                      {r.openPRs}
-                      <span className="text-mist-faint"> pr</span>
-                    </span>
+            <div className="grid grid-cols-2 gap-1.5 lg:grid-cols-3 2xl:grid-cols-4">
+              {ownRepos.map((r) => (
+                <Row key={r.repo} href={`https://github.com/${r.repo}`} title={r.repo} className="border hairline">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist">{r.repo}</span>
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-mist-dim">
+                    {r.openIssues}
+                    <span className="text-mist-faint"> iss </span>
+                    {r.openPRs}
+                    <span className="text-mist-faint"> pr</span>
+                  </span>
+                  <span className="flex shrink-0 items-center">
                     <RepoMutes repo={r.repo} />
-                  </div>
-                </Mutable>
+                  </span>
+                </Row>
               ))}
             </div>
           )}

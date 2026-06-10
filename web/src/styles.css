@@ -79,7 +79,25 @@ body::after {
   border-color: rgba(255, 255, 255, 0.07);
 }
 
-/* muted resources render dimmed, never removed */
+/* keyboard focus — amber hairline, consistent across every interactive element (DESIGN v2) */
+:focus-visible {
+  outline: 1px solid var(--color-amber);
+  outline-offset: 1px;
+}
+
+/* hover-revealed action cluster (quiet / → eigen / clear / view).
+   Hidden but space-reserving (visibility, not display — no layout shift on reveal);
+   appears on row hover OR when keyboard focus lands anywhere inside the .group row. */
+.hover-cluster {
+  visibility: hidden;
+}
+.group:hover .hover-cluster,
+.group:focus-within .hover-cluster {
+  visibility: visible;
+}
+
+/* legacy dim treatment — v2 quiet = archive (rows unmount entirely via <Mutable/>);
+   kept only for places that intentionally show muted things (e.g. the quiet drawer). */
 .muted-dim {
   opacity: 0.32;
   filter: saturate(0.4);

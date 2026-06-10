@@ -7,7 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:5599', changeOrigin: false },
+      // changeOrigin: the server enforces a Host allowlist (CSRF/DNS-rebinding
+      // defense), so proxied requests must carry the backend host, not :5173
+      '/api': { target: 'http://127.0.0.1:5599', changeOrigin: true },
     },
   },
 });

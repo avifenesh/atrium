@@ -43,7 +43,7 @@ export function emptySnapshot(): Snapshot {
       updatedAt: null, error: null, actNow: [], myPRs: [], mentions: [],
       teamQueue: [], notifications: [], ownRepos: [], rateLimit: null,
     },
-    agents: { updatedAt: null, agents: [], activity: [] },
+    agents: { updatedAt: null, agents: [], activity: [], dispatches: [] },
     system: {
       updatedAt: null,
       cpu: { load1: 0, load5: 0, load15: 0, cores: 0, pct: 0 },
@@ -54,6 +54,7 @@ export function emptySnapshot(): Snapshot {
     schedule: { updatedAt: null, entries: [], error: null },
     comms: {
       updatedAt: null,
+      google: { connected: false, source: null, hint: null },
       email: { status: 'disabled', unreadCount: 0, threads: [], error: null },
       calendar: { status: 'disabled', today: [], upcoming: [], error: null },
     },
