@@ -4,7 +4,6 @@ import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
 import { getCursorUsage } from '../cursor-usage.js';
 import { getSpotifyAccessToken } from '../spotify.js';
-import { getXaiUsage } from '../xai-usage.js';
 import { store } from '../state.js';
 import { ago, iso, mtime, readJson, readText, shTry, tailLines } from '../util.js';
 import type { Collector } from './registry.js';
@@ -251,7 +250,14 @@ async function codexService(): Promise<SubService | null> {
   };
 }
 
-// ---------- grok (local session stats; x.ai has no usage API for oauth accounts) ----------
+// ---------- grok build (local session stats + subscription tier from the CLI's own JWT) ----------
+//
+// Live credit/usage for a Grok Build subscription is gRPC-only: the grok CLI's `/usage`
+// calls x.ai/auth/check_subscription over gix-grpc (application/grpc) on
+// cli-chat-proxy.grok.com — not reproducible from a zero-dep fetch daemon, and pinned to the
+// grok binary version. So atrium shows what IS truthfully local: the subscription tier from
+// the CLI's session JWT (~/.grok/auth.json .key) plus session activity. NOT the x.ai API-platform
+// "Management API key" — that's a different product (pay-per-token dev credits), not this sub.
 
 /**
  * Schema discovered 2026-06-10 in ~/.grok/sessions/session_search.sqlite:
@@ -277,66 +283,41 @@ function grokSqliteStats(): { n: number; lastMs: number } | null {
   }
 }
 
+/** Decode the `tier` claim from the grok-cli session JWT without verifying/exposing the token. */
+function grokTier(auth: any): number | null {
+  try {
+    const entry = Object.values(auth ?? {})[0] as any;
+    const jwt = String(entry?.key ?? '');
+    const payload = jwt.split('.')[1];
+    if (!payload) return null;
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return typeof claims.tier === 'number' ? claims.tier : null;
+  } catch {
+    return null;
+  }
+}
+
 async function grokService(): Promise<SubService | null> {
   const src = config.paths.grokAuth;
   const auth = await readJson<any>(src);
   if (!auth) return null;
 
-  // local session count is always shown; usage/credits come from xai-usage:
-  //   PATH A (internal token tier, zero-config) or PATH B (pasted management key).
   const stats = grokSqliteStats();
-  const sessionPart = stats ? `${stats.n} local sessions; last activity ${ago(stats.lastMs)}` : null;
+  const tier = grokTier(auth);
 
-  const xai = await getXaiUsage();
-
-  if ('error' in xai) {
-    // only a hint (no key pasted, RPC unavailable) — surface the hint, NOT an error dump,
-    // and keep the local session-count detail the block already computes.
-    const parts: string[] = [];
-    if (sessionPart) parts.push(sessionPart);
-    parts.push(xai.hint);
-    return {
-      id: 'grok',
-      name: 'Grok',
-      status: 'active',
-      plan: 'x.ai oauth',
-      detail: parts.join('; '),
-      usage: null,
-      source: stats ? `${src} + sessions/session_search.sqlite` : src,
-    };
-  }
-
-  // usable usage from PATH A or PATH B
   const parts: string[] = [];
-  if (sessionPart) parts.push(sessionPart);
-  parts.push(xai.detail);
-
-  // a usage bar only where a real number exists: spend-vs-limit when both known.
-  let usage: SubService['usage'] = null;
-  if (typeof xai.spend === 'number' && typeof xai.limit === 'number' && xai.limit > 0) {
-    usage = [
-      {
-        label: 'spend',
-        usedPct: Math.min(100, Math.max(0, Math.round((xai.spend / xai.limit) * 1000) / 10)),
-        resetAt: null,
-      },
-    ];
-  }
-
-  const plan = xai.tier ? `x.ai ${xai.tier}` : xai.source === 'mgmt' ? 'x.ai billing' : 'x.ai oauth';
-  const sourceTag =
-    xai.source === 'mgmt'
-      ? 'management-api.x.ai billing (key via in-app paste)'
-      : 'x.ai internal token';
+  if (stats) parts.push(`${stats.n} local sessions; last activity ${ago(stats.lastMs)}`);
+  // live credits only exist behind grok's gRPC /usage — say so honestly rather than faking a bar
+  parts.push('live credits: run /usage in grok (gRPC-only, no stable API)');
 
   return {
     id: 'grok',
-    name: 'Grok',
+    name: 'Grok Build',
     status: 'active',
-    plan,
+    plan: tier !== null ? `tier ${tier}` : 'subscription',
     detail: parts.join('; '),
-    usage,
-    source: `${stats ? `${src} + sessions/session_search.sqlite + ` : `${src} + `}${sourceTag}`,
+    usage: null,
+    source: stats ? `${src} (tier from JWT) + sessions/session_search.sqlite` : `${src} (tier from JWT)`,
   };
 }
 
