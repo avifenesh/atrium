@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Snapshot, Mute, MuteKind } from '../../../shared/types';
 import { addMute, removeMute } from '../api';
-import { SectionLabel, EmptyState } from './ui';
+import { useScrollLock } from '../hooks';
+import { SectionLabel, EmptyState, CopyText, RelTime } from './ui';
 
 const KINDS: { kind: MuteKind; placeholder: string }[] = [
   { kind: 'github-item', placeholder: 'owner/repo#123' },
@@ -83,16 +84,19 @@ function RestoreButton({ id }: { id: string }) {
 
 function MuteEntry({ m }: { m: Mute }) {
   return (
-    <li className="flex items-center gap-2 border-b py-2 last:border-b-0 hairline">
+    <li className="flex items-center gap-2 rounded border-b px-1 py-2 transition-colors last:border-b-0 hairline hover:bg-white/[0.03]">
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm text-mist" title={m.target}>
-          {m.target}
+        <CopyText text={m.target} className="block w-full">
+          <span className="block truncate text-sm text-mist">{m.target}</span>
+        </CopyText>
+        <div className="flex items-baseline gap-2">
+          {m.enforcedBy && (
+            <span className="truncate font-mono text-[10px] text-mist-faint" title={m.enforcedBy}>
+              {m.enforcedBy}
+            </span>
+          )}
+          <RelTime iso={m.createdAt} />
         </div>
-        {m.enforcedBy && (
-          <div className="truncate font-mono text-[10px] text-mist-faint" title={m.enforcedBy}>
-            {m.enforcedBy}
-          </div>
-        )}
       </div>
       <Until iso={m.until} />
       <span
@@ -114,14 +118,14 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
   const [enforce, setEnforce] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
 
+  // esc is handled centrally in App (topmost overlay first) — no window listener here.
+  // move focus into the drawer on open (esc/tab work without a click) + body scroll lock
+  useScrollLock();
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
 
   const active = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
 
@@ -154,12 +158,25 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-ink/60" onClick={onClose} />
-      <aside className="glass-raised fixed inset-y-0 right-0 z-40 flex w-96 flex-col overflow-y-auto p-5">
-        <header className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold lowercase tracking-wide text-mist">quiet / archive</h2>
-          <button onClick={onClose} className="font-mono text-[11px] text-mist-faint hover:text-mist">
-            esc
+      {/* backdrop — click closes; the aside is a sibling, so panel clicks never reach this */}
+      <div className="backdrop-fade fixed inset-0 z-40 bg-ink/60" onClick={onClose} />
+      <aside
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="quiet / archive"
+        className="glass-raised slide-in-right fixed inset-y-0 right-0 z-40 flex w-96 flex-col overflow-y-auto p-5 outline-none"
+      >
+        <header className="mb-4 flex items-baseline justify-between border-b pb-3 hairline">
+          <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">quiet / archive</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            title="close (esc)"
+            className="cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+          >
+            close
           </button>
         </header>
 

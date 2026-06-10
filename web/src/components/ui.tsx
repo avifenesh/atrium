@@ -1,5 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { addMute, dispatchToEigen, isMuted, removeMute } from '../api';
+import { useNow } from '../hooks';
 import type { EigenDispatch, MuteKind, Snapshot } from '../../../shared/types';
 
 /** Glass panel — top-level building block of every view.
@@ -70,9 +71,10 @@ export function Dot({ status }: { status: string }) {
 }
 
 export function RelTime({ iso }: { iso: string | null }) {
+  const now = useNow(30000); // before the early return — hooks must run unconditionally
   if (!iso) return <span className="shrink-0 font-mono text-xs text-mist-faint">—</span>;
   const t = new Date(iso).getTime();
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  const s = Math.max(0, Math.floor((now - t) / 1000));
   const rel = s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
   return (
     <span className="shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-mist-faint" title={new Date(iso).toLocaleString()}>
@@ -100,7 +102,7 @@ export function Row({
   className?: string;
   title?: string;
 }) {
-  const base = `group flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.04] ${className}`;
+  const base = `group row-glide flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.04] ${className}`;
   if (!href && !onClick) {
     return (
       <div className={base} title={title}>

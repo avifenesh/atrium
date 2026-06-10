@@ -1,6 +1,8 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { isMuted } from '../api';
-import { CopyText, Dot, EmptyState, MuteButton, Panel, Row } from '../components/ui';
+import Spark from '../components/Spark';
+import { CopyText, Dot, EmptyState, MuteButton, Panel, RelTime, Row } from '../components/ui';
+import { getSeries, pctTone } from '../hooks';
 import type { Snapshot } from '../../../shared/types';
 
 const GiB = 1024 ** 3;
@@ -58,25 +60,43 @@ export default function SystemPanel({
 
   return (
     <div>
-      {sys.error && <div className="mb-3 font-mono text-xs text-coral">{sys.error}</div>}
+      {(sys.error || sys.updatedAt) && (
+        <div className="mb-3 flex items-baseline gap-2">
+          {sys.error && <span className="min-w-0 truncate font-mono text-xs text-coral">{sys.error}</span>}
+          {sys.updatedAt && (
+            <span className="ml-auto flex shrink-0 items-baseline gap-1.5 font-mono text-[11px] text-mist-faint">
+              updated <RelTime iso={sys.updatedAt} />
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="cpu" riseIndex={0}>
-          <BigPct pct={sys.cpu.pct} />
+          <div className="flex min-w-0 items-end justify-between gap-2">
+            <BigPct pct={sys.cpu.pct} />
+            <Spark series={getSeries('cpu')} className={`mb-1 shrink-0 ${pctTone(sys.cpu.pct)}`} />
+          </div>
           <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
             {sys.cpu.load1.toFixed(2)} / {sys.cpu.load5.toFixed(2)} / {sys.cpu.load15.toFixed(2)} · {sys.cpu.cores}c
           </div>
         </StatTile>
 
         <StatTile label="mem" riseIndex={1}>
-          <BigPct pct={sys.mem.usedPct} />
+          <div className="flex min-w-0 items-end justify-between gap-2">
+            <BigPct pct={sys.mem.usedPct} />
+            <Spark series={getSeries('mem')} className={`mb-1 shrink-0 ${pctTone(sys.mem.usedPct)}`} />
+          </div>
           <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
             {gb(memUsedB)}/{gb(sys.mem.totalB)} <span className="text-mist-faint">GB</span>
           </div>
         </StatTile>
 
         <StatTile label="swap" riseIndex={2}>
-          <BigPct pct={sys.swap.usedPct} className={swapClass} />
+          <div className="flex min-w-0 items-end justify-between gap-2">
+            <BigPct pct={sys.swap.usedPct} className={swapClass} />
+            <Spark series={getSeries('swap')} className={`mb-1 shrink-0 ${pctTone(sys.swap.usedPct)}`} />
+          </div>
           <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
             {gb(swapUsedB)}/{gb(sys.swap.totalB)} <span className="text-mist-faint">GB</span>
           </div>
@@ -85,11 +105,14 @@ export default function SystemPanel({
         <StatTile label="gpu" riseIndex={3}>
           {sys.gpu ? (
             <>
-              <BigPct pct={sys.gpu.utilPct} />
+              <div className="flex min-w-0 items-end justify-between gap-2">
+                <BigPct pct={sys.gpu.utilPct} />
+                <Spark series={getSeries('gpu')} className={`mb-1 shrink-0 ${pctTone(sys.gpu.utilPct)}`} />
+              </div>
               <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
                 {sys.gpu.memUsedMiB}/{sys.gpu.memTotalMiB} <span className="text-mist-faint">MiB</span> · {sys.gpu.tempC}°C
               </div>
-              <div className="truncate font-mono text-[11px] text-mist-faint">
+              <div className="truncate font-mono text-[11px] tabular-nums text-mist-faint">
                 {sys.gpu.name} · {sys.gpu.powerW}W
               </div>
               {sys.gpu.procs.length > 0 && (
@@ -230,9 +253,13 @@ export default function SystemPanel({
                 <Row key={s.unit} className="group">
                   <div className="flex w-full min-w-0 items-center gap-2">
                     <Dot status={s.active === 'active' && s.sub === 'running' ? 'running' : 'error'} />
-                    <CopyText text={s.unit}>
-                      <span className="shrink-0 font-mono text-sm text-mist">{s.unit}</span>
-                    </CopyText>
+                    <div className="min-w-0 overflow-hidden">
+                      <CopyText text={s.unit}>
+                        <span className="block truncate text-left font-mono text-sm text-mist" title={s.unit}>
+                          {s.unit}
+                        </span>
+                      </CopyText>
+                    </div>
                     <span className="min-w-0 flex-1 truncate text-xs text-mist-dim" title={s.description}>
                       {s.description}
                     </span>

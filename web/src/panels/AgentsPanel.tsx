@@ -39,15 +39,19 @@ function DispatchRow({ d }: { d: EigenDispatch }) {
     <Row className="group">
       <div className="flex w-full min-w-0 items-center gap-2">
         <Dot status={dispatchDot(d.status)} />
-        <span className="min-w-0 flex-1 truncate text-sm text-mist" title={d.title}>
-          {d.title}
-        </span>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <CopyText text={d.title}>
+            <span className="block truncate text-sm text-mist" title={d.title}>
+              {d.title}
+            </span>
+          </CopyText>
+        </div>
         <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim">
           {d.mode}
         </span>
         <RelTime iso={d.startedAt} />
         {d.logPath && (
-          <CopyText text={d.logPath}>
+          <CopyText text={d.logPath} className="hover-cluster shrink-0">
             <span className="shrink-0 font-mono text-[10px] text-mist-faint" title={d.logPath}>
               log
             </span>
@@ -171,7 +175,9 @@ function AgentCard({
 
       {recentDispatches.length > 0 && (
         <>
-          <SectionLabel>dispatches</SectionLabel>
+          <SectionLabel>
+            dispatches <span className="tabular-nums">· {recentDispatches.length}</span>
+          </SectionLabel>
           <div className="max-h-48 overflow-y-auto">
             {recentDispatches.map((d) => (
               <DispatchRow key={d.id} d={d} />
@@ -184,7 +190,9 @@ function AgentCard({
         <>
           {agent.sessions.length > 0 && (
             <>
-              <SectionLabel>sessions</SectionLabel>
+              <SectionLabel>
+                sessions <span className="tabular-nums">· {agent.sessions.length}</span>
+              </SectionLabel>
               <div>
                 {sessions.map((s) => (
                   <Row key={s.id} className="group">
@@ -199,9 +207,13 @@ function AgentCard({
                           </CopyText>
                         </div>
                       ) : (
-                        <span className="min-w-0 flex-1 truncate text-sm text-mist">
-                          {sessionLabel(s)}
-                        </span>
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <CopyText text={s.id}>
+                            <span className="block truncate text-left text-sm text-mist" title={s.id}>
+                              {sessionLabel(s)}
+                            </span>
+                          </CopyText>
+                        </div>
                       )}
                       {s.model && (
                         <span className="shrink-0 font-mono text-xs text-mist-faint">{s.model}</span>
@@ -221,7 +233,9 @@ function AgentCard({
 
           {visibleResources.length > 0 && (
             <>
-              <SectionLabel>resources · {visibleResources.length}</SectionLabel>
+              <SectionLabel>
+                resources <span className="tabular-nums">· {visibleResources.length}</span>
+              </SectionLabel>
               <div className="max-h-44 overflow-y-auto">
                 {visibleResources.map((r) => {
                   const target = `${agent.id}:${r.id}`;
@@ -231,9 +245,13 @@ function AgentCard({
                     <Row key={r.id} className="group">
                       <div className="flex w-full min-w-0 items-center gap-2">
                         <Dot status={isActive ? 'running' : 'off'} />
-                        <span className="min-w-0 flex-1 truncate text-sm text-mist" title={r.name}>
-                          {r.name}
-                        </span>
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <CopyText text={r.id}>
+                            <span className="block truncate text-left text-sm text-mist" title={r.name}>
+                              {r.name}
+                            </span>
+                          </CopyText>
+                        </div>
                         {r.muteable && <MuteButton kind="agent-resource" target={target} enforce />}
                         <span className="shrink-0 font-mono text-[11px] text-mist-faint">
                           {r.state}
@@ -365,7 +383,16 @@ export default function AgentsPanel({
         </div>
       )}
 
-      <Panel title="activity" riseIndex={visible.length} className="mt-4">
+      <Panel
+        title="activity"
+        riseIndex={visible.length}
+        className="mt-4"
+        right={
+          activity.length > 0 ? (
+            <span className="font-mono text-xs tabular-nums text-mist-faint">{activity.length}</span>
+          ) : undefined
+        }
+      >
         {activity.length === 0 ? (
           <EmptyState>nothing happening</EmptyState>
         ) : (
@@ -373,8 +400,14 @@ export default function AgentsPanel({
             {/* server builds activity oldest-first (newest last) — show the newest 30, newest first */}
             {activity.slice(-30).reverse().map((a, i) => (
               <div key={`${a.time}-${i}`} className="flex items-baseline gap-2 py-0.5">
-                <RelTime iso={a.time} />
-                <span className="shrink-0 text-mist-faint">{a.source}</span>
+                {/* fixed time + source slots so the mono log reads as columns
+                    ('29s' vs '1m' must not shift the source column) */}
+                <span className="w-9 shrink-0 text-right">
+                  <RelTime iso={a.time} />
+                </span>
+                <span className="w-24 shrink-0 truncate text-mist-faint" title={a.source}>
+                  {a.source}
+                </span>
                 <span className={`min-w-0 truncate ${a.isError ? 'text-coral' : 'text-mist-dim'}`}>
                   {a.text}
                 </span>

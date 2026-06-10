@@ -10,7 +10,14 @@ import { renderMarkdown } from '../components/markdown';
 
 // ---------- panel ----------
 
-export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
+export default function NotesPanel({
+  snapshot,
+  overlayOpen = false,
+}: {
+  snapshot: Snapshot;
+  /** palette / slide-over / quiet drawer open — they own esc, the reader must not also close */
+  overlayOpen?: boolean;
+}) {
   const { vaultPath, recent, error, updatedAt } = snapshot.notes;
 
   const [openPath, setOpenPath] = useState<string | null>(null);
@@ -134,13 +141,14 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
         return;
       }
       // Escape closes the reader; while editing with unsaved changes it arms the
-      // inline discard guard first (second Escape confirms), never window.confirm
-      if (e.key === 'Escape') requestLeave(null);
+      // inline discard guard first (second Escape confirms), never window.confirm.
+      // Overlays (palette / slide-over / drawer) own esc while open — bail.
+      if (e.key === 'Escape' && !overlayOpen) requestLeave(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // onKey closes over editing/draft/note/discardArm/saving — re-bind when they change
-  }, [openPath, editing, draft, note, discardArm, saving]);
+  }, [openPath, editing, draft, note, discardArm, saving, overlayOpen]);
 
   const body = useMemo(() => (note ? renderMarkdown(note.content) : null), [note]);
 
@@ -149,7 +157,20 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
       title="notes"
       riseIndex={0}
       right={
-        openPath || !vaultPath ? <RelTime iso={updatedAt} /> : <span className="font-mono">{vaultPath}</span>
+        <span className="flex min-w-0 items-baseline gap-3">
+          {recent.length > 0 && (
+            <span className="font-mono text-xs tabular-nums text-mist-faint">{recent.length}</span>
+          )}
+          {openPath || !vaultPath ? (
+            <RelTime iso={updatedAt} />
+          ) : (
+            <CopyText text={vaultPath}>
+              <span className="block max-w-56 truncate font-mono text-xs" title={vaultPath}>
+                {vaultPath}
+              </span>
+            </CopyText>
+          )}
+        </span>
       }
     >
       {error && (
@@ -172,18 +193,20 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
                   <span className="block truncate text-sm text-mist">{n.title}</span>
                   <span className="block truncate font-mono text-xs text-mist-faint">{n.path}</span>
                 </div>
-                <CopyText text={abs} className="hover-cluster shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
-                  copy
-                </CopyText>
-                <a
-                  href={`obsidian://open?path=${encodeURIComponent(abs)}`}
-                  onClick={(e) => e.stopPropagation()}
-                  title="open in obsidian"
-                  className="hover-cluster shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
-                >
-                  obsidian
-                </a>
                 <RelTime iso={n.modifiedAt} />
+                <span className="flex shrink-0 items-center gap-1">
+                  <a
+                    href={`obsidian://open?path=${encodeURIComponent(abs)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    title="open in obsidian"
+                    className="hover-cluster shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                  >
+                    obsidian
+                  </a>
+                  <CopyText text={abs} className="hover-cluster shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
+                    copy
+                  </CopyText>
+                </span>
               </Row>
             );
           })}
@@ -260,9 +283,6 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
               >
                 edit
               </button>
-              <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
-                copy path
-              </CopyText>
               <a
                 href={`obsidian://open?path=${encodeURIComponent(abs)}`}
                 title="open in obsidian"
@@ -270,6 +290,9 @@ export default function NotesPanel({ snapshot }: { snapshot: Snapshot }) {
               >
                 obsidian
               </a>
+              <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
+                copy path
+              </CopyText>
               <button
                 type="button"
                 onClick={() => requestLeave(null)}

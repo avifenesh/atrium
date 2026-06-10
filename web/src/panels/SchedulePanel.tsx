@@ -41,7 +41,7 @@ function RunNow({ jobId }: { jobId: string }) {
         setTimeout(() => setState((s) => (s === 'busy' ? s : 'idle')), 4000);
       }}
       className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
-        state === 'idle' ? 'invisible group-hover:visible group-focus-within:visible' : ''
+        state === 'idle' ? 'hover-cluster' : ''
       } ${
         state === 'fail' ? 'text-coral' : state === 'ok' ? 'text-jade' : 'text-mist-faint hover:text-jade'
       }`}
@@ -82,7 +82,14 @@ export default function SchedulePanel({
     <Panel
       title="schedule"
       riseIndex={0}
-      right={<RelTime iso={updatedAt} />}
+      right={
+        <span className="flex items-baseline gap-3">
+          {sorted.length > 0 && (
+            <span className="font-mono text-xs tabular-nums text-mist-faint">{sorted.length}</span>
+          )}
+          <RelTime iso={updatedAt} />
+        </span>
+      }
       quietCount={quietCount || undefined}
       onQuietClick={openQuiet}
     >
@@ -163,7 +170,7 @@ export default function SchedulePanel({
                       <div className="flex items-baseline gap-2">
                         <span className="w-12 shrink-0 font-mono text-[10px] uppercase tracking-widest text-mist-faint">id</span>
                         <CopyText text={e.id}>
-                          <span className="font-mono text-mist-dim">{e.id}</span>
+                          <span className="min-w-0 break-all font-mono text-mist-dim">{e.id}</span>
                         </CopyText>
                       </div>
                       <div className="flex items-baseline gap-2">

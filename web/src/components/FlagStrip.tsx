@@ -78,8 +78,10 @@ export default function FlagStrip({
               }
               className={`group flex items-center gap-3 rounded-r-lg border-l-2 py-1 pl-3 pr-1 transition-colors hover:bg-white/[0.04] ${view ? 'cursor-pointer' : ''} ${SEV_BORDER[f.severity]}`}
             >
-              <span className="shrink-0 text-sm text-mist">{f.title}</span>
-              <span className="min-w-0 flex-1 truncate text-xs text-mist-dim" title={f.detail}>
+              <span className="min-w-0 truncate font-mono text-xs text-mist" title={f.title}>
+                {f.title}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-dim" title={f.detail}>
                 {f.detail}
               </span>
               <RelTime iso={f.raisedAt} />

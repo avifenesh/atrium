@@ -145,7 +145,9 @@ function OrgRow({
       {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
       <RelTime iso={item.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
-        <span className="hover-cluster shrink-0 whitespace-nowrap font-mono text-[11px] text-mist-faint">
+        {/* fixed slot: the cluster reserves space while hidden, so a variable-width
+            author would push each row's RelTime left by a different amount */}
+        <span className="hover-cluster w-24 shrink-0 truncate text-right font-mono text-[11px] text-mist-faint">
           @{item.author}
         </span>
         <GithubLink href={item.url} />
@@ -283,6 +285,16 @@ export default function TasksPanel({
           className="col-span-12"
           quietCount={g.orgQueue.length - orgQueue.length}
           onQuietClick={onOpenQuiet}
+          right={
+            orgQueue.length > 0 ? (
+              // amber only while the review lane has items — a triage-only queue stays plain
+              <span
+                className={`font-mono text-xs tabular-nums ${orgReview.length > 0 ? 'text-amber' : 'text-mist-faint'}`}
+              >
+                {orgQueue.length}
+              </span>
+            ) : undefined
+          }
         >
           {orgQueue.length === 0 ? (
             <EmptyState>nobody waiting</EmptyState>
@@ -290,7 +302,9 @@ export default function TasksPanel({
             <div className="max-h-72 space-y-0.5 overflow-y-auto">
               {orgReview.length > 0 && (
                 <>
-                  <SectionLabel>review</SectionLabel>
+                  <SectionLabel>
+                    review <span className="tabular-nums text-amber">· {orgReview.length}</span>
+                  </SectionLabel>
                   {orgReview.map((it) => (
                     <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
                   ))}
@@ -298,7 +312,9 @@ export default function TasksPanel({
               )}
               {orgTriage.length > 0 && (
                 <>
-                  <SectionLabel>triage</SectionLabel>
+                  <SectionLabel>
+                    triage <span className="tabular-nums">· {orgTriage.length}</span>
+                  </SectionLabel>
                   {orgTriage.map((it) => (
                     <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
                   ))}
@@ -314,6 +330,11 @@ export default function TasksPanel({
           className="col-span-12"
           quietCount={g.actNow.length - actNow.length}
           onQuietClick={onOpenQuiet}
+          right={
+            actNow.length > 0 ? (
+              <span className="font-mono text-xs tabular-nums text-amber">{actNow.length}</span>
+            ) : undefined
+          }
         >
           {actNow.length === 0 ? (
             <EmptyState>nothing urgent</EmptyState>
@@ -332,6 +353,11 @@ export default function TasksPanel({
           className="col-span-12 lg:col-span-7"
           quietCount={g.myPRs.length - myPRs.length}
           onQuietClick={onOpenQuiet}
+          right={
+            myPRs.length > 0 ? (
+              <span className="font-mono text-xs tabular-nums text-mist-faint">{myPRs.length}</span>
+            ) : undefined
+          }
         >
           {myPRs.length === 0 ? (
             <EmptyState>no open prs</EmptyState>
@@ -350,6 +376,11 @@ export default function TasksPanel({
           className="col-span-12 lg:col-span-5"
           quietCount={g.mentions.length - mentions.length}
           onQuietClick={onOpenQuiet}
+          right={
+            mentions.length > 0 ? (
+              <span className="font-mono text-xs tabular-nums text-mist-faint">{mentions.length}</span>
+            ) : undefined
+          }
         >
           {mentions.length === 0 ? (
             <EmptyState>no mentions</EmptyState>
@@ -396,16 +427,19 @@ export default function TasksPanel({
           onQuietClick={onOpenQuiet}
           right={
             notifications.length > 0 ? (
-              <button
-                type="button"
-                onClick={clearAll}
-                title="mark all notifications read"
-                className={`cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
-                  clearAllArmed ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-amber'
-                }`}
-              >
-                {clearAllArmed ? 'sure?' : 'clear all'}
-              </button>
+              <>
+                <span className="font-mono text-xs tabular-nums text-mist-faint">{notifications.length}</span>
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  title="mark all notifications read"
+                  className={`cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+                    clearAllArmed ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-amber'
+                  }`}
+                >
+                  {clearAllArmed ? 'sure?' : 'clear all'}
+                </button>
+              </>
             ) : undefined
           }
         >
@@ -426,6 +460,11 @@ export default function TasksPanel({
           className="col-span-12"
           quietCount={g.ownRepos.length - ownRepos.length}
           onQuietClick={onOpenQuiet}
+          right={
+            ownRepos.length > 0 ? (
+              <span className="font-mono text-xs tabular-nums text-mist-faint">{ownRepos.length}</span>
+            ) : undefined
+          }
         >
           {ownRepos.length === 0 ? (
             <EmptyState>no repos</EmptyState>

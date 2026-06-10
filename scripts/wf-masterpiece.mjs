@@ -1,0 +1,186 @@
+export const meta = {
+  name: 'atrium-masterpiece',
+  description: 'Final UI/UX polish fleet: atmosphere, shell, hero, system, overlays, panels — then compile-fix',
+  phases: [
+    { title: 'Build', detail: 'six parallel implementers, disjoint file ownership' },
+    { title: 'Compile', detail: 'typecheck + vite build, fix until green' },
+  ],
+}
+
+const RULES = [
+  'PROJECT: /home/avifenesh/projects/atrium — personal life dashboard. React 19 + Tailwind v4 (vite) in web/, zero-dep node server in server/. The web UI is the "glass observatory" design system.',
+  '',
+  'DESIGN SYSTEM (hard rules — violating these fails review):',
+  '- Palette tokens (defined in web/src/styles.css @theme): ink #0a0e14 base, mist text scale (mist / mist-dim / mist-faint), amber #f0b35e is THE accent and means "needs you / act now" ONLY — never decorative. jade = ok/running. coral = error. slate-glow = info/links. Use them as tailwind classes (text-mist, bg-amber/10, etc.).',
+  '- Typography: Instrument Serif (font-display) appears EXACTLY twice in the app — the wordmark and the now-view hero numerals. Never add a third use. Hanken Grotesk (font-sans) for prose/labels, Spline Sans Mono (font-mono) for ALL data: numbers, times, repo names, counts, chips. Everything lowercase.',
+  '- Calm: animations slow and subtle (300ms+, soft cubic-bezier), nothing flashes, nothing bounces. Always respect prefers-reduced-motion (global handling exists/will exist in styles.css — do not inline-disable per component).',
+  '- quiet = archive: muted items unmount (the <Mutable/> pattern); never dim-in-place outside the quiet drawer.',
+  '- Everything that names a thing is clickable (open/copy/expand). Hover-revealed action clusters use the .hover-cluster utility (reveals on .group:hover / :focus-within).',
+  '- No new npm dependencies. No layout libraries, no motion libraries — CSS + a few lines of rAF only.',
+  '',
+  'EXISTING PRIMITIVES (web/src/components/ui.tsx): Panel, QuietChip, SectionLabel, Dot, RelTime, Row, CopyText, SendToEigen, MuteButton, UnmuteButton, Mutable, EmptyState. Reuse them; do not reinvent.',
+  'SHARED CONTRACT: shared/types.ts — READ ONLY, never edit. web/src/api.ts — READ ONLY, never edit (exports useSnapshot, isMuted, addMute, removeMute, dispatchToEigen and fetch helpers).',
+  '',
+  'PROCESS RULES:',
+  '- Edit ONLY the files you own (listed in your task). Other agents are editing sibling files right now in the same checkout.',
+  '- Do NOT run npm install / npm run build / tsc / vite — a compile gate runs after everyone finishes. Cross-file imports you were told to use will exist by then.',
+  '- Match existing code style: comment only constraints the code cannot show, lowercase UI strings, tailwind utility classes inline (no css modules).',
+  '- Return a terse list of what you changed per file.',
+].join('\n')
+
+const CONTRACTS = [
+  'CROSS-FILE CONTRACTS (exact — other agents code against these):',
+  '',
+  'web/src/hooks.ts (NEW, owned by atmosphere agent):',
+  "  export function useNow(intervalMs?: number): number            // epoch ms, re-renders on interval (default 30000)",
+  "  export function useTweenNumber(target: number, durationMs?: number): number  // rAF ease-out tween from previous rendered value to target, returns rounded int; jumps instantly under prefers-reduced-motion (matchMedia)",
+  "  export function recordSystemSample(s: Snapshot): void          // module-level ring buffers for cpu/mem/swap/gpu percent, dedupe by s.system.updatedAt, cap 180 points",
+  "  export function getSeries(key: 'cpu' | 'mem' | 'swap' | 'gpu'): number[]   // oldest→newest",
+  "  (import type { Snapshot } from '../../shared/types')",
+  '',
+  'web/src/components/Spark.tsx (NEW, owned by system agent):',
+  "  export default function Spark({ series, width, height, className }: { series: number[]; width?: number; height?: number; className?: string })",
+  '  // pure SVG sparkline, domain fixed 0..100, stroke currentColor strokeWidth 1.5, soft area fill currentColor at low opacity, returns null when series.length < 2. Defaults width 64 height 18.',
+  '',
+  'web/src/styles.css utility classes (NEW, owned by atmosphere agent — exact names):',
+  '  .kbd            — small rounded mono key chip (for shortcut hints)',
+  '  .slide-in-right — ~280ms translateX slide-in for right-side overlays',
+  '  .backdrop-fade  — ~200ms opacity fade-in for overlay backdrops',
+  '  .breathe        — gentle 4s opacity breathing pulse (for the live dot)',
+].join('\n')
+
+const TASKS = [
+  {
+    label: 'atmosphere',
+    prompt: [
+      RULES, '', CONTRACTS, '',
+      'YOU OWN: web/src/styles.css, web/index.html, web/src/hooks.ts (create).',
+      '',
+      'GOAL: the atmosphere layer — make opening the app feel calm and alive, and provide the shared hooks/utilities the other agents code against.',
+      '',
+      '1. web/src/hooks.ts — create exactly per the contract above. Keep it small and dependency-free.',
+      '2. web/src/styles.css:',
+      '   - Aurora drift: the body background radial washes are static. Move them onto a fixed full-viewport body::before layer (z-index behind content, pointer-events none) and add a VERY slow drift animation (~90s alternate infinite, small translate/scale — barely perceptible, like light moving through a room). Keep the grain overlay (body::after) as is. The page must look identical in a still frame.',
+      '   - Add the .kbd, .slide-in-right, .backdrop-fade, .breathe utilities per contract.',
+      '   - ::selection — amber at ~25% alpha background, mist text.',
+      '   - prefers-reduced-motion: reduce — disable rise, aurora drift, dot-active pulse, breathe, slide/fade animations globally.',
+      '   - Subtle row polish: a .row-glide class — transition transform 160ms ease, hover translate-x 2px (the hero agent wires it into Row).',
+      '   - Keep every existing class working; do not rename anything.',
+      '3. web/index.html:',
+      '   - Inline SVG favicon as data URI: rounded-square ink (#0e141d) tile, a thin rgba(255,255,255,0.12) inner ring, and a small amber (#f0b35e) dot offset upper-right — an abstract observatory mark. Plus <meta name="theme-color" content="#0a0e14">.',
+      '   - <html lang="en"> stays; title stays "atrium" (the shell agent makes it dynamic at runtime).',
+    ].join('\n'),
+  },
+  {
+    label: 'shell',
+    prompt: [
+      RULES, '', CONTRACTS, '',
+      'YOU OWN: web/src/App.tsx, web/src/components/CommandPalette.tsx (create).',
+      '',
+      'GOAL: the shell — give the app a keyboard layer, a living rail, and a sense of time. Read App.tsx first.',
+      '',
+      '1. Rail clock (lg+ rail, just above the quiet button at the rail bottom): current time HH:MM (24h) in font-mono text-xl text-mist-dim tabular-nums, and under it the date like "tue · jun 10" in font-mono text-[10px] uppercase tracking-[0.15em] text-mist-faint. Tick with useNow(15000) from ../hooks. Lowercase. This is mono, NOT serif (serif budget is spent).',
+      '2. Rail view badges: right-aligned tiny mono counts on nav items, hidden when 0: tasks → unmuted actNow + unmuted orgQueue count (dedupe by id; use isMuted from ./api) in text-amber; comms → email.unreadCount in text-mist-faint; agents → agents with status active|running in text-jade; system → unmuted flags (isMuted(snapshot, "flag", f.id)) in text-coral. Badge style: font-mono text-[10px] tabular-nums, calm, no pills. Apply to both the lg rail and the small-screen horizontal nav (on small nav keep it ultra-compact).',
+      '3. Dynamic document.title: useEffect — "atrium · N" where N is the tasks badge count when > 0, else "atrium".',
+      '4. recordSystemSample wiring: useEffect calling recordSystemSample(snapshot) whenever snapshot changes (App is always mounted, so history accumulates across views).',
+      '5. Live dot: add the .breathe class to the wordmark connection dot when connected (jade breathing = alive; coral stays still).',
+      '6. Keyboard shortcuts (window keydown listener in App): ignore events when target is input/textarea/select/contenteditable or when any modifier except the palette combo is held. Keys: "1".."8" switch views in VIEWS order; "q" toggles the quiet drawer; "/" or Cmd/Ctrl+K opens the command palette (preventDefault). Esc is handled by each overlay, not here.',
+      '7. web/src/components/CommandPalette.tsx (create) + wire into App:',
+      '   - Open state owned by App. Fixed overlay: .backdrop-fade backdrop (bg-black/40 backdrop-blur-sm) + a glass-raised panel top-center (~mt-[14vh], w-full max-w-xl).',
+      '   - A single text input (autoFocus, placeholder "jump to…", bg-transparent, no border, font-sans text-sm) and a results list (max 12).',
+      '   - Sources, built from the snapshot prop: the 8 views ("go to <view>"); "open quiet drawer"; every github item from actNow, orgQueue, myPRs, mentions (label "<repo>#<number> <title>", section tag "task"/"waiting"/"pr"/"mention"); agents (label name, action navigate to agents view).',
+      '   - Fuzzy match: simple case-insensitive subsequence scoring (bonus for prefix/word starts), no deps. Empty query → views + quiet drawer only.',
+      '   - Keys inside palette: ArrowUp/Down move selection (wraps), Enter runs (github item → onOpenItem(repo, number) and close; view → navigate; quiet → open drawer), Cmd/Ctrl+Enter on a github item opens its url in a new tab instead. Esc closes. Click on a row runs it. Selected row: bg-white/[0.06].',
+      '   - Footer hint row: .kbd chips — "↑↓" navigate, "↵" open, "esc" close. font-mono text-[10px] text-mist-faint.',
+      '   - Calm glass styling consistent with the app; row layout mirrors existing Row density.',
+      '8. Make sure the loading splash and everything existing still works; keep props passed to panels unchanged.',
+    ].join('\n'),
+  },
+  {
+    label: 'hero',
+    prompt: [
+      RULES, '', CONTRACTS, '',
+      'YOU OWN: web/src/panels/NowView.tsx, web/src/components/ui.tsx.',
+      '',
+      'GOAL: the now-view is the front door — make it breathe. Read both files first.',
+      '',
+      '1. Hero numerals tween: in NowView\'s Stat component use useTweenNumber(value) from ../hooks so numbers count up on load and glide on change. Serif stays — these are the sanctioned serif numerals.',
+      '2. Zero de-emphasis: when a hero stat value is 0, render the numeral in text-mist-faint (instead of text-mist) so the eye lands on what is non-zero. Amber accent behavior unchanged.',
+      '3. Next-event countdown: in the "today" panel header (Panel right prop), if a non-allDay event today has start > now, show "next in 1h 20m" (or "next in 12m") — font-mono text-[11px], text-mist-faint normally, text-amber when under 15 minutes. Tick with useNow(30000). Nothing shown when no upcoming event.',
+      '4. Activity ticker polish: keep the mono three-column rhythm but give error lines a small coral dot prefix instead of coloring the whole line, and cap source column width (truncate) so columns stay aligned.',
+      '5. ui.tsx Row micro-interaction: add the .row-glide class (defined in styles.css by another agent: transform transition + 2px hover nudge) to the Row base classes — both interactive and inert variants keep layout identical.',
+      '6. ui.tsx RelTime: make it live — use useNow(30000) from ../hooks instead of a one-shot Date.now() so relative times stay honest while the tab sits open.',
+      '7. While in NowView: the small "system" panel row — under the existing percent row add a single quiet sparkline strip: four tiny <Spark series={getSeries(key)} /> (from ../components/Spark and ../hooks) labeled cpu/mem/swap/gpu in font-mono text-[10px] text-mist-faint; spark color text-mist-faint, the one over 90% gets text-coral, over 75% text-amber. Skip gpu when snapshot.system.gpu is null. Keep it subtle — it should read as texture, not a chart.',
+      '8. Do not change exported component signatures used by other files (Panel, Row, RelTime, etc. keep their props).',
+    ].join('\n'),
+  },
+  {
+    label: 'system',
+    prompt: [
+      RULES, '', CONTRACTS, '',
+      'YOU OWN: web/src/panels/SystemPanel.tsx, web/src/components/Spark.tsx (create).',
+      '',
+      'GOAL: the system view becomes a quiet instrument cluster. Read SystemPanel.tsx first.',
+      '',
+      '1. web/src/components/Spark.tsx — create exactly per the contract (pure SVG, domain 0..100, currentColor stroke 1.5 + low-opacity area fill, null under 2 points, defaults 64x18). Round path coordinates to 1 decimal. No deps.',
+      '2. SystemPanel: next to each gauge/percent for cpu, mem, swap, gpu render a <Spark series={getSeries(key)} className="text-mist-faint" /> (history accumulates from App via recordSystemSample — gaps are fine, it grows while the app is open). Color the spark text-amber when current value > 75, text-coral when > 90, else text-mist-faint. Place them so columns/alignment stay clean; do not rearrange the panel layout otherwise.',
+      '3. Micro-polish within SystemPanel only: tabular-nums on all numbers, consistent mist-faint labels, RelTime for any timestamps, truncation safety (min-w-0) — no structural changes.',
+    ].join('\n'),
+  },
+  {
+    label: 'overlays',
+    prompt: [
+      RULES, '', CONTRACTS, '',
+      'YOU OWN: web/src/components/ItemDetail.tsx, web/src/components/MutesDrawer.tsx.',
+      '',
+      'GOAL: overlay choreography — the slide-over and the quiet drawer should enter like they belong in the room. Read both files first; if a behavior already exists, keep it.',
+      '',
+      'For BOTH overlays:',
+      '1. Entrance: backdrop gets .backdrop-fade; the panel gets .slide-in-right (classes defined in styles.css by another agent). No exit animation needed (unmount on close is fine).',
+      '2. Esc closes (window keydown listener, removed on unmount). If ItemDetail has a comment composer: Esc with text in the composer first blurs/keeps text (never lose a draft) — only an empty composer lets Esc close the overlay.',
+      '3. Body scroll lock while open: document.body.style.overflow = "hidden" on mount, restored on unmount.',
+      '4. Clicking the backdrop closes; clicking the panel does not (verify stopPropagation).',
+      '5. Focus: on open, focus the panel container or close button so Esc/tab work immediately without a click. Subtle, no focus ring flash (focus({ preventScroll: true }) and rely on :focus-visible).',
+      '6. Micro-polish inside these two files only: consistent header rhythm (mono uppercase tracking label), hairline separators, RelTime where timestamps show, hover states on every interactive row. No structural redesign.',
+    ].join('\n'),
+  },
+  {
+    label: 'panels',
+    prompt: [
+      RULES, '', CONTRACTS, '',
+      'YOU OWN: web/src/panels/TasksPanel.tsx, web/src/panels/AgentsPanel.tsx, web/src/panels/CommsPanel.tsx, web/src/panels/SubsPanel.tsx, web/src/panels/SchedulePanel.tsx, web/src/panels/NotesPanel.tsx, web/src/components/FlagStrip.tsx.',
+      '',
+      'GOAL: a consistency sweep — same rhythm everywhere, every little detail in place. NO structural rearrangement; this is a fine-grit sanding pass. Read each file before touching it.',
+      '',
+      'Apply across all seven files:',
+      '1. Section labels with counts: where a SectionLabel or lane heading introduces a list, append a quiet count — e.g. "review · 3" — count in font-mono text-mist-faint (NOT amber; amber only if the lane is act-now/waiting-on-you). Skip when 0 or the list is empty.',
+      '2. Empty states: every list uses <EmptyState> with a short calm lowercase phrase (no bare nulls, no "No data found"). Vary the phrasing to fit the panel (e.g. comms: "inbox clear", schedule: "nothing scheduled", notes: "no recent notes").',
+      '3. Numbers: tabular-nums + font-mono everywhere a count/size/percent renders.',
+      '4. Timestamps: RelTime (with its title tooltip) instead of any hand-rolled relative or absolute time strings.',
+      '5. Truncation safety: min-w-0 + truncate on every flexible text cell; action clusters shrink-0.',
+      '6. Clickability audit: any named thing (repo, agent, service, note, email subject, event) that is not yet clickable gets the cheapest correct affordance — CopyText for ids/paths, href row for urls, onClick navigate where a view exists. Use existing primitives only.',
+      '7. Hover clusters: actions (quiet / → eigen / open) consistently use .hover-cluster inside the Row .group, space-reserving, same ordering everywhere: open-link, → eigen, quiet, repo-quiet.',
+      '8. FlagStrip: ensure it reads as a calm amber/coral edge strip, mono text, flags clickable to their target view, quiet button per flag — polish only.',
+      'Do not touch NowView.tsx or SystemPanel.tsx (other agents own them).',
+    ].join('\n'),
+  },
+]
+
+phase('Build')
+const results = await parallel(TASKS.map((t) => () => agent(t.prompt, { label: t.label, phase: 'Build' })))
+const done = results.filter(Boolean)
+log(`build fleet: ${done.length}/${TASKS.length} implementers returned`)
+
+phase('Compile')
+const fix = await agent(
+  [
+    'You are the compile gate for /home/avifenesh/projects/atrium after a six-agent parallel UI edit.',
+    'Run: cd /home/avifenesh/projects/atrium && npm run build -w web',
+    'Fix every TypeScript or vite error with the smallest possible edit, then re-run, looping until the build is fully green. You may edit any file under web/ to fix errors (imports, types, props), but never change shared/types.ts and never weaken a feature to silence an error — fix the call site properly.',
+    'Style rules: lowercase UI strings, design tokens (mist/amber/jade/coral), font-mono for data. Match surrounding code.',
+    'Return: final build status, plus a terse list of every fix you made (file: what/why).',
+  ].join('\n'),
+  { label: 'compile-fix', phase: 'Compile' },
+)
+
+return { implementers: done, compile: fix }

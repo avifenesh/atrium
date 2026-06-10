@@ -1,8 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { dispatchToEigen, fetchGithubItem, postGithubComment } from '../api';
+import { useScrollLock } from '../hooks';
 import { Markdown } from './markdown';
 import { Dot, RelTime } from './ui';
 import type { GithubComment, GithubItemDetail } from '../../../shared/types';
+
+// the visible send-chord glyph matches the actual modifier on this machine
+const isMac = /mac/i.test(
+  (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+    navigator.platform,
+);
+const SEND_CHORD = isMac ? '⌘↵' : 'ctrl ↵';
 
 // Right-side slide-over: read an issue/PR and comment without leaving atrium. The
 // door out (open on github) is always one click away but never forced. Calm glass,
@@ -98,10 +106,13 @@ export default function ItemDetail({
   repo,
   number,
   onClose,
+  escapeRef,
 }: {
   repo: string;
   number: number;
   onClose: () => void;
+  /** App's centralized esc handler calls this when the slide-over is the top layer */
+  escapeRef: MutableRefObject<(() => void) | null>;
 }) {
   const [detail, setDetail] = useState<GithubItemDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -110,14 +121,11 @@ export default function ItemDetail({
   const [extra, setExtra] = useState<GithubComment[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState<'idle' | 'busy' | 'failed'>('idle');
-  // slide-in: mount hidden (translated right), flip on next frame for the transition
-  const [shown, setShown] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setShown(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  // esc handler reads the draft through a ref so the listener never re-binds per keystroke
+  const draftRef = useRef('');
+  draftRef.current = draft;
 
   useEffect(() => {
     let stale = false;
@@ -140,17 +148,27 @@ export default function ItemDetail({
     };
   }, [repo, number]);
 
+  // esc step, registered with App's centralized handler (no window listener of our own):
+  // a composer holding text absorbs the first esc — blur, keep the draft;
+  // focus returns to the panel so the next esc closes
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    escapeRef.current = () => {
+      const composer = composerRef.current;
+      if (composer && document.activeElement === composer && draftRef.current.trim()) {
+        panelRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      escapeRef.current = null;
+    };
+  }, [onClose, escapeRef]);
 
-  // move focus into the slide-over on open (keyboard accessibility)
+  // move focus into the slide-over on open (esc/tab work without a click)
+  useScrollLock();
   useEffect(() => {
-    panelRef.current?.focus();
+    panelRef.current?.focus({ preventScroll: true });
   }, []);
 
   const githubUrl = detail?.url || `https://github.com/${repo}/issues/${number}`;
@@ -179,18 +197,13 @@ export default function ItemDetail({
 
   return (
     <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label={`${repo}#${number}`}>
-      {/* backdrop — click closes */}
-      <div
-        className={`absolute inset-0 bg-ink/50 transition-opacity duration-150 ${shown ? 'opacity-100' : 'opacity-0'}`}
-        onClick={onClose}
-      />
+      {/* backdrop — click closes; the panel is a sibling, so panel clicks never reach this */}
+      <div className="backdrop-fade absolute inset-0 bg-ink/50" onClick={onClose} />
 
       <div
         ref={panelRef}
         tabIndex={-1}
-        className={`glass-raised absolute inset-y-0 right-0 flex w-full max-w-2xl flex-col outline-none transition-transform duration-150 ease-out ${
-          shown ? 'translate-x-0' : 'translate-x-full'
-        }`}
+        className="glass-raised slide-in-right absolute inset-y-0 right-0 flex w-full max-w-2xl flex-col outline-none"
       >
         {/* header */}
         <header className="flex items-start gap-3 border-b hairline px-5 py-4">
@@ -283,6 +296,7 @@ export default function ItemDetail({
         {/* composer — pinned at the bottom */}
         <div className="border-t hairline px-5 py-3">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -308,7 +322,13 @@ export default function ItemDetail({
               → eigen
             </button>
             <span className="ml-auto font-mono text-[11px] text-mist-faint">
-              {sending === 'failed' ? <span className="text-coral">send failed</span> : null}
+              {sending === 'failed' ? (
+                <span className="text-coral">send failed</span>
+              ) : (
+                <span className="kbd" title="cmd/ctrl+enter sends">
+                  {SEND_CHORD}
+                </span>
+              )}
             </span>
             <button
               type="button"

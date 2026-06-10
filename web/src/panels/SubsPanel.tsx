@@ -146,11 +146,15 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
               >
                 <Row href={consoleUrl ?? undefined}>
                   <div className="flex w-full min-w-0 items-center gap-2">
-                    <h3 className="min-w-0 truncate text-sm font-semibold text-mist">{s.name}</h3>
+                    {consoleUrl ? (
+                      <h3 className="min-w-0 truncate text-sm font-semibold text-mist">{s.name}</h3>
+                    ) : (
+                      <h3 className="min-w-0 truncate text-sm font-semibold text-mist">
+                        <CopyText text={s.id}>{s.name}</CopyText>
+                      </h3>
+                    )}
                     {consoleUrl && (
-                      <span className="invisible shrink-0 font-mono text-[10px] text-mist-faint group-hover:visible group-focus-within:visible">
-                        ↗
-                      </span>
+                      <span className="hover-cluster shrink-0 font-mono text-[10px] text-mist-faint">↗</span>
                     )}
                     <span className="flex-1" />
                     <Dot status={dotStatus(s.status)} />
@@ -165,9 +169,11 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
                 ) : (
                   s.detail &&
                   (s.status === 'not-connected' ? (
-                    <div className="mt-1 text-xs text-amber">{s.detail}</div>
+                    <div className="mt-1 truncate text-xs text-amber" title={s.detail}>
+                      {s.detail}
+                    </div>
                   ) : (
-                    <div className="mt-1 text-xs text-mist-dim" title={s.detail}>
+                    <div className="mt-1 truncate text-xs text-mist-dim" title={s.detail}>
                       {s.detail}
                     </div>
                   ))
@@ -199,8 +205,12 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
                   </div>
                 )}
 
-                <div className="mt-auto truncate pt-3 font-mono text-[10px] text-mist-faint" title={s.source}>
-                  {s.source}
+                <div className="mt-auto min-w-0 pt-3">
+                  <CopyText text={s.source} className="block w-full">
+                    <span className="block truncate font-mono text-[10px] text-mist-faint" title={s.source}>
+                      {s.source}
+                    </span>
+                  </CopyText>
                 </div>
               </article>
             );

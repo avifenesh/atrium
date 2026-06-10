@@ -85,7 +85,7 @@ function EventRow({ ev, highlight, showDate }: { ev: CalendarEvent; highlight?: 
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-mist">{ev.title}</span>
         {showDate && (
-          <span className="shrink-0 font-mono text-xs text-mist-faint">
+          <span className="shrink-0 font-mono text-xs tabular-nums text-mist-faint">
             {new Date(ev.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toLowerCase()}
           </span>
         )}
@@ -130,7 +130,9 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
   else
     rendered = byDay.map((g, gi) => (
       <div key={gi}>
-        <SectionLabel>{g.label}</SectionLabel>
+        <SectionLabel>
+          {g.label} <span className="tabular-nums">· {g.events.length}</span>
+        </SectionLabel>
         <ul>
           {g.events.map((ev) => (
             <EventRow key={ev.id} ev={ev} showDate />
@@ -165,7 +167,7 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
           <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">unread</span>
         </div>
         {email.threads.length === 0 ? (
-          <EmptyState>inbox is quiet</EmptyState>
+          <EmptyState>inbox clear</EmptyState>
         ) : (
           <div className="max-h-[28rem] overflow-y-auto">
             {email.threads.map((t) => (
@@ -185,9 +187,11 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
         )}
       </Panel>
 
-      <Panel title="calendar" riseIndex={1}>
+      <Panel title="calendar" riseIndex={1} right={<RelTime iso={snapshot.comms.updatedAt} />}>
         <StatusBanner box={calendar} />
-        <SectionLabel>today</SectionLabel>
+        <SectionLabel>
+          today{today.length > 0 && <span className="tabular-nums"> · {today.length}</span>}
+        </SectionLabel>
         {today.length === 0 ? (
           <EmptyState>no events today</EmptyState>
         ) : (
@@ -197,7 +201,9 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
             ))}
           </ul>
         )}
-        <SectionLabel>next 7 days</SectionLabel>
+        <SectionLabel>
+          next 7 days{upcoming.length > 0 && <span className="tabular-nums"> · {upcoming.length}</span>}
+        </SectionLabel>
         <div className="max-h-80 overflow-y-auto">{rendered}</div>
       </Panel>
     </div>

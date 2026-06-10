@@ -1,7 +1,9 @@
 import type { CSSProperties } from 'react';
 import { isMuted } from '../api';
 import { Dot, EmptyState, MuteButton, Panel, RelTime, Row, SendToEigen } from '../components/ui';
-import type { Snapshot } from '../../../shared/types';
+import Spark from '../components/Spark';
+import { getSeries, pctTone, useNow, useTweenNumber } from '../hooks';
+import type { CalendarEvent, Snapshot } from '../../../shared/types';
 
 function hhmm(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -32,17 +34,40 @@ function Stat({
   accent?: boolean;
   onClick: () => void;
 }) {
+  const display = useTweenNumber(value);
+  // Instrument Serif has no tnum feature (digits are proportional), so the glide
+  // would reflow the whole hero strip every frame — reserve a stable slot instead:
+  // min-width in ch (the '0' advance, the font's widest digit) per target digit
+  const digits = String(Math.abs(Math.round(value))).length;
+  // zero de-emphasis keys off the real value, not the tween, so it never flickers mid-glide
   return (
     <button onClick={onClick} className="group flex cursor-pointer flex-col items-start rounded-lg px-2 text-left">
       <span
-        className={`font-display text-5xl italic leading-none tabular-nums xl:text-6xl ${accent ? 'text-amber' : 'text-mist'}`}
+        style={{ minWidth: `${digits}ch` }}
+        className={`inline-block font-display text-5xl italic leading-none xl:text-6xl ${accent ? 'text-amber' : value === 0 ? 'text-mist-faint' : 'text-mist'}`}
       >
-        {value}
+        {display}
       </span>
       <span className="mt-2 font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint transition-colors group-hover:text-mist-dim">
         {label}
       </span>
     </button>
+  );
+}
+
+/** "next in 1h 20m" — quiet until 15 minutes out, then amber. Null when nothing ahead. */
+function NextEventCountdown({ events }: { events: CalendarEvent[] }) {
+  const now = useNow(30000);
+  const next = events
+    .filter((ev) => !ev.allDay && new Date(ev.start).getTime() > now)
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())[0];
+  if (!next) return null;
+  const mins = Math.max(1, Math.ceil((new Date(next.start).getTime() - now) / 60000));
+  const rel = mins < 60 ? `${mins}m` : mins % 60 === 0 ? `${Math.floor(mins / 60)}h` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  return (
+    <span className={`whitespace-nowrap font-mono text-[11px] tabular-nums ${mins < 15 ? 'text-amber' : 'text-mist-faint'}`}>
+      next in {rel}
+    </span>
   );
 }
 
@@ -70,6 +95,14 @@ export default function NowView({
   const working = agents.agents.filter((a) => a.status === 'active' || a.status === 'running');
   const ticker = agents.activity.slice(-14).reverse();
   const gpuPct = system.gpu ? system.gpu.utilPct : null;
+  // same cell set as the percent row above (gpu always present) so the two
+  // justify-between rows keep their label columns vertically aligned
+  const sparkCells: Array<{ key: 'cpu' | 'mem' | 'swap' | 'gpu'; pct: number | null }> = [
+    { key: 'cpu', pct: system.cpu.pct },
+    { key: 'mem', pct: system.mem.usedPct },
+    { key: 'swap', pct: system.swap.usedPct },
+    { key: 'gpu', pct: gpuPct },
+  ];
 
   return (
     <div className="grid grid-cols-12 gap-5">
@@ -90,62 +123,89 @@ export default function NowView({
         <Stat value={working.length} label="agents" onClick={() => onNavigate('agents')} />
       </section>
 
-      {/* act now */}
-      <Panel
-        title="act now"
-        riseIndex={1}
-        className="col-span-12 lg:col-span-7 xl:col-span-8"
-        right={<RelTime iso={github.updatedAt} />}
-        quietCount={actNowHidden}
-        onQuietClick={onOpenQuiet}
-      >
-        {github.error && (
-          <div className="mb-2 truncate px-2.5 font-mono text-xs text-coral" title={github.error}>
-            {github.error}
-          </div>
-        )}
-        {actNow.length === 0 ? (
-          <EmptyState>
-            <span className="flex items-center gap-2">
-              <Dot status="running" />
-              <span className="text-jade">clear</span>
-              <span>— nothing needs you</span>
-            </span>
-          </EmptyState>
-        ) : (
-          <div className="max-h-[26rem] space-y-0.5 overflow-y-auto">
-            {actNow.slice(0, 12).map((it) => (
-              <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
-                <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
-                <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{it.repo}</span>
-                <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
-                <RelTime iso={it.updatedAt} />
-                <span className="flex shrink-0 items-center gap-1">
-                  <a
-                    href={it.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    title="open on github"
-                    className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
-                  >
-                    github
-                  </a>
-                  <SendToEigen
-                    title={it.title}
-                    url={it.url}
-                    repo={it.repo}
-                    sourceId={it.id}
-                    dispatches={agents.dispatches}
+      {/* left column — act now + activity ticker (the ticker fills the space under a
+          short act-now list and stays above the fold, mirroring the right column) */}
+      <div className="col-span-12 flex flex-col gap-5 lg:col-span-7 xl:col-span-8">
+        <Panel
+          title="act now"
+          riseIndex={1}
+          right={<RelTime iso={github.updatedAt} />}
+          quietCount={actNowHidden}
+          onQuietClick={onOpenQuiet}
+        >
+          {github.error && (
+            <div className="mb-2 truncate px-2.5 font-mono text-xs text-coral" title={github.error}>
+              {github.error}
+            </div>
+          )}
+          {actNow.length === 0 ? (
+            <EmptyState>
+              <span className="flex items-center gap-2">
+                <Dot status="running" />
+                <span className="text-jade">clear</span>
+                <span>— nothing needs you</span>
+              </span>
+            </EmptyState>
+          ) : (
+            <div className="max-h-[26rem] space-y-0.5 overflow-y-auto">
+              {actNow.slice(0, 12).map((it) => (
+                <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
+                  <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
+                  <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{it.repo}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
+                  <RelTime iso={it.updatedAt} />
+                  <span className="flex shrink-0 items-center gap-1">
+                    <a
+                      href={it.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title="open on github"
+                      className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                    >
+                      github
+                    </a>
+                    <SendToEigen
+                      title={it.title}
+                      url={it.url}
+                      repo={it.repo}
+                      sourceId={it.id}
+                      dispatches={agents.dispatches}
+                    />
+                    <MuteButton kind="github-item" target={it.id} />
+                    <MuteButton kind="github-repo" target={it.repo} label="repo" className="opacity-60" />
+                  </span>
+                </Row>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        {/* activity ticker */}
+        <Panel title="activity" riseIndex={6}>
+          {ticker.length === 0 ? (
+            <EmptyState>nothing happening</EmptyState>
+          ) : (
+            <div className="px-2.5 font-mono text-xs">
+              {ticker.map((a, i) => (
+                <div key={`${a.time}-${i}`} className="flex items-baseline gap-2 py-0.5">
+                  {/* dot slot is always rendered so error lines don't shift the columns */}
+                  <span
+                    className={`h-1 w-1 shrink-0 self-center rounded-full ${a.isError ? 'bg-coral' : 'bg-transparent'}`}
                   />
-                  <MuteButton kind="github-item" target={it.id} />
-                  <MuteButton kind="github-repo" target={it.repo} label="repo" className="opacity-60" />
-                </span>
-              </Row>
-            ))}
-          </div>
-        )}
-      </Panel>
+                  <span className="shrink-0 tabular-nums text-mist-faint">{hhmmss(a.time)}</span>
+                  <span className="w-24 shrink-0 truncate text-mist-dim sm:w-32" title={a.source}>
+                    {a.source}
+                  </span>
+                  <span className="min-w-0 truncate text-mist-dim" title={a.text}>
+                    {a.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
 
       {/* right column */}
       <div className="col-span-12 flex flex-col gap-5 lg:col-span-5 xl:col-span-4">
@@ -170,7 +230,7 @@ export default function NowView({
           </Panel>
         )}
 
-        <Panel title="today" riseIndex={3}>
+        <Panel title="today" riseIndex={3} right={<NextEventCountdown events={comms.calendar.today} />}>
           {comms.calendar.today.length === 0 ? (
             <EmptyState>no events today</EmptyState>
           ) : (
@@ -226,27 +286,24 @@ export default function NowView({
               )}
             </span>
           </Row>
+          {/* quiet sparkline strip — texture, not a chart. Buffers reset on reload,
+              so the whole strip waits for 2+ samples instead of rendering bare labels */}
+          {getSeries('cpu').length >= 2 && (
+            <div className="mt-1 flex items-end justify-between gap-3 px-2.5 font-mono text-[10px] text-mist-faint">
+              {sparkCells.map(({ key, pct }) => (
+                <span key={key} className="flex min-w-0 items-end gap-1.5">
+                  <span>{key}</span>
+                  {pct === null || getSeries(key).length < 2 ? (
+                    <span>—</span>
+                  ) : (
+                    <Spark series={getSeries(key)} className={pctTone(pct)} />
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
         </Panel>
       </div>
-
-      {/* activity ticker */}
-      <Panel title="activity" riseIndex={6} className="col-span-12">
-        {ticker.length === 0 ? (
-          <EmptyState>nothing happening</EmptyState>
-        ) : (
-          <div className="px-2.5 font-mono text-xs">
-            {ticker.map((a, i) => (
-              <div key={`${a.time}-${i}`} className="flex items-baseline gap-2 py-0.5">
-                <span className="shrink-0 tabular-nums text-mist-faint">{hhmmss(a.time)}</span>
-                <span className="shrink-0 text-mist-dim">{a.source}</span>
-                <span className={`min-w-0 truncate ${a.isError ? 'text-coral' : 'text-mist-dim'}`} title={a.text}>
-                  {a.text}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
     </div>
   );
 }

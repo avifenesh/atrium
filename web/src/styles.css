@@ -29,17 +29,37 @@
   color-scheme: dark;
 }
 
+::selection {
+  background: rgba(255, 255, 255, 0.14); /* neutral wash — amber is reserved for attention */
+  color: var(--color-mist);
+}
+
 body {
   background-color: var(--color-ink);
   color: var(--color-mist);
   font-family: var(--font-sans);
-  /* aurora atmosphere: two faint radial washes + grain via svg noise */
+  min-height: 100vh;
+}
+
+/* aurora atmosphere — faint radial washes on a fixed layer behind content,
+   drifting imperceptibly like light moving through a room. the drift starts
+   from a hair of scale so the layer's edges never enter the viewport. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background-image:
     radial-gradient(60rem 40rem at 12% -10%, rgba(50, 90, 110, 0.22), transparent 60%),
     radial-gradient(50rem 36rem at 95% 8%, rgba(70, 60, 110, 0.16), transparent 55%),
     radial-gradient(40rem 50rem at 50% 110%, rgba(35, 70, 60, 0.14), transparent 60%);
-  background-attachment: fixed;
-  min-height: 100vh;
+  animation: aurora-drift 90s ease-in-out alternate infinite;
+}
+
+@keyframes aurora-drift {
+  from { transform: translate3d(-0.4%, -0.3%, 0) scale(1.02); }
+  to { transform: translate3d(0.5%, 0.4%, 0) scale(1.05); }
 }
 
 /* film grain overlay — keeps the glass from feeling sterile */
@@ -141,6 +161,71 @@ body::after {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
+}
+
+/* gentle breathing pulse — the live dot */
+.breathe {
+  animation: breathe 4s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* small rounded mono key chip for shortcut hints */
+.kbd {
+  display: inline-block;
+  padding: 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  line-height: 1.15rem;
+  color: var(--color-mist-dim);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.3rem;
+}
+
+/* right-side overlays (drawers, detail panes) */
+.slide-in-right {
+  animation: slide-in-right 280ms cubic-bezier(0.32, 0.72, 0.24, 1) both;
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* overlay backdrops */
+.backdrop-fade {
+  animation: backdrop-fade 200ms ease-out both;
+}
+@keyframes backdrop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* subtle row polish — rows ease 2px right on hover */
+.row-glide {
+  transition: transform 160ms ease;
+}
+.row-glide:hover {
+  transform: translateX(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  .rise,
+  .dot-active,
+  .breathe,
+  .slide-in-right,
+  .backdrop-fade {
+    animation: none;
+  }
+  .row-glide {
+    transition: none;
+  }
+  .row-glide:hover {
+    transform: none;
+  }
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
