@@ -45,9 +45,13 @@ export const defaults = {
     idleWatcherState: join(HOME, '.local', 'state', 'idle-watcher', 'state.json'),
     idleWatcherLog: join(HOME, '.local', 'state', 'idle-watcher', 'watcher.log'),
     obsidianRegistry: join(HOME, '.config', 'obsidian', 'obsidian.json'),
+    // defaults match scripts/install-backup.sh (REPO / PASS_FILE)
+    resticRepo: join(HOME, 'backups', 'restic'),
+    resticPasswordFile: join(HOME, '.config', 'restic', 'password'),
     revutoVault: join(HOME, 'revuto'),
     revutoCli: join(HOME, 'projects', 'revuto', 'dist', 'daemon', 'src', 'cli.js'),
     hermesCli: join(HOME, '.local', 'bin', 'hermes'),
+    projectsDir: join(HOME, 'projects'),
   },
 
   revuto: {
@@ -111,6 +115,8 @@ export const defaults = {
     revutoMs: 60_000,
     itchMs: 60_000,
     cloudMs: 300_000,
+    backupMs: 3_600_000,
+    reposMs: 120_000,
   },
 
   notify: {

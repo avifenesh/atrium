@@ -12,7 +12,8 @@ export type SectionName =
   | 'surreal'
   | 'revuto'
   | 'itch'
-  | 'cloud';
+  | 'cloud'
+  | 'repos';
 
 export interface Snapshot {
   generatedAt: string;
@@ -27,6 +28,7 @@ export interface Snapshot {
   revuto: RevutoState;
   itch: ItchState;
   cloud: CloudState;
+  repos: ReposState;
   mutes: Mute[];
   flags: Flag[];
 }
@@ -437,6 +439,25 @@ export interface ItchState {
   research: ItchResearch;
   /** decisions ledger size (rated ideas across all runs), null when unknown */
   ratedTotal: number | null;
+  error: string | null;
+}
+
+// ---------- repos (local working trees under ~/projects) ----------
+
+export interface RepoInfo {
+  name: string;
+  path: string;
+  branch: string | null;
+  detached: boolean;
+  dirty: number;
+  ahead: number | null;
+  behind: number | null;
+  lastCommitAt: string | null;
+}
+
+export interface ReposState {
+  updatedAt: string | null;
+  repos: RepoInfo[];
   error: string | null;
 }
 

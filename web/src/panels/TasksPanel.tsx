@@ -1,7 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { clearAllNotifications, clearNotification, isMuted } from '../api';
 import { Dot, EmptyState, MuteButton, Panel, QuietChip, RelTime, Row, SectionLabel, SendToEigen } from '../components/ui';
-import type { EigenDispatch, GithubItem, GithubNotification, GithubPR, OrgItem, Snapshot } from '../../../shared/types';
+import type { EigenDispatch, GithubItem, GithubNotification, GithubPR, OrgItem, RepoInfo, ReposState, Snapshot } from '../../../shared/types';
 
 function ciStatus(ci: GithubPR['ci']): string {
   if (ci === 'SUCCESS') return 'running'; // jade
@@ -201,6 +201,28 @@ function NotificationRow({
   );
 }
 
+/** Local working tree — facts only: dirty is normal work-in-flight, never an error,
+ *  so the count stays mist-dim (no coral, no accent). */
+function RepoRow({ r }: { r: RepoInfo }) {
+  const arrows = [r.ahead ? `↑${r.ahead}` : null, r.behind ? `↓${r.behind}` : null].filter(Boolean).join(' ');
+  return (
+    <Row title={r.path}>
+      <span className="min-w-0 flex-1 truncate text-sm text-mist">{r.name}</span>
+      <span className="max-w-44 shrink-0 truncate font-mono text-xs text-mist-dim" title={r.branch ?? undefined}>
+        {r.branch}
+        {r.detached && <span className="text-mist-faint">detached</span>}
+      </span>
+      <span className="w-8 shrink-0 text-right font-mono text-xs tabular-nums text-mist-dim">
+        {r.dirty > 0 ? r.dirty : ''}
+      </span>
+      <span className="w-16 shrink-0 text-right font-mono text-xs tabular-nums text-mist-faint">{arrows}</span>
+      <RelTime iso={r.lastCommitAt} />
+    </Row>
+  );
+}
+
+const LOCAL_ROWS = 14;
+
 export default function TasksPanel({
   snapshot,
   onOpenQuiet,
@@ -216,6 +238,10 @@ export default function TasksPanel({
   // optimistic clear — removed ids vanish immediately, restored if the API call fails
   const [cleared, setCleared] = useState<ReadonlySet<string>>(new Set());
   const [clearAllArmed, setClearAllArmed] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+
+  // older servers don't ship the repos section yet — skip the panel entirely
+  const local = snapshot.repos as ReposState | undefined;
 
   const visible = notMuted(snapshot);
   // people blocked on him — review lane (external PRs awaiting his review) ranks above triage
@@ -487,6 +513,48 @@ export default function TasksPanel({
             </div>
           )}
         </Panel>
+
+        {local && (
+          <Panel
+            title="local"
+            riseIndex={7}
+            className="col-span-12"
+            right={
+              <>
+                {local.error && (
+                  <span className="max-w-64 truncate text-coral" title={local.error}>
+                    {local.error}
+                  </span>
+                )}
+                {local.repos.length > 0 && (
+                  <span className="font-mono text-xs tabular-nums text-mist-faint">{local.repos.length}</span>
+                )}
+                <RelTime iso={local.updatedAt} />
+              </>
+            }
+          >
+            {local.repos.length === 0 ? (
+              // never claim cleanliness from absence — null updatedAt means the
+              // collector hasn't reported yet; non-null + zero means scan found nothing
+              <EmptyState>{local.updatedAt === null ? 'not collected yet' : 'no repos found'}</EmptyState>
+            ) : (
+              <div className="space-y-0.5">
+                {(localOpen ? local.repos : local.repos.slice(0, LOCAL_ROWS)).map((r) => (
+                  <RepoRow key={r.path} r={r} />
+                ))}
+                {!localOpen && local.repos.length > LOCAL_ROWS && (
+                  <button
+                    type="button"
+                    onClick={() => setLocalOpen(true)}
+                    className="cursor-pointer py-1 pl-2.5 font-mono text-[11px] tabular-nums text-mist-faint transition-colors hover:text-mist"
+                  >
+                    … {local.repos.length - LOCAL_ROWS} more
+                  </button>
+                )}
+              </div>
+            )}
+          </Panel>
+        )}
       </div>
     </div>
   );

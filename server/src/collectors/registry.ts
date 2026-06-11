@@ -18,11 +18,22 @@ export async function runOnce(name: string): Promise<boolean> {
   const entry = collectors.get(name);
   if (!entry || entry.running) return false;
   entry.running = true;
+  // watchdog: a hung run() would hold the latch forever and stop all future
+  // polls; past the deadline we log and release it — the orphaned promise
+  // settling later is harmless (setSection is idempotent)
+  const deadlineMs = Math.max(entry.c.intervalMs * 2, 60_000);
+  let watchdog: NodeJS.Timeout | undefined;
+  const deadline = new Promise<'timeout'>((resolve) => {
+    watchdog = setTimeout(() => resolve('timeout'), deadlineMs);
+    watchdog.unref();
+  });
   try {
-    await entry.c.run();
+    const outcome = await Promise.race([entry.c.run().then(() => 'done' as const), deadline]);
+    if (outcome === 'timeout') console.error(`[${name}] run exceeded deadline`);
   } catch (err) {
     console.error(`[collector:${name}]`, err instanceof Error ? err.message : err);
   } finally {
+    clearTimeout(watchdog);
     entry.running = false;
   }
   return true;

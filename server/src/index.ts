@@ -26,6 +26,8 @@ import surrealCollector from './collectors/surreal.js';
 import revutoCollector from './collectors/revuto.js';
 import itchWatchCollector from './collectors/itch-watch.js';
 import cloudCollector from './collectors/cloud.js';
+import backupCollector from './collectors/backup.js';
+import reposCollector from './collectors/repos.js';
 import { proxyItch } from './itch-proxy.js';
 
 for (const c of [
@@ -40,6 +42,8 @@ for (const c of [
   revutoCollector,
   itchWatchCollector,
   cloudCollector,
+  backupCollector,
+  reposCollector,
 ]) {
   register(c);
 }

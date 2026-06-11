@@ -53,6 +53,7 @@ const SECTIONS: SectionName[] = [
   'revuto',
   'itch',
   'cloud',
+  'repos',
 ];
 // snapshot lists can grow unbounded — keep the index bounded, scorer surfaces the rest
 const MAX_NOTES = 50;

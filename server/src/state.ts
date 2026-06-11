@@ -76,6 +76,7 @@ export function emptySnapshot(): Snapshot {
       ratedTotal: null, error: null,
     },
     cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
+    repos: { updatedAt: null, repos: [], error: null },
     mutes: [],
     flags: [],
   };
