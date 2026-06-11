@@ -342,6 +342,123 @@ server.registerTool(
 );
 
 server.registerTool(
+  'atrium_revuto',
+  {
+    description:
+      'Revuto PR-reviewer watch: services, per-repo reviewers, model probes, recent jobs, counts, schedules/limits. Last-good data is kept when the dashboard is down.',
+    inputSchema: {},
+    annotations: RO,
+  },
+  () =>
+    guarded(async () => {
+      const r = (await snapshot()).revuto;
+      const lines: string[] = [];
+      if (!r.up)
+        lines.push(
+          r.updatedAt
+            ? `dashboard unreachable — showing last known state (${ago(r.updatedAt)})`
+            : 'dashboard unreachable — nothing collected yet',
+        );
+      if (r.error) lines.push(`error: ${r.error}`);
+      if (!r.up && !r.updatedAt) return lines.join('\n');
+      if (r.services.length) {
+        lines.push('services:');
+        for (const sv of r.services)
+          lines.push(
+            `  ${sv.id} ${sv.activeState}/${sv.subState}` +
+              `${sv.since ? ` since ${sv.since}` : ''}${sv.nextElapse ? ` next ${sv.nextElapse}` : ''}`,
+          );
+      }
+      if (r.reviewers.length) {
+        lines.push(`reviewers (${r.reviewers.length}):`);
+        for (const rv of r.reviewers.slice(0, 10))
+          lines.push(
+            `  ${rv.repo}${rv.paused ? ' [paused]' : ''}${rv.autoActivate ? ' (auto-activate)' : ''} — ${rv.reviewSchedule}`,
+          );
+        if (r.reviewers.length > 10) lines.push(`  … ${r.reviewers.length - 10} more`);
+      }
+      if (r.models.length) {
+        lines.push('models:');
+        for (const m of r.models)
+          lines.push(
+            `  ${m.role}: ${m.name}/${m.model}${m.enabled ? '' : ' (disabled)'} — probe ${m.probe.state}` +
+              `${m.probe.ms !== null ? ` ${m.probe.ms}ms` : ''}${m.probe.checkedAt ? ` ${ago(m.probe.checkedAt)}` : ''}` +
+              `${m.probe.error ? ` — ${m.probe.error}` : ''}`,
+          );
+      }
+      if (r.jobs.length) {
+        lines.push(`jobs (${r.jobs.length} recent):`);
+        for (const j of r.jobs.slice(0, 8))
+          lines.push(
+            `  ${ago(j.timestamp)} ${j.job} ${j.repo} ${j.status}` +
+              `${j.durationMs !== null ? ` ${Math.round(j.durationMs / 1000)}s` : ''} — ${j.summary}`,
+          );
+        if (r.jobs.length > 8) lines.push(`  … ${r.jobs.length - 8} more`);
+      }
+      if (r.counts) {
+        const c = r.counts;
+        lines.push(
+          `counts: services ${c.servicesActive}/${c.servicesTotal} active, reviewers ${c.reviewers} (${c.pausedReviewers} paused), ` +
+            `jobs ${c.recentJobs} recent / ${c.recentFailures} failed, reviewed ${c.reviewed} / skipped ${c.skipped}`,
+        );
+      }
+      if (r.schedules)
+        lines.push(`schedules: review ${r.schedules.review} | learn ${r.schedules.learn} | decay ${r.schedules.decay}`);
+      if (r.limits)
+        lines.push(
+          `limits: maxSteps ${r.limits.maxSteps}, daily reviews ${r.limits.dailyReviews} / learn ${r.limits.dailyLearn} / tokens ${r.limits.dailyTokens}`,
+        );
+      return lines.length ? lines.join('\n') : 'no revuto data collected yet';
+    }),
+);
+
+server.registerTool(
+  'atrium_itch',
+  {
+    description:
+      'Itch idea-scout watch: research state, rated-ideas total, recent runs (ratings, collide temp, sampled domains, baselines). Last-good data is kept when the itch UI is down.',
+    inputSchema: {},
+    annotations: RO,
+  },
+  () =>
+    guarded(async () => {
+      const it = (await snapshot()).itch;
+      const lines: string[] = [];
+      if (!it.up)
+        lines.push(
+          it.updatedAt
+            ? `itch ui unreachable — showing last known state (${ago(it.updatedAt)})`
+            : 'itch ui unreachable — nothing collected yet',
+        );
+      if (it.error) lines.push(`error: ${it.error}`);
+      if (!it.up && !it.updatedAt) return lines.join('\n');
+      const res = it.research;
+      const bits = [res.running ? 'running' : 'idle'];
+      if (res.started) bits.push(`started ${ago(res.started)}`);
+      if (res.savedStem) bits.push(`saved ${res.savedStem}`);
+      if (res.killedReason) bits.push(`killed: ${res.killedReason}`);
+      lines.push(`research: ${bits.join(', ')}`);
+      lines.push(`rated total: ${it.ratedTotal ?? 'unknown'}`);
+      if (it.runs.length) {
+        lines.push(`runs (${it.runs.length}, newest first):`);
+        for (const run of it.runs.slice(0, 12)) {
+          const parts = [`${run.nRated}/${run.nIdeas} rated`];
+          if (run.isCollide) parts.push(`collide temp=${run.collisionTemp ?? '?'}`);
+          if (run.sampledDomains.length)
+            parts.push(
+              `domains: ${run.sampledDomains.slice(0, 3).join(', ')}` +
+                `${run.sampledDomains.length > 3 ? ` +${run.sampledDomains.length - 3} more` : ''}`,
+            );
+          if (run.baselineFor) parts.push(`baseline for ${run.baselineFor}`);
+          lines.push(`  ${run.stem} — ${parts.join(' — ')}`);
+        }
+        if (it.runs.length > 12) lines.push(`  … ${it.runs.length - 12} more`);
+      } else lines.push('runs: none');
+      return lines.join('\n');
+    }),
+);
+
+server.registerTool(
   'atrium_flags',
   {
     description: 'Current anomaly flags (crit/warn/info), with ids usable for atrium_mute kind=flag.',

@@ -395,6 +395,8 @@ export interface ItchRunInfo {
   nRated: number;
   isCollide: boolean;
   collisionTemp: number | null;
+  /** collide domain sample, empty when not collide */
+  sampledDomains: string[];
   baselineFor: string | null;
 }
 

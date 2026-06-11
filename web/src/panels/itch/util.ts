@@ -25,8 +25,8 @@ export const RATING_LABEL: Record<number, string> = {
 
 /** "n/m" = ideas/rated — labels must stay short enough for the run picker.
  *  same-day runs swap the date for 'today' so a deep picker scans by time alone.
- *  richer enrichment (domains/model) needs sampled_domains in the collector
- *  contract — ItchRunInfo carries no such fields yet. */
+ *  collide runs get a domain hint from sampledDomains — first domain only,
+ *  truncated, since labels render inside a native <option> (one short line). */
 export function runLabel(r: ItchRunInfo): string {
   const now = new Date();
   const todayKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -34,6 +34,11 @@ export function runLabel(r: ItchRunInfo): string {
   const when = m && m[1] === todayKey ? `today ${m[2]}:${m[3]}` : fmtStem(r.stem);
   let s = `${when} · ${r.nIdeas}/${r.nRated}`;
   if (r.isCollide) s += ` · collide ${(r.collisionTemp ?? 0).toFixed(2)}`;
+  if (r.isCollide && r.sampledDomains.length > 0) {
+    const d = r.sampledDomains[0];
+    s += ` · ${d.length > 12 ? `${d.slice(0, 12)}…` : d}`;
+    if (r.sampledDomains.length > 1) s += ` +${r.sampledDomains.length - 1}`;
+  }
   if (r.baselineFor) s += ' · baseline';
   return s;
 }

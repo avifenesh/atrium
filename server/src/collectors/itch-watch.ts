@@ -34,6 +34,7 @@ function mapRun(r: any): ItchRunInfo {
     nRated: num(r?.n_rated),
     isCollide: !!r?.is_collide,
     collisionTemp: numOrNull(r?.collision_temp),
+    sampledDomains: arr(r?.sampled_domains).filter((d) => typeof d === 'string'),
     baselineFor: strOrNull(r?.baseline_for),
   };
 }
@@ -47,9 +48,10 @@ function mapResearch(s: any): ItchResearch {
   };
 }
 
+// updatedAt stays null — never-collected must not read as "last data <poll cadence> ago"
 function emptyState(): ItchState {
   return {
-    updatedAt: iso(), up: false, runs: [],
+    updatedAt: null, up: false, runs: [],
     research: { running: false, started: null, savedStem: null, killedReason: null },
     ratedTotal: null, error: null,
   };

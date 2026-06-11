@@ -5,7 +5,7 @@ Personal life-management dashboard for one machine and one human. A zero-depende
 ## Architecture
 
 ```
- collectors (github · agents · system · schedule · comms · subs · notes · surreal · revuto)
+ collectors (github · agents · system · schedule · comms · subs · notes · surreal · revuto · itch)
      │  poll on intervals, failure-isolated
      ▼
    store ── in-memory Snapshot + flags + mutes
@@ -21,7 +21,9 @@ Personal life-management dashboard for one machine and one human. A zero-depende
                     eigen (auto-runs readonly tools; atrium-ops skill)
 ```
 
-The web UI is nine views (now · tasks · agents · revuto · system · comms · subs · schedule · notes) behind a keyboard layer: `1-9` switch views, `/` or `cmd+k` open the fuzzy command palette, `q` toggles the quiet drawer, `esc` closes the topmost overlay. Views deep-link via URL hash (`#revuto`), so desktop launchers can open straight into one.
+The web UI is ten views (now · tasks · agents · revuto · system · comms · subs · schedule · notes · itch) behind a keyboard layer: `1-9` and `0` switch views (`0` is itch, the tenth), `/` or `cmd+k` open the fuzzy command palette, `q` toggles the quiet drawer, `esc` closes the topmost overlay. Views deep-link via URL hash (`#revuto`, `#itch`), and a hashchange listener switches views live, so desktop launchers can open straight into one — even an already-open app.
+
+The daemon also serves the built web UI: `index.html` is sent `no-cache` (so a rebuild lands on the next load), content-hashed `assets/` are cached immutable for a year.
 
 ## Quick start
 
@@ -46,6 +48,7 @@ node scripts/register-eigen.mjs   # add MCP server + atrium-ops skill to ~/.eige
 | notes | `GET /api/notes/read` · `POST /api/notes/write` (optimistic concurrency, 409 on conflict) |
 | google | `GET /api/google/status` · `GET /api/google/auth-url` · `GET /api/google/callback` |
 | spotify | `POST /api/spotify/client` · `GET /api/spotify/auth-url` · `GET /api/spotify/callback` |
+| itch | `/api/itch/*` (GET/POST/PUT/DELETE) — origin-checked proxy to the local itch server: path charset check + traversal guard, `X-Itch-Request` injected on mutations, browser Origin/Referer never forwarded; synchronous AI oneshot calls (ask, roadmap, validate, contrib, agent, howto) get an extended timeout |
 
 ## Integrations
 
@@ -57,7 +60,7 @@ node scripts/register-eigen.mjs   # add MCP server + atrium-ops skill to ~/.eige
 | eigen | `~/.eigen/sessions*`, `~/.eigen/observe/events.jsonl`, daemon socket |
 | claude code | `~/.claude/projects` session files |
 | codex | `~/.codex/session_index.jsonl` |
-| itch | `~/.config/itch/runs` |
+| itch | local itch server `http://127.0.0.1:8799` (proxied, self-started when down) — runs, ratings/outcomes, research status; runs data lives in `~/.config/itch/runs` |
 | any-mission | `~/projects/any-mission/.any-mission` |
 | training (idle-watcher) | `~/.local/state/idle-watcher/` state + log |
 | system | `/proc`, `nvidia-smi`, `df`, `ss`, `systemctl --user`; utilization history persisted server-side so sparklines have depth on open |

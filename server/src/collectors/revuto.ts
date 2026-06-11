@@ -122,9 +122,10 @@ function mapSnapshot(raw: any): RevutoState {
   };
 }
 
+// updatedAt stays null — never-collected must not read as "last data <poll cadence> ago"
 function emptyState(): RevutoState {
   return {
-    updatedAt: iso(), up: false, counts: null, schedules: null, limits: null, store: null,
+    updatedAt: null, up: false, counts: null, schedules: null, limits: null, store: null,
     services: [], models: [], reviewers: [], jobs: [], logs: [], error: null,
   };
 }

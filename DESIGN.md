@@ -70,7 +70,7 @@ muted items must disappear (archive), the app must feel like a finished product.
 
 ## v3/v4 addendum (post-v2 rounds, kept brief — code is the reference)
 
-- **Keyboard layer**: `1-9` view switch, `/` or `cmd+k` fuzzy command palette (views, github items,
+- **Keyboard layer**: `1-9` and `0` view switch (`0` = itch, the tenth), `/` or `cmd+k` fuzzy command palette (views, github items,
   agents), `q` quiet drawer, `esc` closes the TOPMOST overlay only (centralized in App.tsx — never
   per-overlay window listeners). Views sync to the URL hash (`#revuto`) for desktop-launcher deep links.
 - **Living rail**: clock + date, per-view count badges (amber only when act-now/org-review nonempty;

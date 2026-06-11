@@ -162,8 +162,7 @@ export function ResearchStrip({
     if (temp > 0) f.collision_temp = temp / 100; // 0 must be OMITTED — baseline
     if (model) f.model = model; // upstream reads flags.model (how the standalone app passes it)
     try {
-      // api.ts types flags as boolean|number (predates the model flag) — model is a string
-      const { status, body } = await startResearch(f as Record<string, boolean | number>);
+      const { status, body } = await startResearch(f);
       if (status === 409) {
         // single-flight: someone beat us to it — that's a state, join the live console
         setMsg({ text: 'already running', isError: false });

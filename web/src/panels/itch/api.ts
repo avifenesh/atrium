@@ -109,7 +109,7 @@ export function getResearchStatus(since: number, signal?: AbortSignal): Promise<
   return getJson<ResearchStatus>(`/research/status?since=${since}`, signal);
 }
 
-export function startResearch(flags: Record<string, boolean | number>) {
+export function startResearch(flags: Record<string, boolean | number | string>) {
   return mutate('POST', '/research/start', { flags });
 }
 
