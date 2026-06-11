@@ -8,8 +8,10 @@ import { config } from './config.js';
 // so mutations inherit the same CSRF protection as every other route.
 
 const REST_RE = /^[A-Za-z0-9._/-]+$/;
-// synchronous AI oneshots block until the model answers — give them a long leash
-const LONG_RE = /^(ask|roadmap|validate|contrib|agent|run\/[^/]+\/howto)$/;
+// synchronous AI oneshots block until the model answers — give them a long leash.
+// research/baseline starts also block: upstream auto-setup may wait ~25s per local
+// service (llama.cpp, searxng) before the spawn, which can exceed the 30s default.
+const LONG_RE = /^(ask|roadmap|validate|contrib|agent|research\/start|run\/[^/]+\/(howto|scope|baseline))$/;
 const MAX_BODY = 1024 * 1024;
 
 function json(res: ServerResponse, code: number, body: unknown): void {

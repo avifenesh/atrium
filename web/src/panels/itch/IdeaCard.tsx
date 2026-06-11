@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Markdown } from '../../components/markdown';
 import { CopyText } from '../../components/ui';
-import { askIdea, deleteIdea, howtoIdea, putRating, roadmapIdea, type RunDetail, type RunIdea } from './api';
+import { askIdea, deleteIdea, howtoIdea, putRating, roadmapIdea, scopeIdea, type RunDetail, type RunIdea } from './api';
 import { Sheet } from './Sheet';
 import { COLLIDE_PREFIX_RE, RATING_LABEL, displayTitle } from './util';
 
@@ -17,6 +17,8 @@ const ACTIONS = [
   { kind: 'ask', label: 'ask', hint: 'ask a question about this idea' },
   { kind: 'roadmap', label: 'roadmap', hint: 'draft a build roadmap' },
   { kind: 'howto', label: 'how-to', hint: 'write a how-to spec' },
+  // rating-5 cards only — filtered at the cluster
+  { kind: 'scope', label: 'scope', hint: 'scope iteration 1 — mvp cut, first milestone' },
 ] as const;
 type ActionKind = (typeof ACTIONS)[number]['kind'];
 
@@ -319,6 +321,15 @@ export function IdeaCard({
       return { status, text: body?.spec ?? null };
     });
 
+  const runScope = () =>
+    runAction('scope', async () => {
+      // run-addressed + title-keyed; upstream also persists the scope file and
+      // names it in `saved` — appended so the sheet says where it landed
+      const { status, body } = await scopeIdea(stem, idea.title);
+      if (typeof body?.scope !== 'string') return { status, text: null };
+      return { status, text: body.saved ? `${body.scope}\n\nsaved to ${body.saved}` : body.scope };
+    });
+
   const onAction = (kind: ActionKind) => {
     if (action !== null) return;
     if (kind === 'ask') {
@@ -326,7 +337,8 @@ export function IdeaCard({
       return;
     }
     if (kind === 'roadmap') void runRoadmap();
-    else void runHowto();
+    else if (kind === 'howto') void runHowto();
+    else void runScope();
   };
 
   // ---- delete idea (two-click arm) ----
@@ -390,7 +402,9 @@ export function IdeaCard({
           {/* hover cluster — side oneshots + delete; the in-flight one stays visible,
               label kept beside the ellipsis so minutes-long flights read as something */}
           <span className="flex shrink-0 items-center gap-1">
-            {ACTIONS.map((a) => (
+            {/* scope only earns a slot at rating 5; an in-flight one stays visible
+                even if the rating changes mid-flight */}
+            {ACTIONS.filter((a) => a.kind !== 'scope' || rating === 5 || action === 'scope').map((a) => (
               <button
                 key={a.kind}
                 type="button"

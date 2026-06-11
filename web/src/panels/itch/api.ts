@@ -147,6 +147,15 @@ export function howtoIdea(stem: string, payload: { idx: number; model?: string }
   }>;
 }
 
+/** scope iteration 1 of a rating-5 idea — title-keyed within the run, send the ORIGINAL
+ *  exact title; `saved` is the absolute path of the persisted scope file. */
+export function scopeIdea(stem: string, title: string) {
+  return mutate('POST', `/run/${encodeURIComponent(stem)}/scope`, { title }) as Promise<{
+    status: number;
+    body: { scope?: string; saved?: string; error?: string } | null;
+  }>;
+}
+
 export function validateIdea(payload: { title: string; description?: string; model?: string }) {
   return mutate('POST', '/validate', payload) as Promise<{ status: number; body: { markdown?: string; error?: string } | null }>;
 }
