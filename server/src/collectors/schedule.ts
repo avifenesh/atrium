@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { config } from '../config.js';
+import { nextRun } from '../cron-next.js';
 import { shTry, readJson, redactSecrets, iso } from '../util.js';
 import { store } from '../state.js';
 import type { Collector } from './registry.js';
@@ -73,7 +74,7 @@ function collectCrontab(out: string, entries: ScheduleEntry[], flags: Flag[]): v
       name: shortCmd(cmd),
       expr,
       enabled: true,
-      nextRun: null,
+      nextRun: nextRun(expr), // null for @-shortcuts and anything else the parser doesn't cover
       lastRun: null,
       lastStatus: null,
       detail: shortCmd(cmd), // never the raw line — cron commands commonly embed tokens
@@ -122,17 +123,29 @@ async function collectRevuto(entries: ScheduleEntry[]): Promise<void> {
   const cfg = await readJson<any>(join(config.paths.revutoVault, 'revuto.config.json'));
   const schedules = cfg?.schedules;
   if (!schedules || typeof schedules !== 'object') return;
+  // the revuto collector already polls per-job history into its own section — read it
+  // rather than re-fetching; empty until its first successful poll, which is fine
+  const jobs = store.get().revuto.jobs;
   for (const [key, expr] of Object.entries(schedules)) {
     if (typeof expr !== 'string') continue;
+    let lastRun: string | null = null;
+    let lastStatus: 'ok' | 'fail' | null = null;
+    for (const j of jobs) {
+      if (j.job !== key) continue;
+      const ts = Date.parse(j.timestamp);
+      if (Number.isNaN(ts) || (lastRun !== null && ts <= Date.parse(lastRun))) continue;
+      lastRun = iso(ts);
+      lastStatus = j.status === 'ok' ? 'ok' : j.status === 'failed' ? 'fail' : null;
+    }
     entries.push({
       id: `revuto:${key}`,
       source: 'revuto',
       name: `revuto ${key}`,
       expr,
       enabled: true,
-      nextRun: null,
-      lastRun: null,
-      lastStatus: null,
+      nextRun: nextRun(expr),
+      lastRun,
+      lastStatus,
       detail: null,
       muteable: false,
     });

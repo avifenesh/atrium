@@ -11,7 +11,8 @@ export type SectionName =
   | 'notes'
   | 'surreal'
   | 'revuto'
-  | 'itch';
+  | 'itch'
+  | 'cloud';
 
 export interface Snapshot {
   generatedAt: string;
@@ -25,6 +26,7 @@ export interface Snapshot {
   surreal: SurrealState;
   revuto: RevutoState;
   itch: ItchState;
+  cloud: CloudState;
   mutes: Mute[];
   flags: Flag[];
 }
@@ -290,6 +292,26 @@ export interface SubService {
 export interface SubsState {
   updatedAt: string | null;
   services: SubService[];
+  error: string | null;
+}
+
+// ---------- cloud (ec2 visibility — informational only, never flags) ----------
+
+export interface CloudInstance {
+  id: string;
+  name: string | null;
+  type: string;
+  state: string;
+  launchedAt: string | null;
+  publicIp: string | null;
+  az: string | null;
+  monthlyUsd: number | null;
+}
+
+export interface CloudState {
+  updatedAt: string | null;
+  instances: CloudInstance[];
+  totalMonthlyUsd: number | null;
   error: string | null;
 }
 

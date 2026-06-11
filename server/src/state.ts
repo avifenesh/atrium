@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { Snapshot, SectionName, Flag, Mute } from '../../shared/types.js';
 import { iso } from './util.js';
+import { onFlagsChanged } from './notify.js';
 
 /** Central store: collectors write sections, SSE clients subscribe to changes. */
 class Store extends EventEmitter {
@@ -22,7 +23,10 @@ class Store extends EventEmitter {
     const all: Flag[] = [];
     for (const fs of this.flagsBySource.values()) all.push(...fs);
     all.sort((a, b) => sevRank(b.severity) - sevRank(a.severity));
+    const prev = this.snapshot.flags;
     this.snapshot.flags = all;
+    // push pings on raise transitions — never throws; no-op until index.ts inits it
+    onFlagsChanged(prev, all, this.snapshot.mutes);
     this.emit('section', 'flags', all);
   }
 
@@ -71,6 +75,7 @@ export function emptySnapshot(): Snapshot {
       research: { running: false, started: null, savedStem: null, killedReason: null },
       ratedTotal: null, error: null,
     },
+    cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
     mutes: [],
     flags: [],
   };

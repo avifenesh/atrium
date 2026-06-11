@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from '../config.js';
 import { getCursorUsage } from '../cursor-usage.js';
-import { getGrokBilling } from '../grok-usage.js';
+import { getGrokBillingDetailed } from '../grok-usage.js';
+import type { GrokBilling, GrokBillingFailure } from '../grok-usage.js';
 import { getSpotifyAccessToken } from '../spotify.js';
 import { store } from '../state.js';
 import { ago, iso, mtime, readJson, readText, shTry, tailLines } from '../util.js';
@@ -298,6 +299,27 @@ function grokTier(auth: any): number | null {
   }
 }
 
+// Billing-level last-good: the _x.ai/billing rpc times out intermittently, and one
+// miss must not flap the card to a dark "unavailable" state for a whole cycle.
+const GROK_BILLING_TTL_MS = 30 * 60_000;
+const GROK_RETRY_DELAY_MS = 2_000;
+let grokBillingGood: { at: number; billing: GrokBilling } | null = null;
+
+/** Honest failure copy: spawn ≠ timeout ≠ rpc error; stderr snippet makes a dark card diagnosable. */
+function grokFailureNote(f: GrokBillingFailure): string {
+  const why =
+    f.kind === 'spawn'
+      ? `grok cli not reachable${f.message ? `: ${f.message}` : ''}`
+      : f.kind === 'timeout'
+        ? 'billing rpc timed out'
+        : f.kind === 'exit'
+          ? `grok cli exited mid-handshake${f.message ? `: ${f.message}` : ''}`
+          : f.kind === 'rpc'
+            ? `billing rpc error${f.message ? `: ${f.message}` : ''}`
+            : 'billing response unparseable';
+  return f.stderr ? `${why}; stderr: ${f.stderr}` : why;
+}
+
 async function grokService(): Promise<SubService | null> {
   const src = config.paths.grokAuth;
   const auth = await readJson<any>(src);
@@ -306,11 +328,33 @@ async function grokService(): Promise<SubService | null> {
   const stats = grokSqliteStats();
   const tier = grokTier(auth);
   // live credits: the grok binary speaks JSON-RPC over stdio — we run its own
-  // authenticated _x.ai/billing call (see grok-usage.ts) instead of faking a bar
-  const billing = await getGrokBilling().catch(() => null);
+  // authenticated _x.ai/billing call (see grok-usage.ts) instead of faking a bar.
+  // one in-cycle retry after a short delay: a single transient miss is common
+  let res = await getGrokBillingDetailed();
+  if (!res.ok) {
+    await new Promise((r) => setTimeout(r, GROK_RETRY_DELAY_MS));
+    res = await getGrokBillingDetailed();
+  }
+
+  let billing: GrokBilling | null = null;
+  let cached = false;
+  let creditsNote: string | null = null;
+  if (res.ok) {
+    billing = res.billing;
+    grokBillingGood = { at: Date.now(), billing: res.billing };
+  } else if (grokBillingGood && Date.now() - grokBillingGood.at < GROK_BILLING_TTL_MS) {
+    // fresh attempt failed but last-good is young: serve it stale, not a dark card
+    billing = grokBillingGood.billing;
+    cached = true;
+    creditsNote = `live credits cached ${ago(grokBillingGood.at)} (${grokFailureNote(res)})`;
+  } else {
+    // past TTL (or never fetched): degrade honestly
+    creditsNote = `live credits unavailable (${grokFailureNote(res)})`;
+  }
 
   const parts: string[] = [];
   if (stats) parts.push(`${stats.n} local sessions; last activity ${ago(stats.lastMs)}`);
+  if (creditsNote) parts.push(creditsNote);
 
   let usage: SubService['usage'] = null;
   if (billing) {
@@ -323,8 +367,6 @@ async function grokService(): Promise<SubService | null> {
         resetAt: billing.periodEnd,
       });
     }
-  } else {
-    parts.push('live credits unavailable (grok cli not reachable)');
   }
 
   // prefer the live subscription tier from billing over the JWT claim
@@ -338,7 +380,7 @@ async function grokService(): Promise<SubService | null> {
     detail: parts.length ? parts.join('; ') : null,
     usage,
     source: billing
-      ? `${src} + grok agent stdio (_x.ai/billing)`
+      ? `${src} + grok agent stdio (_x.ai/billing${cached ? ', cached' : ''})`
       : stats
         ? `${src} (tier from JWT) + sessions/session_search.sqlite`
         : `${src} (tier from JWT)`,

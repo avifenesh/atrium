@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { EigenDispatch } from '../../shared/types.js';
 import { config } from './config.js';
-import { iso, readJson } from './util.js';
+import { iso, readJson, tailLines } from './util.js';
 
 const EIGEN_BIN = join(homedir(), '.local', 'bin', 'eigen');
 const RUNS_DIR = join(config.configDir, 'eigen-runs');
@@ -104,6 +104,54 @@ function publicView(d: StoredDispatch): EigenDispatch {
 
 export function getDispatches(): EigenDispatch[] {
   return runs.map(publicView);
+}
+
+// daemon-mode runs have no child to observe exit on — the agents collector hands
+// us the daemon session list each cycle and we settle open runs against it.
+const RECONCILE_GRACE_MS = 20_000;
+// daemon sessions are in-proc, so a confirmed-down daemon means every session in it is
+// dead. loadRuns deliberately skips daemon-mode runs, so this is the ONLY close path —
+// without it a dispatch outlives a dead daemon as 'running' forever.
+const DAEMON_DOWN_CYCLES = 3; // ~30s at the 10s agents poll — rides out one-off sock blips
+let daemonNullCycles = 0;
+
+/** null = daemon unreachable this cycle: a blip leaves runs open, but after
+ *  DAEMON_DOWN_CYCLES consecutive misses open daemon runs close as 'error'. */
+export function reconcileEigenDispatches(sessions: Array<{ id?: unknown; status?: unknown }> | null): void {
+  const now = Date.now();
+  if (!sessions) {
+    daemonNullCycles += 1;
+    if (daemonNullCycles < DAEMON_DOWN_CYCLES) return;
+    for (const d of runs) {
+      if (d.status !== 'running' || d.mode !== 'daemon' || !d.sessionId) continue;
+      if (now - Date.parse(d.startedAt) < RECONCILE_GRACE_MS) continue;
+      closeRun(d.id, 'error'); // daemon confirmed down — the in-proc session died with it
+    }
+    return;
+  }
+  daemonNullCycles = 0;
+  for (const d of runs) {
+    if (d.status !== 'running' || d.mode !== 'daemon' || !d.sessionId) continue;
+    // grace: a just-dispatched session can report idle before its input is picked up
+    if (now - Date.parse(d.startedAt) < RECONCILE_GRACE_MS) continue;
+    const s = sessions.find((x) => String(x?.id ?? '') === d.sessionId);
+    if (!s) closeRun(d.id, 'error'); // evicted from daemon — completion never observed
+    else if (s.status === 'error') closeRun(d.id, 'error');
+    else if (s.status === 'idle') closeRun(d.id, 'done'); // working/approval = still going
+  }
+}
+
+// uuid charset only — rejects path tricks before the id touches any lookup
+const DISPATCH_ID_RE = /^[0-9a-fA-F-]{1,64}$/;
+
+/** GET /api/eigen/dispatch/:id/log handler — null means unknown id (404). */
+export async function getDispatchLog(id: string): Promise<{ log: string } | null> {
+  if (!DISPATCH_ID_RE.test(id)) return null;
+  const d = runs.find((r) => r.id === id);
+  if (!d) return null;
+  if (!d.logPath) return { log: '' }; // daemon-mode runs write no headless log
+  const lines = await tailLines(d.logPath, 200);
+  return { log: lines.join('\n') };
 }
 
 export async function dispatchToEigen(body: any): Promise<EigenDispatch> {
@@ -297,8 +345,9 @@ async function loadRuns(): Promise<void> {
   let changed = false;
   for (const d of runs) {
     if (d.status !== 'running') continue;
+    if (d.mode === 'daemon' && d.sessionId) continue; // settled by reconcileEigenDispatches next agents cycle
     if (pidAlive(d.pid)) continue; // headless child survived the restart; exit will go unobserved though
-    d.status = 'error'; // orphaned by restart — daemon runs lose their observer, dead pids are gone
+    d.status = 'error'; // orphaned by restart — dead pids are gone
     d.endedAt = iso();
     changed = true;
   }

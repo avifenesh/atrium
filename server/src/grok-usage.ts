@@ -19,6 +19,29 @@ export interface GrokBilling {
   subscriptionTier: string | null;
 }
 
+export interface GrokBillingFailure {
+  ok: false;
+  // spawn = binary missing/unstartable; exit = died mid-handshake; rpc = agent answered with an error
+  kind: 'spawn' | 'timeout' | 'exit' | 'rpc' | 'parse';
+  message: string | null;
+  /** last stderr bytes, whitespace-collapsed, capped, jwt-scrubbed — safe for card detail */
+  stderr: string | null;
+}
+
+export type GrokBillingResult = { ok: true; billing: GrokBilling } | GrokBillingFailure;
+
+const STDERR_CAP = 200;
+
+// stderr ends up in card detail/snapshot: scrub anything jwt-shaped before it leaves
+function stderrSnippet(raw: string): string | null {
+  const s = raw
+    .replace(/eyJ[\w-]{8,}\.[\w-]+\.[\w-]+/g, '<jwt>')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return null;
+  return s.length > STDERR_CAP ? `…${s.slice(-STDERR_CAP)}` : s;
+}
+
 interface Rpc {
   jsonrpc: '2.0';
   id?: number;
@@ -27,26 +50,27 @@ interface Rpc {
   error?: { code: number; message: string };
 }
 
-/** Spawn the grok ACP agent, run the handshake, return live billing — or null on any failure. */
-export function getGrokBilling(timeoutMs = 25_000): Promise<GrokBilling | null> {
+/** Spawn the grok ACP agent, run the handshake, return live billing — or a typed failure. */
+export function getGrokBillingDetailed(timeoutMs = 25_000): Promise<GrokBillingResult> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
+    let errBuf = '';
     try {
       // a neutral cwd: don't let the agent try to index whatever dir the daemon
       // was launched from (systemd leaves it at /). --no-leader avoids attaching
       // to a running grok leader socket (different lifecycle, can race the kill).
       child = spawn(config.paths.grokBin, ['agent', '--no-leader', 'stdio'], {
-        stdio: ['pipe', 'pipe', 'ignore'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         cwd: tmpdir(),
       });
-    } catch {
-      resolve(null);
+    } catch (err) {
+      resolve({ ok: false, kind: 'spawn', message: err instanceof Error ? err.message : String(err), stderr: null });
       return;
     }
 
     let settled = false;
     let buf = '';
-    const finish = (val: GrokBilling | null) => {
+    const finish = (val: GrokBillingResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -57,18 +81,23 @@ export function getGrokBilling(timeoutMs = 25_000): Promise<GrokBilling | null> 
       }
       resolve(val);
     };
+    const fail = (kind: GrokBillingFailure['kind'], message: string | null) =>
+      finish({ ok: false, kind, message, stderr: stderrSnippet(errBuf) });
 
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    const timer = setTimeout(() => fail('timeout', `no billing reply in ${timeoutMs}ms`), timeoutMs);
     const send = (obj: Rpc) => {
       try {
         child.stdin!.write(JSON.stringify(obj) + '\n');
       } catch {
-        finish(null);
+        fail('exit', 'stdin write failed');
       }
     };
 
-    child.on('error', () => finish(null));
-    child.on('exit', () => finish(settled ? null : null));
+    child.stderr!.on('data', (d: Buffer) => {
+      errBuf = (errBuf + d.toString()).slice(-2048); // tail only, unbounded child noise must not grow
+    });
+    child.on('error', (err) => fail('spawn', err.message));
+    child.on('exit', (code) => fail('exit', code == null ? 'killed by signal' : `exit code ${code}`));
 
     child.stdout!.on('data', (d: Buffer) => {
       buf += d.toString();
@@ -85,16 +114,26 @@ export function getGrokBilling(timeoutMs = 25_000): Promise<GrokBilling | null> 
         }
         if (msg.method) continue; // agent-side notification, ignore
         if (msg.id === 1) {
+          if (msg.error) {
+            fail('rpc', `initialize: ${msg.error.message}`);
+            return;
+          }
           // initialized → authenticate with the token the CLI already cached
           send({ jsonrpc: '2.0', id: 2, method: 'authenticate', params: { methodId: 'cached_token' } } as Rpc);
         } else if (msg.id === 2) {
           if (msg.error) {
-            finish(null);
+            fail('rpc', `authenticate: ${msg.error.message}`);
             return;
           }
           send({ jsonrpc: '2.0', id: 3, method: '_x.ai/billing', params: {} } as Rpc);
         } else if (msg.id === 3) {
-          finish(msg.error ? null : parseBilling(msg.result));
+          if (msg.error) {
+            fail('rpc', `_x.ai/billing: ${msg.error.message}`);
+            return;
+          }
+          const billing = parseBilling(msg.result);
+          if (billing) finish({ ok: true, billing });
+          else fail('parse', 'unexpected billing response shape');
           return;
         }
       }
@@ -107,6 +146,11 @@ export function getGrokBilling(timeoutMs = 25_000): Promise<GrokBilling | null> 
       params: { protocolVersion: 1, clientCapabilities: {} },
     } as Rpc);
   });
+}
+
+/** Back-compat shape: live billing or null on any failure. */
+export function getGrokBilling(timeoutMs = 25_000): Promise<GrokBilling | null> {
+  return getGrokBillingDetailed(timeoutMs).then((r) => (r.ok ? r.billing : null));
 }
 
 function parseBilling(result: any): GrokBilling | null {

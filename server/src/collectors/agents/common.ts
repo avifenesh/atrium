@@ -46,9 +46,15 @@ export function pruneFlagPins(liveIds: Set<string>): void {
   }
 }
 
-/** Accepts epoch seconds, epoch ms, or ISO string — sources disagree on timestamp format. */
+/** Accepts epoch s/ms/us/ns (unit inferred by magnitude) or ISO string — sources disagree;
+ *  eigen daemon emits UnixNano (~1.8e18 live), which Date() rejects as out of range. */
 export function tsToMs(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v < 1e12 ? v * 1000 : v;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    if (v >= 1e17) return Math.round(v / 1e6); // ns
+    if (v >= 1e14) return Math.round(v / 1e3); // us
+    if (v < 1e11) return Math.round(v * 1000); // s
+    return Math.round(v); // ms
+  }
   if (typeof v === 'string') {
     const t = Date.parse(v);
     return Number.isNaN(t) ? null : t;

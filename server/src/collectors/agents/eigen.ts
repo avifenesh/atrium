@@ -3,8 +3,9 @@ import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import type { AgentSession } from '../../../../shared/types.js';
 import { config } from '../../config.js';
+import { reconcileEigenDispatches } from '../../eigen-dispatch.js';
 import { iso, mtime, readJson, shTry } from '../../util.js';
-import { baseAgent, tsToIso, type SourceResult } from './common.js';
+import { baseAgent, tsToMs, type SourceResult } from './common.js';
 
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 
@@ -23,18 +24,26 @@ export async function collectEigen(): Promise<SourceResult> {
     .filter(Boolean)
     .filter((l) => !/\bpgrep\b/.test(l) && Number(l.split(' ')[0]) !== process.pid);
 
+  // settle stored daemon-mode dispatches against the live session list every cycle
+  reconcileEigenDispatches(daemon?.sessions ?? null);
+
   const sessions: AgentSession[] = [];
+  let newestDaemonMs: number | null = null;
   for (const s of daemon?.sessions ?? []) {
     const id = String(s?.id ?? '');
     if (!id) continue;
+    const updatedMs = tsToMs(s.updated); // daemon emits UnixNano
+    if (updatedMs !== null && (newestDaemonMs === null || updatedMs > newestDaemonMs)) newestDaemonMs = updatedMs;
     sessions.push({
       id,
       title: typeof s.title === 'string' ? s.title : null,
       dir: typeof s.dir === 'string' ? s.dir : null,
       model: typeof s.model === 'string' ? s.model : null,
       status: typeof s.status === 'string' ? s.status : null,
-      updatedAt: tsToIso(s.updated) ?? iso(),
-      live: s.status === 'running' || procLines.some((l) => l.includes(id)),
+      updatedAt: updatedMs !== null ? iso(updatedMs) : iso(),
+      // daemon vocab is idle/working/approval/error — never 'running'; sessions live
+      // inside the daemon proc, so pgrep substring match on short ids ("s8") is noise
+      live: s.status === 'working' || s.status === 'approval',
     });
   }
 
@@ -56,10 +65,11 @@ export async function collectEigen(): Promise<SourceResult> {
 
   const liveCount = sessions.filter((s) => s.live).length;
   const anyProc = procLines.length > 0;
-  const fresh = newestSessionMs !== null && Date.now() - newestSessionMs < ACTIVE_WINDOW_MS;
+  const newestMs = Math.max(newestSessionMs ?? 0, newestDaemonMs ?? 0) || null;
+  const fresh = newestMs !== null && Date.now() - newestMs < ACTIVE_WINDOW_MS;
   agent.status = anyProc && fresh ? 'active' : daemon ? 'running' : anyProc ? 'idle' : 'off';
 
-  const tsCandidates = [newestSessionMs, observeM?.getTime() ?? null].filter((t): t is number => t !== null);
+  const tsCandidates = [newestMs, observeM?.getTime() ?? null].filter((t): t is number => t !== null);
   agent.lastActivity = tsCandidates.length ? iso(Math.max(...tsCandidates)) : null;
 
   const bits = [`${sessions.length} sessions`];

@@ -110,6 +110,16 @@ export const defaults = {
     surrealMs: 60_000,
     revutoMs: 60_000,
     itchMs: 60_000,
+    cloudMs: 300_000,
+  },
+
+  notify: {
+    enabled: true,
+    // 'crit' | 'warn' | 'info' — minimum severity that pings the phone
+    minSeverity: 'crit' as 'info' | 'warn' | 'crit',
+    throttleMs: 21_600_000, // one ping per flag id per 6h, even if it flaps
+    notifyClear: false, // single-line notice when a pinged flag disappears
+    target: 'telegram', // hermes send --to <target>
   },
 };
 

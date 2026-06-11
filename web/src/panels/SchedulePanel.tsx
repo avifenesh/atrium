@@ -72,7 +72,8 @@ export default function SchedulePanel({
 
   const upcoming = visible
     .filter((e) => e.enabled && e.nextRun)
-    .sort((a, b) => (a.nextRun as string).localeCompare(b.nextRun as string));
+    // compare instants, not strings — hermes emits +03:00 offset ISO while cron/revuto emit Z
+    .sort((a, b) => new Date(a.nextRun as string).getTime() - new Date(b.nextRun as string).getTime());
   const rest = visible
     .filter((e) => !(e.enabled && e.nextRun))
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name));

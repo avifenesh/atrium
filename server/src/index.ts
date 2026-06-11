@@ -5,7 +5,8 @@ import { register, startAll, runOnce, list } from './collectors/registry.js';
 import { mutes } from './mutes.js';
 import { loadMetricHistory } from './metric-history.js';
 import { runAgentAction } from './actions.js';
-import { dispatchToEigen } from './eigen-dispatch.js';
+import { dispatchToEigen, getDispatchLog } from './eigen-dispatch.js';
+import { init as initNotify } from './notify.js';
 import { markNotificationRead } from './github-actions.js';
 import { githubItemDetail, githubComment } from './github-detail.js';
 import { writeNote } from './collectors/notes.js';
@@ -24,6 +25,7 @@ import notesCollector from './collectors/notes.js';
 import surrealCollector from './collectors/surreal.js';
 import revutoCollector from './collectors/revuto.js';
 import itchWatchCollector from './collectors/itch-watch.js';
+import cloudCollector from './collectors/cloud.js';
 import { proxyItch } from './itch-proxy.js';
 
 for (const c of [
@@ -37,6 +39,7 @@ for (const c of [
   surrealCollector,
   revutoCollector,
   itchWatchCollector,
+  cloudCollector,
 ]) {
   register(c);
 }
@@ -166,6 +169,13 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && refresh) {
       const ok = await runOnce(refresh[1]);
       return json(res, ok ? 200 : 404, { ok, collectors: list() });
+    }
+
+    const dispatchLog = path.match(/^\/api\/eigen\/dispatch\/([^/]+)\/log$/);
+    if (method === 'GET' && dispatchLog) {
+      // id is uuid-charset validated inside getDispatchLog; null = unknown id
+      const out = await getDispatchLog(dispatchLog[1]);
+      return out ? json(res, 200, out) : json(res, 404, { error: 'unknown dispatch id' });
     }
 
     if (method === 'POST' && path === '/api/eigen/dispatch') {
@@ -346,6 +356,9 @@ if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host)) {
   console.error(`atrium refuses to bind non-loopback host ${config.host} — no auth layer exists`);
   process.exit(2);
 }
+
+// init before startAll or boot-time crits are dropped; mutes already loaded above
+initNotify({ ...config.notify, sendCmd: [config.paths.hermesCli, 'send', '--to', config.notify.target] });
 
 startAll();
 
