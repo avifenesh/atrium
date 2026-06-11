@@ -13,7 +13,7 @@ import {
   type RunIdea,
 } from './api';
 import { IdeaCard } from './IdeaCard';
-import { displayTitle, fmtStem, runLabel } from './util';
+import { displayTitle, fmtStem, runLabel, structuredFor } from './util';
 import type { ItchRunInfo } from '../../../../shared/types';
 
 // ---------- the feed (rise 2) — run picker + preamble/cards/footer ----------
@@ -176,6 +176,7 @@ export function Feed({
   scrollTarget,
   onScrollTargetConsumed,
   onRated,
+  onScoped,
   onRunDeleted,
   filtersVersion,
   onFiltersChanged,
@@ -189,6 +190,8 @@ export function Feed({
    *  (add/delete renumbers idx) would re-fire the scroll at the wrong card */
   onScrollTargetConsumed: () => void;
   onRated: () => void;
+  /** a scope oneshot persisted a file — the shell bumps ScopesPanel's version */
+  onScoped: () => void;
   /** the shell remembers the stem so a stale snapshot can't re-adopt it */
   onRunDeleted?: (stem: string) => void;
   /** bumped by the shell whenever the tools wrote a new filter plan upstream */
@@ -205,6 +208,8 @@ export function Feed({
   // last run deleted from here — keeps the '· new' stale option from resurrecting
   // it while the snapshot still lists it (cleared once a snapshot drops the stem)
   const [deletedStem, setDeletedStem] = useState<string | null>(null);
+  // 'written' = as-authored (the default frame); 'score' reorders by the sidecar
+  const [order, setOrder] = useState<'written' | 'score'>('written');
   // the card a jump just landed on — wears a decaying mist glow so the eye lands
   // with the scroll; cleared after the glow so a repeat jump re-triggers it
   const [flashIdx, setFlashIdx] = useState<number | null>(null);
@@ -230,6 +235,7 @@ export function Feed({
 
   useEffect(() => {
     setFlashIdx(null); // idx is run-relative — a stale glow must not land on a stranger
+    setOrder('written'); // sort is a per-run lens — a new run must not inherit it
     if (!selectedStem) {
       setDetail(null);
       return;
@@ -295,6 +301,18 @@ export function Feed({
     const rest = visible.filter((i) => !boostTerms.some((t) => hay(i).includes(t)));
     return { shownIdeas: [...boosted, ...rest], hiddenCount: ideas.length - visible.length, filterActive: true };
   }, [detail, filters]);
+
+  // 'score' sorts a COPY — shownIdeas may BE detail.ideas (unfiltered case), so an
+  // in-place sort would mutate state. unmatched titles sink (-1 under a 0+ scale);
+  // ties break by idx ascending so the written order is the tiebreak, stable or not.
+  // boost float belongs to 'written' order; 'score' is an explicit override — switching back restores it
+  const orderedIdeas = useMemo(() => {
+    const structured = detail?.structured?.ideas;
+    if (order !== 'score' || !structured?.length) return shownIdeas;
+    const keyed = shownIdeas.map((i) => ({ i, score: structuredFor(structured, i.title)?.score ?? -1 }));
+    keyed.sort((a, b) => b.score - a.score || a.i.idx - b.i.idx);
+    return keyed.map((k) => k.i);
+  }, [order, shownIdeas, detail]);
 
   // jump from search/decisions: once the right run is loaded, scroll to the card.
   // sits below the filter memo because a hidden target must be reported, not
@@ -431,6 +449,25 @@ export function Feed({
               </button>
             </div>
           )}
+          {/* order toggle — only runs with a structured sidecar can sort by score */}
+          {(detail.structured?.ideas?.length ?? 0) > 0 && (
+            <div className="flex items-center gap-1 px-2.5">
+              <span className="font-mono text-[11px] text-mist-faint">order</span>
+              {(['written', 'score'] as const).map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  title={o === 'score' ? 'highest score first' : 'as the model wrote them'}
+                  onClick={() => setOrder(o)}
+                  className={`press cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] ${
+                    order === o ? 'glass-raised text-mist' : 'text-mist-faint hover:text-mist'
+                  }`}
+                >
+                  {o}
+                </button>
+              ))}
+            </div>
+          )}
           {/* preamble/footer carry the model's ranking commentary — quiet bookends,
               set off by a hairline so they read as asides, never cards */}
           {detail.preamble.trim() !== '' && (
@@ -441,14 +478,16 @@ export function Feed({
               />
             </div>
           )}
-          {shownIdeas.map((i) => (
+          {orderedIdeas.map((i) => (
             // key includes the title: add/delete renumber idx upstream, and an
             // idx-only key would hand one idea's local state to its neighbor
             <IdeaCard
               key={`${detail.stem}-${i.idx}-${i.title}`}
               idea={i}
               stem={detail.stem}
+              meta={structuredFor(detail.structured?.ideas, i.title)}
               onRated={onRated}
+              onScoped={onScoped}
               onRunUpdated={adoptRun}
               flash={flashIdx === i.idx}
             />

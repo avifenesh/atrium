@@ -22,11 +22,22 @@ export interface RunIdea {
   outcome_note: string | null;
 }
 
+export interface StructuredIdea {
+  idx: number;
+  title: string;
+  score: number;
+  pitch: string;
+  domains: string[];
+  effort: string;
+}
+
 export interface RunDetail {
   stem: string;
   preamble: string;
   footer: string;
   ideas: RunIdea[];
+  /** sidecar-derived; absent from older servers, null when the run has no sidecar. */
+  structured?: { ideas: StructuredIdea[] } | null;
 }
 
 export interface Decision {
@@ -289,4 +300,27 @@ export function getResource(name: ResourceName, signal?: AbortSignal): Promise<{
 
 export function putResource(name: ResourceName, text: string) {
   return mutate('PUT', `/resource/${name}`, { text });
+}
+
+// ---------- scopes (persisted scope-iteration files, listed newest-first upstream) ----------
+
+export interface ScopeInfo {
+  file: string;
+  stem: string;
+  title: string;
+  mtime: string;
+}
+
+export function getScopes(signal?: AbortSignal): Promise<{ scopes: ScopeInfo[] }> {
+  return getJson<{ scopes: ScopeInfo[] }>('/scopes', signal);
+}
+
+export function getScope(
+  file: string,
+  signal?: AbortSignal,
+): Promise<{ file: string; title: string; content: string }> {
+  return getJson<{ file: string; title: string; content: string }>(
+    `/scopes/${encodeURIComponent(file)}`,
+    signal,
+  );
 }

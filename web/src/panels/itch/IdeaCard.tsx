@@ -1,7 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Markdown } from '../../components/markdown';
 import { CopyText } from '../../components/ui';
-import { askIdea, deleteIdea, howtoIdea, putRating, roadmapIdea, scopeIdea, type RunDetail, type RunIdea } from './api';
+import {
+  askIdea,
+  deleteIdea,
+  howtoIdea,
+  putRating,
+  roadmapIdea,
+  scopeIdea,
+  type RunDetail,
+  type RunIdea,
+  type StructuredIdea,
+} from './api';
 import { Sheet } from './Sheet';
 import { COLLIDE_PREFIX_RE, RATING_LABEL, displayTitle } from './util';
 
@@ -57,13 +67,19 @@ function RatingButtons({
 export function IdeaCard({
   idea,
   stem,
+  meta: structured,
   onRated,
+  onScoped,
   onRunUpdated,
   flash = false,
 }: {
   idea: RunIdea;
   stem: string;
+  /** sidecar structured row for this idea — score/effort/domain chips under the title */
+  meta?: StructuredIdea;
   onRated: () => void;
+  /** a scope oneshot just persisted a file upstream — the scopes panel re-lists */
+  onScoped: () => void;
   /** add/delete return the FULL renumbered run payload — the feed swaps its detail state */
   onRunUpdated: (detail: RunDetail) => void;
   /** a search/decisions jump just landed here — one decaying mist glow, then gone */
@@ -328,6 +344,7 @@ export function IdeaCard({
       // names it in `saved` — appended so the sheet says where it landed
       const { status, body } = await scopeIdea(stem, idea.title);
       if (typeof body?.scope !== 'string') return { status, text: null };
+      onScoped();
       return { status, text: body.saved ? `${body.scope}\n\nsaved to ${body.saved}` : body.scope };
     });
 
@@ -374,6 +391,12 @@ export function IdeaCard({
 
   const meta = idea.metadata ?? {};
   const collide = meta.collide || COLLIDE_PREFIX_RE.test(idea.title);
+  // the sidecar validator (parse_structured_ideas) only checks title/idx/score —
+  // domains/effort arrive unvalidated, and a render throw here unmounts the whole
+  // root (no ErrorBoundary). guard + dedupe before trusting the declared type.
+  const domains = Array.isArray(structured?.domains)
+    ? [...new Set(structured.domains.filter((d): d is string => typeof d === 'string'))]
+    : [];
 
   return (
     // card-level group — zero-information rows (finding: rhythm) hover-reveal
@@ -455,6 +478,41 @@ export function IdeaCard({
           <RatingButtons rating={rating} pending={pending} locked={putBusy && pending === null} onRate={(n) => void rate(n)} />
         </span>
       </div>
+
+      {/* sidecar chips — score is DATA, not status: neutral mist, never jade/amber/coral.
+          lives outside bodyRef so the rendered-height collapse check stays body-only */}
+      {structured && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-mist-dim">
+            score {structured.score}
+          </span>
+          {typeof structured.effort === 'string' && structured.effort !== '' && (
+            <span
+              title={`effort: ${structured.effort}`}
+              className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim"
+            >
+              {structured.effort}
+            </span>
+          )}
+          {domains.slice(0, 3).map((d) => (
+            <span
+              key={d}
+              title={d}
+              className="max-w-36 truncate rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim"
+            >
+              {d}
+            </span>
+          ))}
+          {domains.length > 3 && (
+            <span
+              title={domains.slice(3).join(', ')}
+              className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim"
+            >
+              +{domains.length - 3}
+            </span>
+          )}
+        </div>
+      )}
 
       {asking && (
         <input

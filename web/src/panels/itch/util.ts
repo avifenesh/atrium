@@ -1,4 +1,5 @@
 import type { ItchRunInfo } from '../../../../shared/types';
+import type { StructuredIdea } from './api';
 
 // ---------- display helpers ----------
 
@@ -41,4 +42,20 @@ export function runLabel(r: ItchRunInfo): string {
   }
   if (r.baselineFor) s += ' · baseline';
   return s;
+}
+
+// replicates _RESURFACE_RE in ~/projects/itch/itch.py: re.compile(r"^[↻⟳]\s*")
+const RESURFACE_RE = /^[↻⟳]\s*/;
+
+/** sidecar titles are resurface-marker-stripped (but KEEP '[collide] '); run headings
+ *  may still carry the marker — exact match first, then marker-stripped. */
+export function structuredFor(
+  ideas: StructuredIdea[] | null | undefined,
+  title: string,
+): StructuredIdea | undefined {
+  if (!ideas?.length) return undefined;
+  const exact = ideas.find((i) => i.title === title);
+  if (exact) return exact;
+  const stripped = title.trim().replace(RESURFACE_RE, '').trim();
+  return ideas.find((i) => i.title === stripped);
 }

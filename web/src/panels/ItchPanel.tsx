@@ -5,15 +5,16 @@ import { ComparePanel } from './itch/Compare';
 import { DecisionsPanel } from './itch/Decisions';
 import { Feed, type ScrollTarget } from './itch/Feed';
 import { ResearchStrip } from './itch/ResearchStrip';
+import { ScopesPanel } from './itch/Scopes';
 import { SearchStrip } from './itch/SearchStrip';
 import { ToolsPanel } from './itch/Tools';
 import type { ItchState, Snapshot } from '../../../shared/types';
 
 // itch view shell — section ordering plus the state that crosses sections
-// (selected run, jump target, decisions version, filters version). the pieces
+// (selected run, jump target, decisions/filters/scopes versions). the pieces
 // live in ./itch/*: api.ts (proxy fetchers + upstream shapes), util.ts (display
 // helpers), and one file per rise: research 0, search 1, feed 2, compare 3,
-// decisions 4, tools 5 (rare-use, last).
+// decisions 4, scopes 5, tools 6 (rare-use, last).
 
 // ---------- panel root ----------
 
@@ -23,6 +24,7 @@ function ItchBody({ it }: { it: ItchState }) {
   const [scrollTarget, setScrollTarget] = useState<ScrollTarget | null>(null);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const [filtersVersion, setFiltersVersion] = useState(0);
+  const [scopesVersion, setScopesVersion] = useState(0);
   // a save the snapshot hasn't confirmed yet — see the runs effect below
   const pendingSelect = useRef<string | null>(null);
   // a delete the snapshot hasn't dropped yet — the adopt effect must not resurrect it
@@ -66,6 +68,9 @@ function ItchBody({ it }: { it: ItchState }) {
 
   // decisions re-fetch after any rating/note change
   const onRated = useCallback(() => setDecisionsVersion((v) => v + 1), []);
+
+  // scopes re-list after a scope oneshot persists a file
+  const onScoped = useCallback(() => setScopesVersion((v) => v + 1), []);
 
   // tools applied/cleared a feed filter — the feed refetches GET /filters on bump
   const onFiltersChanged = useCallback(() => setFiltersVersion((v) => v + 1), []);
@@ -125,6 +130,7 @@ function ItchBody({ it }: { it: ItchState }) {
         scrollTarget={scrollTarget}
         onScrollTargetConsumed={onScrollTargetConsumed}
         onRated={onRated}
+        onScoped={onScoped}
         onRunDeleted={onRunDeleted}
         filtersVersion={filtersVersion}
         onFiltersChanged={onFiltersChanged}
@@ -139,7 +145,8 @@ function ItchBody({ it }: { it: ItchState }) {
         version={decisionsVersion}
         onJump={(stem, title) => jumpTo(stem, undefined, title)}
       />
-      <ToolsPanel riseIndex={5} filtersVersion={filtersVersion} onFiltersChanged={onFiltersChanged} />
+      <ScopesPanel riseIndex={5} version={scopesVersion} />
+      <ToolsPanel riseIndex={6} filtersVersion={filtersVersion} onFiltersChanged={onFiltersChanged} />
     </div>
   );
 }
