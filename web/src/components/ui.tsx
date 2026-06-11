@@ -10,6 +10,7 @@ export function Panel({
   title,
   children,
   riseIndex = 0,
+  rise = true,
   className = '',
   right,
   quietCount,
@@ -18,6 +19,8 @@ export function Panel({
   title?: string;
   children: ReactNode;
   riseIndex?: number;
+  /** false skips the page-load rise stagger — for panels that remount mid-session */
+  rise?: boolean;
   className?: string;
   right?: ReactNode;
   quietCount?: number;
@@ -25,7 +28,10 @@ export function Panel({
 }) {
   const showChip = quietCount !== undefined && quietCount > 0;
   return (
-    <section className={`glass rise p-4 xl:p-5 ${className}`} style={{ '--rise-i': riseIndex } as CSSProperties}>
+    <section
+      className={`glass ${rise ? 'rise ' : ''}p-4 xl:p-5 ${className}`}
+      style={rise ? ({ '--rise-i': riseIndex } as CSSProperties) : undefined}
+    >
       {(title || right || showChip) && (
         <header className="mb-3 flex min-w-0 items-baseline justify-between gap-3">
           {title && (

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { agentAction, isMuted } from '../api';
+import { useTweenNumber } from '../hooks';
 import { CopyText, Dot, EmptyState, MuteButton, Panel, RelTime, Row } from '../components/ui';
 import type {
   RevutoJob,
@@ -35,6 +36,13 @@ function jobClass(j: RevutoJob): 'failed' | 'real' | 'quiet' | 'unknown' {
   // only a non-zero review earns jade — skips are routine (the counts strip agrees)
   const m = j.summary.match(/reviewed=(\d+)\s*\/\s*skipped=(\d+)/);
   return m && Number(m[1]) > 0 ? 'real' : 'quiet';
+}
+
+/** pulse-strip numeral — glides between snapshots (Spline Sans Mono is tabular, so the
+ *  strip never jogs mid-tween). tone classes key off the real value upstream, not this. */
+function TweenStat({ value, className }: { value: number; className: string }) {
+  const display = useTweenNumber(value);
+  return <span className={className}>{display}</span>;
 }
 
 const JOB_DOT: Record<ReturnType<typeof jobClass>, string> = {
@@ -122,12 +130,13 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
       riseIndex={riseIndex}
       right={
         <span className="flex items-center gap-2">
+          {/* box-shadow joins the transition so the glass→glass-raised arm lifts instead of snapping */}
           <button
             type="button"
             disabled={busy === 'stop'}
             onClick={() => fire('stop')}
-            className={`cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-coral transition-colors hover:text-coral ${
-              armed ? 'glass-raised' : 'glass'
+            className={`cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] transition-[color,background-color,border-color,box-shadow] hover:text-coral disabled:opacity-40 ${
+              armed ? 'glass-raised text-coral' : 'glass text-coral/75'
             }`}
           >
             {busy === 'stop' ? '◌' : armed ? 'sure?' : 'stop'}
@@ -136,7 +145,7 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
             type="button"
             disabled={busy === 'start'}
             onClick={() => fire('start')}
-            className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-mist-dim transition-colors glass hover:text-mist"
+            className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-mist-dim transition-colors glass hover:text-mist disabled:opacity-40"
           >
             {busy === 'start' ? '◌' : 'start'}
           </button>
@@ -225,7 +234,15 @@ function JobRow({ j }: { j: RevutoJob }) {
   return (
     <Row className="group">
       <div className="flex w-full min-w-0 items-center gap-2">
-        <Dot status={JOB_DOT[cls]} />
+        {/* a real review is the found gem in the poll texture — its jade dot breathes
+            (styles.css stills .breathe under prefers-reduced-motion) */}
+        {cls === 'real' ? (
+          <span className="inline-flex shrink-0 breathe">
+            <Dot status={JOB_DOT[cls]} />
+          </span>
+        ) : (
+          <Dot status={JOB_DOT[cls]} />
+        )}
         <span className="w-9 shrink-0 text-right">
           <RelTime iso={j.timestamp} />
         </span>
@@ -260,7 +277,8 @@ function LogLine({ l }: { l: RevutoLog }) {
   // 'warn', and amber on poll noise would burn the act-now signal
   const tone = l.level === 'error' ? 'text-coral' : 'text-mist-dim';
   return (
-    <div className="flex items-baseline gap-2 py-0.5">
+    // px-2.5 keeps the time rail on the same line as job rows and the empty state
+    <div className="flex items-baseline gap-2 px-2.5 py-0.5">
       {/* fixed time slot so the mono feed reads as columns ('29s' vs '1m' must not shift) */}
       <span className="w-9 shrink-0 text-right">
         <RelTime iso={l.timestamp} />
@@ -353,7 +371,7 @@ export default function RevutoPanel({
           style={{ '--rise-i': 0 } as CSSProperties}
         >
           <div className="flex items-baseline gap-1.5">
-            <span className="font-mono text-xl leading-none tabular-nums text-mist">{counts.reviewers}</span>
+            <TweenStat value={counts.reviewers} className="font-mono text-xl leading-none tabular-nums text-mist" />
             <span className="text-[11px] text-mist-faint">reviewers</span>
             {counts.pausedReviewers > 0 && (
               <span className="font-mono text-[11px] tabular-nums text-mist-faint">
@@ -362,29 +380,27 @@ export default function RevutoPanel({
             )}
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span className="font-mono text-xl leading-none tabular-nums text-mist">{counts.recentJobs}</span>
+            <TweenStat value={counts.recentJobs} className="font-mono text-xl leading-none tabular-nums text-mist" />
             <span className="text-[11px] text-mist-faint">jobs</span>
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span
+            <TweenStat
+              value={counts.recentFailures}
               className={`font-mono text-xl leading-none tabular-nums ${
                 counts.recentFailures > 0 ? 'text-coral' : 'text-mist-faint'
               }`}
-            >
-              {counts.recentFailures}
-            </span>
+            />
             <span className="text-[11px] text-mist-faint">failures</span>
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span
+            <TweenStat
+              value={counts.reviewed}
               className={`font-mono text-xl leading-none tabular-nums ${
                 counts.reviewed > 0 ? 'text-jade' : 'text-mist-faint'
               }`}
-            >
-              {counts.reviewed}
-            </span>
+            />
             <span className="text-[11px] text-mist-faint">reviewed ·</span>
-            <span className="font-mono text-xl leading-none tabular-nums text-mist-dim">{counts.skipped}</span>
+            <TweenStat value={counts.skipped} className="font-mono text-xl leading-none tabular-nums text-mist-dim" />
             <span className="text-[11px] text-mist-faint">skipped</span>
           </div>
           <span className="ml-auto flex shrink-0 items-baseline gap-1.5 font-mono text-[11px] text-mist-faint">
@@ -432,7 +448,7 @@ export default function RevutoPanel({
           }
         >
           {jobs.length === 0 ? (
-            <EmptyState>no recent jobs</EmptyState>
+            <EmptyState>no jobs lately — review runs land here</EmptyState>
           ) : (
             <div className="max-h-80 overflow-y-auto">
               {jobs.map((j, i) => (
@@ -452,7 +468,7 @@ export default function RevutoPanel({
           }
         >
           {logs.length === 0 ? (
-            <EmptyState>no logs</EmptyState>
+            <EmptyState>nothing logged lately</EmptyState>
           ) : (
             <div className="max-h-80 overflow-y-auto font-mono text-xs">
               {logs.map((l, i) => (

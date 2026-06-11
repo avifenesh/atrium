@@ -105,6 +105,17 @@ body::after {
   outline-offset: 1px;
 }
 
+/* native <select> popups — Chrome paints the dropdown list with UA-light defaults
+   unless the control itself opts into the dark scheme; options need explicit
+   ink/mist colors so the popup matches the glass UI instead of rendering white. */
+select {
+  color-scheme: dark;
+}
+select option {
+  background-color: var(--color-ink-2);
+  color: var(--color-mist);
+}
+
 /* hover-revealed action cluster (quiet / → eigen / clear / view).
    Hidden but space-reserving (visibility, not display — no layout shift on reveal);
    appears on row hover OR when keyboard focus lands anywhere inside the .group row. */
@@ -211,13 +222,68 @@ body::after {
   transform: translateX(2px);
 }
 
+/* quiet arrival — things that appear mid-session fade in, never pop */
+.fade-in {
+  animation: fade-in 160ms ease-out both;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* inline reveals (editors, forms, disclosures) — a soft unfold downward */
+.unfold {
+  animation: unfold 180ms ease-out both;
+}
+@keyframes unfold {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* press feel — selection transitions (color/bg/border/shadow), never snaps;
+   a hair of compression at the moment of press */
+.press {
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* jump-landing acknowledgment — a soft mist glow where a search/decisions jump
+   landed, decaying as the eye settles (mist, not amber — nothing to act on) */
+.jump-glow {
+  position: relative;
+}
+.jump-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset;
+  animation: jump-glow-decay 1.4s ease-out both;
+}
+@keyframes jump-glow-decay {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   body::before,
   .rise,
   .dot-active,
   .breathe,
   .slide-in-right,
-  .backdrop-fade {
+  .backdrop-fade,
+  .fade-in,
+  .unfold,
+  .jump-glow::after {
     animation: none;
   }
   .row-glide {
@@ -226,8 +292,114 @@ body::after {
   .row-glide:hover {
     transform: none;
   }
+  .press:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* native range input (the collide dial) — hairline glass track, small mist
+   thumb that wakes on touch. webkit and moz pseudo-elements styled in separate
+   rules: a selector list containing the other engine's pseudo is dropped whole. */
+.range-glass {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.875rem;
+  background: transparent;
+  cursor: pointer;
+}
+.range-glass::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.range-glass::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px; /* (2px track − 12px thumb) / 2 */
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--color-mist-dim);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+.range-glass:hover::-webkit-slider-thumb,
+.range-glass:focus-visible::-webkit-slider-thumb {
+  background: var(--color-mist);
+  box-shadow: 0 0 8px rgba(232, 237, 244, 0.35);
+}
+.range-glass::-moz-range-track {
+  height: 2px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.range-glass::-moz-range-progress {
+  height: 2px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.25);
+}
+.range-glass::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--color-mist-dim);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+.range-glass:hover::-moz-range-thumb,
+.range-glass:focus-visible::-moz-range-thumb {
+  background: var(--color-mist);
+  box-shadow: 0 0 8px rgba(232, 237, 244, 0.35);
+}
+
+/* streaming telemetry — a quiet block cursor breathing on the partial line */
+.stream-cursor::after {
+  content: '▍';
+  margin-left: 1px;
+  color: var(--color-mist-faint);
+  animation: stream-blink 1.2s linear infinite;
+}
+@keyframes stream-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* glass controls (selects, small glass buttons) brighten one step on hover —
+   bg utilities can't reach .glass (unlayered beats @layer), so this lives here */
+.glass-hover {
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.glass-hover:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* glass text fields warm faintly on focus — the amber outline stays the ring */
+.field-glow {
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.field-glow:focus {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+/* glass wrappers warm the same way while a field inside them holds focus */
+.field-glow:focus-within {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-cursor::after {
+    animation: none;
+  }
+  .range-glass::-webkit-slider-thumb {
+    transition: none;
+  }
+  .range-glass::-moz-range-thumb {
+    transition: none;
+  }
+}

@@ -320,7 +320,13 @@ async function serveStatic(path: string, res: ServerResponse): Promise<boolean> 
   for (const candidate of [join(webDist, rel), join(webDist, 'index.html')]) {
     try {
       const data = await readFile(candidate);
-      res.writeHead(200, { 'content-type': types[extname(candidate)] ?? 'application/octet-stream' });
+      const ext = extname(candidate);
+      // vite assets are content-hashed (safe to cache hard); index.html is not — without
+      // an explicit no-cache the browser heuristically caches it and serves stale bundles
+      // after a rebuild until a manual reload
+      // only assets/ files carry content hashes in their names — root files (favicon) stay revalidated
+      const cache = rel.startsWith('assets/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+      res.writeHead(200, { 'content-type': types[ext] ?? 'application/octet-stream', 'cache-control': cache });
       res.end(data);
       return true;
     } catch {

@@ -15,6 +15,7 @@ import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
 import ItemDetail from './components/ItemDetail';
 import CommandPalette from './components/CommandPalette';
+import { isSheetOpen } from './panels/itch/Sheet';
 
 // labels lowercase sans — DESIGN v2 typography
 const VIEWS = [
@@ -98,6 +99,17 @@ export default function App() {
     const h = location.hash.slice(1);
     return isViewId(h) ? h : 'now';
   });
+  // in-page hash changes (a deep-link landing on an already-open app) must also
+  // switch the view — the lazy init above only runs at boot
+  useEffect(() => {
+    const onHash = () => {
+      const h = location.hash.slice(1);
+      if (isViewId(h)) setView(h);
+      else if (h === '') setView('now');
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   const [mutesOpen, setMutesOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // github item slide-over: read + comment without leaving atrium
@@ -170,6 +182,11 @@ export default function App() {
   // topmost first (per-overlay window listeners all fire on a single esc)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // itch sheets are panel-local overlays the shell does not track — while one
+      // is open it owns the keyboard (its capture-phase listener handles esc), so
+      // stand down before the esc cascade AND before plain-key handling: a stray
+      // digit/q/slash must not switch views and unmount a 10-minute oneshot result
+      if (isSheetOpen()) return;
       if (e.key === 'Escape') {
         if (paletteOpen) setPaletteOpen(false);
         else if (item) (itemEscape.current ?? (() => setItem(null)))();
