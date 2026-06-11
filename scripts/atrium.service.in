@@ -1,0 +1,15 @@
+[Unit]
+Description=atrium life dashboard
+
+[Service]
+# rendered by install.sh — node is nvm-managed, so the absolute path is substituted
+# at install time (systemd user PATH won't have it); re-run install.sh after a node upgrade
+ExecStart=__NODE_BIN__ __ROOT__/server/dist/server/src/index.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+# collectors shell out to node (revuto cli), hermes (~/.local/bin), gh/ss/ps — none on the default systemd user PATH
+Environment=PATH=__NODE_DIR__:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

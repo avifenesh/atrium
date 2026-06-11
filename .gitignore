@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env
+*.local
+*.log
+.DS_Store
+.claude/
+.playwright-mcp/
+tmp/

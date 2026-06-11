@@ -62,11 +62,16 @@ export function iso(d: Date | number | string = new Date()): string {
 }
 
 const SECRET_FLAG_RE = /(--?(?:api-key|apikey|token|password|passwd|secret)(?:=|\s+))(\S+)/gi;
-const SECRET_ENV_RE = /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASS)[A-Z0-9_]*=)(\S+)/g;
+const SECRET_ENV_RE = /\b([A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASS|key|token|secret|password|pass)[A-Za-z0-9_]*=)(\S+)/g;
+const SECRET_BEARER_RE = /\b(Bearer|Basic)\s+\S+/gi;
 
-/** Strip secret-bearing CLI flags and KEY=value env args before a command line enters the snapshot. */
+/** Strip secret-bearing CLI flags, KEY=value env args, and Authorization-header
+ *  values before a command line enters the snapshot. */
 export function redactSecrets(cmd: string): string {
-  return cmd.replace(SECRET_FLAG_RE, '$1[redacted]').replace(SECRET_ENV_RE, '$1[redacted]');
+  return cmd
+    .replace(SECRET_FLAG_RE, '$1[redacted]')
+    .replace(SECRET_ENV_RE, '$1[redacted]')
+    .replace(SECRET_BEARER_RE, '$1 [redacted]');
 }
 
 /** Read last N lines of a file without loading the whole thing (tail for jsonl logs). */

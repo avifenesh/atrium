@@ -152,7 +152,8 @@ export async function dispatchToEigen(body: any): Promise<EigenDispatch> {
   // headless fallback: detached eigen -p, output to a per-run log
   await mkdir(RUNS_DIR, { recursive: true });
   const logPath = join(RUNS_DIR, `${id}.log`);
-  const log = await open(logPath, 'w');
+  // 0600: captures an autonomous agent's full output while it holds the user's credentials
+  const log = await open(logPath, 'w', 0o600);
   let child: ChildProcess;
   try {
     child = spawn(EIGEN_BIN, ['-p', prompt], {

@@ -56,6 +56,8 @@ export const defaults = {
 
   surreal: {
     endpoint: 'http://127.0.0.1:8000',
+    // surrealdb's stock local-dev credentials for the loopback memory store —
+    // real creds belong in ~/.config/atrium/config.json, never this repo
     user: 'root',
     pass: 'root',
   },

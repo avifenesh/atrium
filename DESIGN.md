@@ -67,3 +67,21 @@ muted items must disappear (archive), the app must feel like a finished product.
 - Tabular numbers for metric columns (`tabular-nums`), units in mist-faint.
 - Transitions 120–180ms ease; no bouncy easings. Scrollbars styled (already in styles.css).
 - No emoji in UI chrome. No purple gradients. No shadcn defaults look.
+
+## v3/v4 addendum (post-v2 rounds, kept brief — code is the reference)
+
+- **Keyboard layer**: `1-9` view switch, `/` or `cmd+k` fuzzy command palette (views, github items,
+  agents), `q` quiet drawer, `esc` closes the TOPMOST overlay only (centralized in App.tsx — never
+  per-overlay window listeners). Views sync to the URL hash (`#revuto`) for desktop-launcher deep links.
+- **Living rail**: clock + date, per-view count badges (amber only when act-now/org-review nonempty;
+  system badge follows max unmuted flag severity; revuto badge coral on failures).
+- **Sparklines**: zero-dep SVG (Spark.tsx) over server-persisted utilization history
+  (metric-history.json) — graphs have depth on first frame and survive daemon restarts.
+- **Hero numerals**: Instrument Serif has no tnum — tween inside a fixed ch-width slot to stop reflow wobble.
+- **GitHub slide-over** (ItemDetail.tsx): read + comment without leaving atrium; "open on github" stays
+  one click. Markdown rendered React-elements-only, scheme-whitelisted links.
+- **Revuto view**: ninth view, the standalone revuto-watch dashboard absorbed — services with daemon
+  stop/start (two-click arm), model probes, reviewers with enforced pause, jobs timeline where
+  zero-result polls read as quiet texture (only reviewed>0 earns jade), journal logs, config strip.
+- **Tone discipline refinements**: upstream "warn"-level log noise never gets amber (two-tone feeds:
+  coral for errors, dim otherwise); jade strictly means did-work/ok.

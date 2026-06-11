@@ -325,6 +325,15 @@ async function serveStatic(path: string, res: ServerResponse): Promise<boolean> 
 
 await mutes.load();
 await loadMetricHistory();
+
+// Loopback is a hard invariant, not a default: there is no auth layer, and
+// /api/eigen/dispatch spawns an agent with the user's credentials. A config.json
+// host override to a LAN address would expose all of that to the network.
+if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host)) {
+  console.error(`atrium refuses to bind non-loopback host ${config.host} — no auth layer exists`);
+  process.exit(2);
+}
+
 startAll();
 
 server.listen(config.port, config.host, () => {

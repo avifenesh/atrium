@@ -13,5 +13,10 @@
     "start": "node server/dist/server/src/index.js",
     "dev:server": "npm run dev -w server",
     "dev:web": "npm run dev -w web"
-  }
+  },
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": "github:avifenesh/atrium"
 }
