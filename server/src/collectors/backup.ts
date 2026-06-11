@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { config } from '../config.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
@@ -16,6 +16,12 @@ const PASS_FILE = config.paths.resticPasswordFile;
 // daily timer + 15m jitter should keep age well under 26h; 72h = three missed days
 const WARN_MS = 26 * 3_600_000;
 const CRIT_MS = 72 * 3_600_000;
+
+// offsite mirror (rclone -> google drive): the unit touches this marker after a
+// successful sync. marker absent = offsite not enabled, never a flag — local
+// backups stay the primary signal. warn only; the data already exists locally.
+const OFFSITE_MARKER = join(dirname(config.paths.resticRepo), '.last-offsite-sync');
+const OFFSITE_WARN_MS = 48 * 3_600_000;
 
 // keep first-raise time stable per flag id so the UI doesn't show "just raised" forever
 const raisedAt = new Map<string, string>();
@@ -93,6 +99,15 @@ async function run(): Promise<void> {
         flags.push(flag('backup:error', 'warn', 'backup freshness unknown', `restic snapshots failed: ${msg.slice(0, 200)}`));
       }
     }
+  }
+  try {
+    const age = Date.now() - statSync(OFFSITE_MARKER).mtimeMs;
+    if (age > OFFSITE_WARN_MS) {
+      const ageH = Math.round(age / 3_600_000);
+      flags.push(flag('backup:offsite', 'warn', 'offsite mirror behind', `last drive sync ${ageH}h ago (limit 48h)`));
+    }
+  } catch {
+    /* marker absent — offsite not enabled */
   }
   for (const id of raisedAt.keys()) {
     if (!flags.some((f) => f.id === id)) raisedAt.delete(id);
