@@ -10,6 +10,7 @@ import CommsPanel from './panels/CommsPanel';
 import SubsPanel from './panels/SubsPanel';
 import SchedulePanel from './panels/SchedulePanel';
 import NotesPanel from './panels/NotesPanel';
+import ItchPanel from './panels/ItchPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
 import ItemDetail from './components/ItemDetail';
@@ -26,6 +27,7 @@ const VIEWS = [
   { id: 'subs', label: 'subs' },
   { id: 'schedule', label: 'schedule' },
   { id: 'notes', label: 'notes' },
+  { id: 'itch', label: 'itch' },
 ] as const;
 
 type ViewId = (typeof VIEWS)[number]['id'];
@@ -114,6 +116,7 @@ export default function App() {
         revuto: 0,
         system: 0,
         systemCls: 'text-mist-faint',
+        itch: 0,
       };
     const taskIds = new Set<string>();
     for (const it of [...snapshot.github.actNow, ...snapshot.github.orgQueue]) {
@@ -143,6 +146,8 @@ export default function App() {
       revuto: revutoFails,
       system: flags.length,
       systemCls,
+      // optional-chain: a stale server snapshot may lack itch during rollout
+      itch: snapshot.itch?.up && snapshot.itch.research.running ? 1 : 0,
     };
   }, [snapshot]);
 
@@ -186,8 +191,10 @@ export default function App() {
         setPaletteOpen(true);
       } else if (e.key === 'q') {
         setMutesOpen((o) => !o);
-      } else if (/^[1-9]$/.test(e.key)) {
-        setView(VIEWS[Number(e.key) - 1].id);
+      } else if (/^[0-9]$/.test(e.key)) {
+        // 1-9 keep their muscle memory; 0 maps to the tenth view
+        const idx = e.key === '0' ? 9 : Number(e.key) - 1;
+        if (idx < VIEWS.length) setView(VIEWS[idx].id);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -217,6 +224,8 @@ export default function App() {
       // failures are errors — coral, never amber
       revuto: { n: badges.revuto, cls: 'text-coral' },
       system: { n: badges.system, cls: badges.systemCls },
+      // research running is work-in-progress — jade like agents, not amber
+      itch: { n: badges.itch, cls: 'text-jade' },
     };
     const b = map[id];
     return b && b.n > 0 ? b : null;
@@ -291,6 +300,7 @@ export default function App() {
           {view === 'subs' && <SubsPanel snapshot={snapshot} />}
           {view === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {view === 'notes' && <NotesPanel snapshot={snapshot} overlayOpen={paletteOpen || !!item || mutesOpen} />}
+          {view === 'itch' && <ItchPanel snapshot={snapshot} />}
         </main>
       </div>
 

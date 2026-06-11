@@ -54,6 +54,11 @@ export const defaults = {
     snapshotUrl: 'http://127.0.0.1:5180/api/snapshot',
   },
 
+  itch: {
+    base: 'http://127.0.0.1:8799',
+    repo: join(HOME, 'projects', 'itch'),
+  },
+
   surreal: {
     endpoint: 'http://127.0.0.1:8000',
     // surrealdb's stock local-dev credentials for the loopback memory store —
@@ -104,6 +109,7 @@ export const defaults = {
     notesMs: 60_000,
     surrealMs: 60_000,
     revutoMs: 60_000,
+    itchMs: 60_000,
   },
 };
 

@@ -10,7 +10,8 @@ export type SectionName =
   | 'subs'
   | 'notes'
   | 'surreal'
-  | 'revuto';
+  | 'revuto'
+  | 'itch';
 
 export interface Snapshot {
   generatedAt: string;
@@ -23,6 +24,7 @@ export interface Snapshot {
   notes: NotesState;
   surreal: SurrealState;
   revuto: RevutoState;
+  itch: ItchState;
   mutes: Mute[];
   flags: Flag[];
 }
@@ -382,6 +384,35 @@ export interface RevutoState {
   jobs: RevutoJob[];
   /** newest first, capped at 80 */
   logs: RevutoLog[];
+  error: string | null;
+}
+
+// ---------- itch (idea scout — proxied from the local itch UI server :8799) ----------
+
+export interface ItchRunInfo {
+  stem: string; // "YYYYMMDD-HHMMSS", lexicographic == chronological
+  nIdeas: number;
+  nRated: number;
+  isCollide: boolean;
+  collisionTemp: number | null;
+  baselineFor: string | null;
+}
+
+export interface ItchResearch {
+  running: boolean;
+  started: string | null;
+  savedStem: string | null;
+  killedReason: string | null;
+}
+
+export interface ItchState {
+  updatedAt: string | null;
+  /** itch UI server reachable this poll (stale data kept when not) */
+  up: boolean;
+  runs: ItchRunInfo[]; // newest first
+  research: ItchResearch;
+  /** decisions ledger size (rated ideas across all runs), null when unknown */
+  ratedTotal: number | null;
   error: string | null;
 }
 

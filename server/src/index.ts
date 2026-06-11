@@ -23,6 +23,8 @@ import subsCollector from './collectors/subs.js';
 import notesCollector from './collectors/notes.js';
 import surrealCollector from './collectors/surreal.js';
 import revutoCollector from './collectors/revuto.js';
+import itchWatchCollector from './collectors/itch-watch.js';
+import { proxyItch } from './itch-proxy.js';
 
 for (const c of [
   githubCollector,
@@ -34,6 +36,7 @@ for (const c of [
   notesCollector,
   surrealCollector,
   revutoCollector,
+  itchWatchCollector,
 ]) {
   register(c);
 }
@@ -261,6 +264,10 @@ const server = createServer(async (req, res) => {
       void runOnce('comms');
       return;
     }
+
+    // itch proxy — Host/Origin guards above already gate mutations, the proxy injects
+    // the upstream's own anti-CSRF header and strips browser identity headers
+    if (path.startsWith('/api/itch/')) return proxyItch(req, res, url);
 
     // static web ui (built assets), if present
     if (method === 'GET' && !path.startsWith('/api/')) {

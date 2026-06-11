@@ -66,6 +66,11 @@ export function emptySnapshot(): Snapshot {
       updatedAt: null, up: false, counts: null, schedules: null, limits: null, store: null,
       services: [], models: [], reviewers: [], jobs: [], logs: [], error: null,
     },
+    itch: {
+      updatedAt: null, up: false, runs: [],
+      research: { running: false, started: null, savedStem: null, killedReason: null },
+      ratedTotal: null, error: null,
+    },
     mutes: [],
     flags: [],
   };
