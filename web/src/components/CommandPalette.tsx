@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { clearAllNotifications, refreshSection } from '../api';
 import { useScrollLock } from '../hooks';
-import type { Snapshot } from '../../../shared/types';
+import { runLabel } from '../panels/itch/util';
+import type { SectionName, Snapshot } from '../../../shared/types';
 
 /** Case-insensitive subsequence score — higher wins, -1 = no match.
  *  Bonuses: label prefix, word starts (after space / # / slash / dash / dot),
@@ -31,10 +33,32 @@ interface Cmd {
   url?: string;
   /** shown when the query is empty (views + quiet drawer only) */
   pinned?: boolean;
+  /** two-step: first enter arms ("sure?"), second fires — mirrors panel buttons */
+  arm?: boolean;
   run: () => void;
 }
 
 const MAX_RESULTS = 12;
+
+// every collector behind POST /api/refresh/:section — mirrors SectionName
+const SECTIONS: SectionName[] = [
+  'github',
+  'agents',
+  'system',
+  'schedule',
+  'comms',
+  'subs',
+  'notes',
+  'surreal',
+  'revuto',
+  'itch',
+  'cloud',
+];
+// snapshot lists can grow unbounded — keep the index bounded, scorer surfaces the rest
+const MAX_NOTES = 50;
+const MAX_RUNS = 40;
+const MAX_SCHED = 60;
+const MAX_REVIEWERS = 40;
 
 export default function CommandPalette({
   snapshot,
@@ -43,6 +67,8 @@ export default function CommandPalette({
   onNavigate,
   onOpenQuiet,
   onOpenItem,
+  onOpenNote,
+  onOpenRun,
 }: {
   snapshot: Snapshot;
   views: readonly { id: string; label: string }[];
@@ -50,6 +76,8 @@ export default function CommandPalette({
   onNavigate: (view: string) => void;
   onOpenQuiet: () => void;
   onOpenItem: (repo: string, number: number) => void;
+  onOpenNote: (path: string) => void;
+  onOpenRun: (stem: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
@@ -124,8 +152,93 @@ export default function CommandPalette({
         },
       });
     }
+    // snapshot index — none pinned, so they only surface against a query and the
+    // shortness tiebreak keeps exact view matches above them
+    for (const n of snapshot.notes.recent.slice(0, MAX_NOTES)) {
+      cmds.push({
+        key: `note:${n.path}`,
+        // path in the scored label so "find by folder/filename" works; truncate handles length
+        label: `${n.title} — ${n.path}`,
+        tag: 'note',
+        run: () => {
+          onOpenNote(n.path);
+          onClose();
+        },
+      });
+    }
+    for (const s of snapshot.schedule.entries.slice(0, MAX_SCHED)) {
+      cmds.push({
+        key: `sched:${s.id}`,
+        label: s.name,
+        tag: 'schedule',
+        run: () => {
+          onNavigate('schedule');
+          onClose();
+        },
+      });
+    }
+    // optional-chain: a stale server snapshot may lack revuto/itch during rollout
+    for (const r of (snapshot.revuto?.reviewers ?? []).slice(0, MAX_REVIEWERS)) {
+      cmds.push({
+        key: `reviewer:${r.repo}`,
+        label: r.repo,
+        tag: 'reviewer',
+        run: () => {
+          onNavigate('revuto');
+          onClose();
+        },
+      });
+    }
+    for (const r of (snapshot.itch?.runs ?? []).slice(0, MAX_RUNS)) {
+      cmds.push({
+        key: `run:${r.stem}`,
+        label: runLabel(r),
+        tag: 'run',
+        run: () => {
+          // entity row opens its entity: land on itch with THIS run selected
+          onOpenRun(r.stem);
+          onClose();
+        },
+      });
+    }
+    // verbs — safe only; destructive actions stay in their panels behind their arms.
+    // research start stays with the strip (single-flight 409 + log tail) — jump there
+    if (snapshot.itch?.up) {
+      cmds.push({
+        key: 'verb:itch-research',
+        label: snapshot.itch.research.running ? 'itch research — running, view' : 'start itch research',
+        tag: 'action',
+        run: () => {
+          onNavigate('itch');
+          onClose();
+        },
+      });
+    }
+    cmds.push({
+      key: 'verb:clear-notifications',
+      label: 'clear all notifications',
+      tag: 'action',
+      arm: true, // same POST as the tasks panel's armed "clear all"
+      run: () => {
+        void clearAllNotifications()
+          .then(() => refreshSection('github'))
+          .catch(() => {});
+        onClose();
+      },
+    });
+    for (const s of SECTIONS) {
+      cmds.push({
+        key: `refresh:${s}`,
+        label: `refresh ${s}`,
+        tag: 'action',
+        run: () => {
+          void refreshSection(s).catch(() => {});
+          onClose();
+        },
+      });
+    }
     return cmds;
-  }, [snapshot, views, onClose, onNavigate, onOpenQuiet, onOpenItem]);
+  }, [snapshot, views, onClose, onNavigate, onOpenQuiet, onOpenItem, onOpenNote, onOpenRun]);
 
   const results = useMemo(() => {
     const q = query.trim();
@@ -141,7 +254,20 @@ export default function CommandPalette({
   // selection follows the visible list even when it shrinks under the cursor
   const selIdx = results.length === 0 ? -1 : Math.min(sel, results.length - 1);
 
-  useEffect(() => setSel(0), [query]);
+  // armed verb (Cmd.key) — disarms after 4s or when the query moves on
+  const [armed, setArmed] = useState<string | null>(null);
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (armTimer.current) clearTimeout(armTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    setSel(0);
+    setArmed(null);
+  }, [query]);
 
   useEffect(() => {
     listRef.current?.querySelector('[data-sel="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -151,6 +277,12 @@ export default function CommandPalette({
     if (newTab && c.url) {
       window.open(c.url, '_blank', 'noopener,noreferrer');
       onClose();
+      return;
+    }
+    if (c.arm && armed !== c.key) {
+      setArmed(c.key);
+      if (armTimer.current) clearTimeout(armTimer.current);
+      armTimer.current = setTimeout(() => setArmed(null), 4000);
       return;
     }
     c.run();
@@ -200,7 +332,9 @@ export default function CommandPalette({
                     i === selIdx ? 'bg-white/[0.06] text-mist' : 'text-mist-dim'
                   }`}
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm">{c.label}</span>
+                  <span className={`min-w-0 flex-1 truncate text-sm ${armed === c.key ? 'text-coral' : ''}`}>
+                    {armed === c.key ? `${c.label} — sure?` : c.label}
+                  </span>
                   <span className="shrink-0 font-mono text-[10px] text-mist-faint">{c.tag}</span>
                 </button>
               </li>

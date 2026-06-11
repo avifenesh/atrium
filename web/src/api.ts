@@ -147,6 +147,25 @@ export async function postGithubComment(
   return { comment: data.comment as GithubComment };
 }
 
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES';
+
+/** Submit a PR review. Mirrors postGithubComment; returns the review for optimistic append. */
+export async function postGithubReview(
+  repo: string,
+  number: number,
+  event: ReviewEvent,
+  body?: string,
+): Promise<{ review: GithubComment }> {
+  const res = await fetch(`${BASE}/api/github/review`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo, number, event, body }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok || !data?.review) throw new Error(data?.error ?? `review failed ${res.status}`);
+  return { review: data.review as GithubComment };
+}
+
 /** Start the in-app google connect flow: opens consent in a new tab. */
 export async function connectGoogle(): Promise<void> {
   const res = await fetch(`${BASE}/api/google/auth-url`);

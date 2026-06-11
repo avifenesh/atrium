@@ -178,6 +178,54 @@ export async function githubItemDetail(repo: string, number: string | number): P
   };
 }
 
+/** Submit a PR review (approve / request changes). Same shape as githubComment: validate
+ *  inputs, gh holds the token. REQUEST_CHANGES needs a non-empty body — github rejects empty. */
+export async function githubReview(
+  body: any,
+): Promise<{ ok: boolean; review?: GithubComment; error?: string }> {
+  let owner: string;
+  let name: string;
+  let num: number;
+  try {
+    ({ owner, name } = splitRepo(body?.repo));
+    num = parseNumber(body?.number);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const event = body?.event;
+  if (event !== 'APPROVE' && event !== 'REQUEST_CHANGES') {
+    return { ok: false, error: 'event must be APPROVE or REQUEST_CHANGES' };
+  }
+  const text = typeof body?.body === 'string' ? body.body : '';
+  if (event === 'REQUEST_CHANGES' && text.trim().length === 0) {
+    return { ok: false, error: 'request changes needs a body' };
+  }
+  if (text.length > MAX_BODY) return { ok: false, error: `review body exceeds ${MAX_BODY} characters` };
+
+  try {
+    const args = ['api', '--method', 'POST', `repos/${owner}/${name}/pulls/${num}/reviews`, '-f', `event=${event}`];
+    if (text.trim()) args.push('-f', `body=${text}`);
+    const out = await sh('gh', args, { timeoutMs: TIMEOUT_MS });
+    const r = JSON.parse(out);
+    const review: GithubComment = {
+      id: String(r?.id ?? ''),
+      author: str(r?.user?.login),
+      body: str(r?.body) || text,
+      createdAt: str(r?.submitted_at) || new Date().toISOString(),
+      association: typeof r?.author_association === 'string' ? r.author_association : null,
+      kind: 'review',
+      reviewState: str(r?.state) || (event === 'APPROVE' ? 'APPROVED' : 'CHANGES_REQUESTED'),
+    };
+    return { ok: true, review };
+  } catch (err) {
+    // gh wraps the api error; surface github's human message, not the command line
+    const msg = err instanceof Error ? err.message : String(err);
+    const tail = msg.includes('—') ? msg.slice(msg.lastIndexOf('—') + 1).trim() : msg;
+    return { ok: false, error: tail || msg };
+  }
+}
+
 /** Post a comment to an issue or PR. A normal send button — validate inputs, nothing more. */
 export async function githubComment(
   body: any,

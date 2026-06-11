@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
-import { dispatchToEigen, fetchGithubItem, postGithubComment } from '../api';
+import { dispatchToEigen, fetchGithubItem, postGithubComment, postGithubReview, type ReviewEvent } from '../api';
 import { useScrollLock } from '../hooks';
 import { Markdown } from './markdown';
 import { Dot, RelTime } from './ui';
@@ -121,6 +121,12 @@ export default function ItemDetail({
   const [extra, setExtra] = useState<GithubComment[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState<'idle' | 'busy' | 'failed'>('idle');
+  // which review is in flight (single-flight with send); failure keeps github's message
+  const [reviewing, setReviewing] = useState<ReviewEvent | null>(null);
+  const [reviewErr, setReviewErr] = useState<string | null>(null);
+  // approve is a one-shot write that can satisfy branch protection — two-step arm
+  // (same pattern as MuteButton); request-changes is already gated on composer text
+  const [approveArmed, setApproveArmed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   // esc handler reads the draft through a ref so the listener never re-binds per keystroke
@@ -174,9 +180,11 @@ export default function ItemDetail({
   const githubUrl = detail?.url || `https://github.com/${repo}/issues/${number}`;
   const comments = detail ? [...detail.comments, ...extra] : [];
 
+  const busy = sending === 'busy' || reviewing !== null;
+
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending === 'busy') return;
+    if (!text || busy) return;
     setSending('busy');
     try {
       const { comment } = await postGithubComment(repo, number, text);
@@ -186,6 +194,27 @@ export default function ItemDetail({
     } catch {
       setSending('failed');
       setTimeout(() => setSending((s) => (s === 'failed' ? 'idle' : s)), 4000);
+    }
+  };
+
+  // approve never touches the draft; request changes consumes it as the review body
+  const review = async (event: ReviewEvent) => {
+    if (busy) return;
+    const text = draft.trim();
+    if (event === 'REQUEST_CHANGES' && !text) return;
+    setReviewing(event);
+    setReviewErr(null);
+    try {
+      const { review: r } = await postGithubReview(repo, number, event, event === 'REQUEST_CHANGES' ? text : undefined);
+      setExtra((xs) => [...xs, r]);
+      if (event === 'REQUEST_CHANGES') setDraft('');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setReviewErr(msg);
+      // clear only our own message — a newer failure keeps its full window
+      setTimeout(() => setReviewErr((cur) => (cur === msg ? null : cur)), 6000);
+    } finally {
+      setReviewing(null);
     }
   };
 
@@ -321,9 +350,47 @@ export default function ItemDetail({
             >
               → eigen
             </button>
-            <span className="ml-auto font-mono text-[11px] text-mist-faint">
+            {/* review lane — PRs only; merged is past reviewing (github 422s anyway) */}
+            {detail?.pr && !detail.pr.merged && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (busy) return;
+                    if (!approveArmed) {
+                      setApproveArmed(true);
+                      setTimeout(() => setApproveArmed(false), 4000);
+                      return;
+                    }
+                    setApproveArmed(false);
+                    void review('APPROVE');
+                  }}
+                  disabled={busy}
+                  title="approve this pr"
+                  className={`cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors disabled:cursor-default disabled:opacity-50 ${
+                    approveArmed ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-jade'
+                  }`}
+                >
+                  {reviewing === 'APPROVE' ? 'approving…' : approveArmed ? 'sure?' : 'approve'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void review('REQUEST_CHANGES')}
+                  disabled={busy || draft.trim().length === 0}
+                  title="request changes — sends the composer text as the review body"
+                  className="cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-coral disabled:cursor-default disabled:opacity-50"
+                >
+                  {reviewing === 'REQUEST_CHANGES' ? 'requesting…' : 'request changes'}
+                </button>
+              </>
+            )}
+            <span className="ml-auto min-w-0 font-mono text-[11px] text-mist-faint">
               {sending === 'failed' ? (
                 <span className="text-coral">send failed</span>
+              ) : reviewErr ? (
+                <span className="inline-block max-w-[16rem] truncate align-bottom text-coral" title={reviewErr}>
+                  {reviewErr}
+                </span>
               ) : (
                 <span className="kbd" title="cmd/ctrl+enter sends">
                   {SEND_CHORD}
@@ -333,7 +400,7 @@ export default function ItemDetail({
             <button
               type="button"
               onClick={() => void send()}
-              disabled={!detail || sending === 'busy' || draft.trim().length === 0}
+              disabled={!detail || busy || draft.trim().length === 0}
               className="cursor-pointer rounded-lg border hairline px-3 py-1 text-sm text-mist transition-colors hover:bg-white/[0.05] disabled:cursor-default disabled:opacity-40"
             >
               {sending === 'busy' ? 'sending…' : 'send'}

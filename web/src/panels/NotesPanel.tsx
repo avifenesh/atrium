@@ -13,10 +13,15 @@ import { renderMarkdown } from '../components/markdown';
 export default function NotesPanel({
   snapshot,
   overlayOpen = false,
+  openTarget = null,
+  onOpenTargetConsumed,
 }: {
   snapshot: Snapshot;
   /** palette / slide-over / quiet drawer open — they own esc, the reader must not also close */
   overlayOpen?: boolean;
+  /** pending palette jump (note path) — one-shot, consumed on arrival (itch scrollTarget idiom) */
+  openTarget?: string | null;
+  onOpenTargetConsumed?: () => void;
 }) {
   const { vaultPath, recent, error, updatedAt } = snapshot.notes;
 
@@ -60,6 +65,16 @@ export default function NotesPanel({
     resetEdit();
     setOpenPath(next);
   };
+
+  // palette jump — consume the target, then route through requestLeave so a dirty
+  // edit arms the discard guard instead of silently dropping the draft (a second
+  // palette jump within the arm window completes the leave)
+  useEffect(() => {
+    if (!openTarget) return;
+    onOpenTargetConsumed?.();
+    requestLeave(openTarget);
+    // requestLeave/onOpenTargetConsumed are render-fresh — fire once per target
+  }, [openTarget]);
 
   const beginEdit = (): void => {
     if (!note) return;

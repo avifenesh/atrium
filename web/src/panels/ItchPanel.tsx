@@ -18,7 +18,16 @@ import type { ItchState, Snapshot } from '../../../shared/types';
 
 // ---------- panel root ----------
 
-function ItchBody({ it }: { it: ItchState }) {
+function ItchBody({
+  it,
+  openTarget = null,
+  onOpenTargetConsumed,
+}: {
+  it: ItchState;
+  /** pending palette jump (run stem) — one-shot, consumed on arrival (NotesPanel openTarget idiom) */
+  openTarget?: string | null;
+  onOpenTargetConsumed?: () => void;
+}) {
   const runs = it.runs;
   const [selectedStem, setSelectedStem] = useState<string | null>(runs[0]?.stem ?? null);
   const [scrollTarget, setScrollTarget] = useState<ScrollTarget | null>(null);
@@ -60,6 +69,18 @@ function ItchBody({ it }: { it: ItchState }) {
     pendingSelect.current = null;
     if (run.baselineFor === null) setSelectedStem(stem);
   }, [runs]);
+
+  // palette jump — consume the target, select that run (mirrors Feed's onSelect).
+  // a stem missing from runs (stale palette snapshot) is consumed and dropped.
+  useEffect(() => {
+    if (!openTarget) return;
+    onOpenTargetConsumed?.();
+    if (runs.some((r) => r.stem === openTarget)) {
+      setSelectedStem(openTarget);
+      setScrollTarget(null);
+    }
+    // onOpenTargetConsumed/runs are render-fresh — fire once per target
+  }, [openTarget]);
 
   const jumpTo = useCallback((stem: string, idx?: number, title?: string) => {
     setSelectedStem(stem);
@@ -151,7 +172,16 @@ function ItchBody({ it }: { it: ItchState }) {
   );
 }
 
-export default function ItchPanel({ snapshot }: { snapshot: Snapshot }) {
+export default function ItchPanel({
+  snapshot,
+  openTarget = null,
+  onOpenTargetConsumed,
+}: {
+  snapshot: Snapshot;
+  /** pending palette jump (run stem) — one-shot, consumed by ItchBody */
+  openTarget?: string | null;
+  onOpenTargetConsumed?: () => void;
+}) {
   const it = snapshot.itch;
   // rollout skew: a web bundle ahead of a not-yet-restarted server has no itch section
   if (!it) {
@@ -169,5 +199,5 @@ export default function ItchPanel({ snapshot }: { snapshot: Snapshot }) {
       </Panel>
     );
   }
-  return <ItchBody it={it} />;
+  return <ItchBody it={it} openTarget={openTarget} onOpenTargetConsumed={onOpenTargetConsumed} />;
 }

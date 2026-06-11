@@ -9,6 +9,7 @@ import type {
   GithubItem,
   GithubPR,
   Mute,
+  OrgItem,
   ScheduleEntry,
   Snapshot,
 } from '../../shared/types.js';
@@ -83,6 +84,16 @@ function fmtPR(pr: GithubPR): string {
   return fmtItem(pr) + (bits.length ? ` [${bits.join(', ')}]` : '');
 }
 
+function fmtOrg(it: OrgItem): string {
+  const bits: string[] = [it.lane, `by ${it.author}`];
+  if (it.kind === 'pr') {
+    if (it.isDraft) bits.push('draft');
+    if (it.reviewDecision) bits.push(it.reviewDecision.toLowerCase());
+    if (it.ci && it.ci !== 'SUCCESS') bits.push(`ci:${it.ci.toLowerCase()}`);
+  }
+  return `${fmtItem(it)} [${bits.join(', ')}]`;
+}
+
 function activeMutes(mutes: Mute[]): Mute[] {
   const now = Date.now();
   return mutes.filter((m) => m.until === null || new Date(m.until).getTime() > now);
@@ -142,7 +153,14 @@ server.registerTool(
     guarded(async () => {
       const s = await snapshot();
       const lines: string[] = [];
-      const act = s.github.actNow;
+      // orgQueue outranks actNow (people blocked on him); dedupe so items show once
+      // ?? [] — a pre-rollout daemon snapshot may lack orgQueue
+      const oq = s.github.orgQueue ?? [];
+      lines.push(
+        `waiting on you: ${oq.length}${oq.length ? ' — ' + oq.slice(0, 5).map((i) => i.title).join(' | ') : ''}`,
+      );
+      const orgIds = new Set(oq.map((i) => i.id));
+      const act = s.github.actNow.filter((i) => !orgIds.has(i.id));
       lines.push(
         `act now: ${act.length}${act.length ? ' — ' + act.slice(0, 5).map((i) => i.title).join(' | ') : ''}`,
       );
@@ -160,7 +178,8 @@ server.registerTool(
         lines.push(`flags (${flags.length}):`);
         for (const f of flags.slice(0, 5)) lines.push(`  [${f.severity}] ${f.title}`);
       } else lines.push('flags: none');
-      lines.push(`mutes active: ${activeMutes(s.mutes).length}`);
+      const muted = activeMutes(s.mutes).length;
+      lines.push(`mutes active: ${muted}${muted ? ' (atrium_mutes lists ids)' : ''}`);
       return lines.join('\n');
     }),
 );
@@ -169,10 +188,10 @@ server.registerTool(
   'atrium_tasks',
   {
     description:
-      'GitHub task lanes. actNow = direct review requests + issues assigned to me; myPRs = my open PRs; mentions; teamQueue = team review requests; notifications.',
+      'GitHub task lanes. orgQueue = external PRs/issues on repos I own (people waiting on me — outranks everything); actNow = direct review requests + issues assigned to me; myPRs = my open PRs; mentions; teamQueue = team review requests; notifications.',
     inputSchema: {
       lane: z
-        .enum(['actNow', 'myPRs', 'mentions', 'teamQueue', 'notifications'])
+        .enum(['orgQueue', 'actNow', 'myPRs', 'mentions', 'teamQueue', 'notifications'])
         .optional()
         .describe('default actNow'),
     },
@@ -190,6 +209,10 @@ server.registerTool(
           lines.push(
             `${n.unread ? '* ' : '- '}${n.repo} ${n.title} (${n.reason}, updated ${ago(n.updatedAt)}) ${n.url}`,
           );
+      } else if (which === 'orgQueue') {
+        // server pre-ranks: review (non-draft first) above triage, oldest-waiting first
+        // ?? [] — a pre-rollout daemon snapshot may lack orgQueue
+        for (const it of (gh.orgQueue ?? []).slice(0, 30)) lines.push(fmtOrg(it));
       } else if (which === 'myPRs' || which === 'teamQueue') {
         for (const pr of gh[which].slice(0, 30)) lines.push(fmtPR(pr));
       } else {
@@ -476,6 +499,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  'atrium_mutes',
+  {
+    description: 'Active mutes with ids usable for atrium_unmute: kind:target, mode, expiry.',
+    inputSchema: {},
+    annotations: RO,
+  },
+  () =>
+    guarded(async () => {
+      const mutes = activeMutes((await snapshot()).mutes);
+      if (!mutes.length) return 'no active mutes';
+      return mutes
+        .map(
+          (m) =>
+            `${m.kind}:${m.target} — mode=${m.mode}, until=${m.until ? inOrAgo(m.until) : 'forever'}` +
+            `${m.untilActivity ? ', until-activity' : ''} id=${m.id}`,
+        )
+        .join('\n');
+    }),
+);
+
+server.registerTool(
   'atrium_mute',
   {
     description:
@@ -516,7 +560,7 @@ server.registerTool(
 server.registerTool(
   'atrium_unmute',
   {
-    description: 'Remove a mute by id (ids visible in snapshot mutes / atrium_overview).',
+    description: 'Remove a mute by id (list ids with atrium_mutes).',
     inputSchema: { id: z.string() },
     annotations: RW,
   },

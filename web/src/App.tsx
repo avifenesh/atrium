@@ -114,6 +114,11 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   // github item slide-over: read + comment without leaving atrium
   const [item, setItem] = useState<{ repo: string; number: number } | null>(null);
+  // palette → notes reader: pending open consumed by NotesPanel (itch scrollTarget idiom —
+  // open-note state is panel-local, so the jump rides a one-shot signal)
+  const [noteTarget, setNoteTarget] = useState<string | null>(null);
+  // palette → itch run: same one-shot idiom (selected-run state lives in ItchBody)
+  const [runTarget, setRunTarget] = useState<string | null>(null);
   // ItemDetail registers its esc step here (composer-absorb logic lives with the composer)
   const itemEscape = useRef<(() => void) | null>(null);
 
@@ -316,14 +321,35 @@ export default function App() {
           {view === 'comms' && <CommsPanel snapshot={snapshot} />}
           {view === 'subs' && <SubsPanel snapshot={snapshot} />}
           {view === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
-          {view === 'notes' && <NotesPanel snapshot={snapshot} overlayOpen={paletteOpen || !!item || mutesOpen} />}
-          {view === 'itch' && <ItchPanel snapshot={snapshot} />}
+          {view === 'notes' && (
+            <NotesPanel
+              snapshot={snapshot}
+              overlayOpen={paletteOpen || !!item || mutesOpen}
+              openTarget={noteTarget}
+              onOpenTargetConsumed={() => setNoteTarget(null)}
+            />
+          )}
+          {view === 'itch' && (
+            <ItchPanel
+              snapshot={snapshot}
+              openTarget={runTarget}
+              onOpenTargetConsumed={() => setRunTarget(null)}
+            />
+          )}
         </main>
       </div>
 
       {mutesOpen && <MutesDrawer snapshot={snapshot} onClose={() => setMutesOpen(false)} />}
       {item && (
-        <ItemDetail repo={item.repo} number={item.number} onClose={() => setItem(null)} escapeRef={itemEscape} />
+        // keyed remount on item switch — clears extra/draft/reviewing/sending so an
+        // in-flight comment/review POST for item A can never land in item B's thread
+        <ItemDetail
+          key={`${item.repo}#${item.number}`}
+          repo={item.repo}
+          number={item.number}
+          onClose={() => setItem(null)}
+          escapeRef={itemEscape}
+        />
       )}
       {paletteOpen && (
         <CommandPalette
@@ -333,6 +359,14 @@ export default function App() {
           onNavigate={navigate}
           onOpenQuiet={openQuiet}
           onOpenItem={openItem}
+          onOpenNote={(path) => {
+            setNoteTarget(path);
+            setView('notes');
+          }}
+          onOpenRun={(stem) => {
+            setRunTarget(stem);
+            setView('itch');
+          }}
         />
       )}
     </div>

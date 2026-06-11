@@ -9,7 +9,8 @@ For "what needs my attention" or any open-ended status ask, call `atrium_overvie
 
 ## Task lanes (`atrium_tasks`)
 
-- `actNow` — direct review requests + issues assigned to me. The lane to work first.
+- `orgQueue` — external PRs/issues on repos I own: people blocked on me. Outranks everything, including `actNow`; review lane (external PRs awaiting my review) above triage, longest-waiting first. `atrium_overview` surfaces it as "waiting on you".
+- `actNow` — direct review requests + issues assigned to me. Work this after `orgQueue`.
 - `myPRs` — my open PRs with draft/review/CI state.
 - `mentions` — issues/PRs that mention me.
 - `teamQueue` — team review requests minus direct minus bots. Secondary.
@@ -19,7 +20,7 @@ For "what needs my attention" or any open-ended status ask, call `atrium_overvie
 
 - Default (`ui` mode): the item is hidden/dimmed in the dashboard only — the source keeps running.
 - `enforce: true`: actually pauses the real source where supported — revuto repo reviewers, hermes cron jobs, systemd units. revuto's guard timer would normally restart paused things; the server handles that caveat itself, do not work around it.
-- `until` omitted means forever. Reverse with `atrium_unmute({id})` (id is returned on mute and listed in the snapshot).
+- `until` omitted means forever. To undo: `atrium_mutes` lists active mutes with ids (kind:target, mode, expiry), then `atrium_unmute({id})`. The id is also returned when the mute is created.
 
 ## Agent actions (`atrium_agent_action`)
 

@@ -8,7 +8,7 @@ import { runAgentAction } from './actions.js';
 import { dispatchToEigen, getDispatchLog } from './eigen-dispatch.js';
 import { init as initNotify } from './notify.js';
 import { markNotificationRead } from './github-actions.js';
-import { githubItemDetail, githubComment } from './github-detail.js';
+import { githubItemDetail, githubComment, githubReview } from './github-detail.js';
 import { writeNote } from './collectors/notes.js';
 import { googleStatus, googleAuthUrl, googleCallback } from './google.js';
 import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js';
@@ -219,6 +219,12 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && path === '/api/github/comment') {
       const body = await readBody(req).catch(() => ({}));
       const result = await githubComment(body);
+      return json(res, result.ok ? 200 : 400, result);
+    }
+
+    if (method === 'POST' && path === '/api/github/review') {
+      const body = await readBody(req).catch(() => ({}));
+      const result = await githubReview(body);
       return json(res, result.ok ? 200 : 400, result);
     }
 

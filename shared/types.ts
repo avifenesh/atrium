@@ -536,6 +536,7 @@ export interface Flag {
 // POST /api/notifications/read -> body { id } (thread id) or { all: true } -> { ok }
 // GET  /api/github/item?repo=owner/repo&number=N -> GithubItemDetail
 // POST /api/github/comment     -> body { repo, number, body } -> { ok, comment: GithubComment }
+// POST /api/github/review      -> body { repo, number, event: 'APPROVE'|'REQUEST_CHANGES', body? } -> { ok, review: GithubComment }
 // POST /api/notes/write        -> body { path, content, baseModifiedAt? } -> { ok, modifiedAt } (409 when file changed since baseModifiedAt)
 // GET  /api/google/status      -> CommsState['google']
 // GET  /api/google/auth-url    -> { url } (open in browser; consent lands on /api/google/callback)
