@@ -9,9 +9,11 @@ import { config } from './config.js';
 
 const REST_RE = /^[A-Za-z0-9._/-]+$/;
 // synchronous AI oneshots block until the model answers — give them a long leash.
-// research/baseline starts also block: upstream auto-setup may wait ~25s per local
-// service (llama.cpp, searxng) before the spawn, which can exceed the 30s default.
-const LONG_RE = /^(ask|roadmap|validate|contrib|agent|research\/start|run\/[^/]+\/(howto|scope|baseline))$/;
+const LONG_RE = /^(ask|roadmap|validate|contrib|agent|run\/[^/]+\/(howto|scope))$/;
+// research/baseline starts block too, but only on upstream auto-setup (~25s wait
+// per local service) plus the spawn — ~55s real ceiling, no model call, so a
+// middle tier: room for setup without the full oneshot leash.
+const MED_RE = /^(research\/start|run\/[^/]+\/baseline)$/;
 const MAX_BODY = 1024 * 1024;
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -49,7 +51,7 @@ export async function proxyItch(req: IncomingMessage, res: ServerResponse, url: 
     headers['content-length'] = String(body.byteLength);
   }
 
-  const timeoutMs = LONG_RE.test(rest) ? 660_000 : 30_000;
+  const timeoutMs = LONG_RE.test(rest) ? 660_000 : MED_RE.test(rest) ? 120_000 : 30_000;
 
   // node:http, not fetch: undici's default headersTimeout is a hard 300s, so a >5min
   // synchronous AI oneshot dies with UND_ERR_HEADERS_TIMEOUT no matter what AbortSignal

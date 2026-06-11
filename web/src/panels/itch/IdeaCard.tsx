@@ -18,6 +18,7 @@ const ACTIONS = [
   { kind: 'roadmap', label: 'roadmap', hint: 'draft a build roadmap' },
   { kind: 'howto', label: 'how-to', hint: 'write a how-to spec' },
   // rating-5 cards only — filtered at the cluster
+  // (UI affordance only: upstream /scope doesn't enforce the rating)
   { kind: 'scope', label: 'scope', hint: 'scope iteration 1 — mvp cut, first milestone' },
 ] as const;
 type ActionKind = (typeof ACTIONS)[number]['kind'];
@@ -338,7 +339,9 @@ export function IdeaCard({
     }
     if (kind === 'roadmap') void runRoadmap();
     else if (kind === 'howto') void runHowto();
-    else void runScope();
+    // explicit, not a bare else — scope persists a file upstream, so an
+    // unmatched future kind must not fall through into it
+    else if (kind === 'scope') void runScope();
   };
 
   // ---- delete idea (two-click arm) ----
