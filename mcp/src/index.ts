@@ -368,7 +368,7 @@ server.registerTool(
   'atrium_revuto',
   {
     description:
-      'Revuto PR-reviewer watch: services, per-repo reviewers, model probes, recent jobs, counts, schedules/limits. Last-good data is kept when the dashboard is down.',
+      'Revuto PR-reviewer watch: in-process scheduler, external dependencies, per-repo reviewers, model probes, recent jobs, counts, schedules/limits.',
     inputSchema: {},
     annotations: RO,
   },
@@ -379,18 +379,20 @@ server.registerTool(
       if (!r.up)
         lines.push(
           r.updatedAt
-            ? `dashboard unreachable — showing last known state (${ago(r.updatedAt)})`
-            : 'dashboard unreachable — nothing collected yet',
+            ? `revuto status unavailable — showing last known state (${ago(r.updatedAt)})`
+            : 'revuto status unavailable — nothing collected yet',
         );
       if (r.error) lines.push(`error: ${r.error}`);
       if (!r.up && !r.updatedAt) return lines.join('\n');
-      if (r.services.length) {
-        lines.push('services:');
-        for (const sv of r.services)
-          lines.push(
-            `  ${sv.id} ${sv.activeState}/${sv.subState}` +
-              `${sv.since ? ` since ${sv.since}` : ''}${sv.nextElapse ? ` next ${sv.nextElapse}` : ''}`,
-          );
+      if (r.scheduler) {
+        lines.push(
+          `scheduler: ${r.scheduler.active ? 'active' : 'inactive'}, ${r.scheduler.tasks} cron tasks, ${r.scheduler.repos} reviewers`,
+        );
+      }
+      if (r.dependencies.length) {
+        lines.push('dependencies:');
+        for (const dep of r.dependencies)
+          lines.push(`  ${dep.id} ${dep.activeState}/${dep.subState}${dep.since ? ` since ${dep.since}` : ''}`);
       }
       if (r.reviewers.length) {
         lines.push(`reviewers (${r.reviewers.length}):`);
@@ -421,7 +423,7 @@ server.registerTool(
       if (r.counts) {
         const c = r.counts;
         lines.push(
-          `counts: services ${c.servicesActive}/${c.servicesTotal} active, reviewers ${c.reviewers} (${c.pausedReviewers} paused), ` +
+          `counts: scheduler ${c.schedulerTasks} tasks, deps ${c.dependenciesReady}/${c.dependenciesTotal} ready, reviewers ${c.reviewers} (${c.pausedReviewers} paused), ` +
             `jobs ${c.recentJobs} recent / ${c.recentFailures} failed, reviewed ${c.reviewed} / skipped ${c.skipped}`,
         );
       }
@@ -575,11 +577,11 @@ server.registerTool(
   'atrium_agent_action',
   {
     description:
-      'Run a control action on an agent (pause/resume/stop/start/trigger/kill). Check atrium_agents controls first; target picks a sub-resource (repo for revuto, job id for hermes).',
+      'Run a control action on an agent (pause/resume/stop/start/restart/trigger/review/learn/decay/doctor/kill). Check atrium_agents controls first; target picks a sub-resource (repo for revuto, owner/repo#PR for revuto review, job id for hermes).',
     inputSchema: {
       agent: z.enum(['revuto', 'hermes', 'itch', 'any-mission', 'eigen', 'claude', 'codex', 'training']),
-      action: z.string().describe("one of the agent's controls, e.g. pause, resume, stop, start, trigger, kill"),
-      target: z.string().optional().describe('sub-resource, e.g. repo or job id'),
+      action: z.string().describe("one of the agent's controls, e.g. pause, resume, stop, start, restart, trigger, review, learn, decay, doctor, kill"),
+      target: z.string().optional().describe('sub-resource, e.g. repo, owner/repo#PR, or job id'),
     },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },

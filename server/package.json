@@ -12,5 +12,8 @@
     "@types/node": "^24.0.0",
     "typescript": "^5.7.0"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@atrium/revuto-engine": "*"
+  }
 }

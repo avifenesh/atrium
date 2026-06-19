@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { clearAllNotifications, refreshSection } from '../api';
+import { agentAction, clearAllNotifications, refreshSection } from '../api';
 import { useScrollLock } from '../hooks';
 import { runLabel } from '../panels/itch/util';
 import type { SectionName, Snapshot } from '../../../shared/types';
@@ -189,6 +189,18 @@ export default function CommandPalette({
           onClose();
         },
       });
+      cmds.push({
+        key: `reviewer-trigger:${r.repo}`,
+        label: `run revuto review now — ${r.repo}`,
+        tag: 'action',
+        arm: true,
+        run: () => {
+          void agentAction('revuto', 'trigger', r.repo)
+            .then(() => refreshSection('revuto'))
+            .catch(() => {});
+          onClose();
+        },
+      });
     }
     for (const r of (snapshot.itch?.runs ?? []).slice(0, MAX_RUNS)) {
       cmds.push({
@@ -202,14 +214,20 @@ export default function CommandPalette({
         },
       });
     }
-    // verbs — safe only; destructive actions stay in their panels behind their arms.
-    // research start stays with the strip (single-flight 409 + log tail) — jump there
+    // verbs — destructive actions stay armed. Research can be started from here;
+    // the itch panel still owns the detailed log tail once the run is active.
     if (snapshot.itch?.up) {
       cmds.push({
         key: 'verb:itch-research',
-        label: snapshot.itch.research.running ? 'itch research — running, view' : 'start itch research',
+        label: snapshot.itch.research.running ? 'itch research — running, view' : 'start itch research now',
         tag: 'action',
+        arm: !snapshot.itch.research.running,
         run: () => {
+          if (!snapshot.itch?.research.running) {
+            void agentAction('itch', 'trigger')
+              .then(() => refreshSection('itch'))
+              .catch(() => {});
+          }
           onNavigate('itch');
           onClose();
         },

@@ -1,5 +1,6 @@
 import { request, type IncomingMessage, type ServerResponse } from 'node:http';
 import { config } from './config.js';
+import { handleLocalItch } from './itch-local.js';
 
 // transparent proxy: /api/itch/<rest> -> itch UI server /api/<rest>. The itch server
 // requires 'X-Itch-Request: 1' on mutations and rejects cross-origin Origin/Referer —
@@ -31,6 +32,7 @@ export async function proxyItch(req: IncomingMessage, res: ServerResponse, url: 
   if (!REST_RE.test(rest) || rest.split('/').includes('..')) {
     return json(res, 400, { error: 'bad path' });
   }
+  if (await handleLocalItch(req, res, rest)) return;
 
   // build headers fresh — never forward Origin/Referer/Host/Cookie from the client
   const headers: Record<string, string> = {};

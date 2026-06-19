@@ -28,9 +28,9 @@ Actions: `pause`, `resume`, `stop`, `start`, `trigger`, `kill` — availability 
 
 ## App watch (`atrium_revuto`, `atrium_itch`)
 
-- `atrium_revuto` — revuto PR-reviewer state: services, per-repo reviewers, model probes, recent jobs, counts, schedules/limits.
+- `atrium_revuto` — revuto PR-reviewer state: in-process scheduler, dependencies, per-repo reviewers, model probes, recent jobs, counts, schedules/limits.
 - `atrium_itch` — itch idea-scout state: research run status, rated-ideas total, recent runs with collide temp and sampled domains.
-- Both are read-only and keep last-good data when the app is down (output flags unreachability and staleness). The daemon auto-heals both apps — don't restart them by hand. To act on revuto (pause/resume a repo, trigger, stop/start the daemon), go through `atrium_agent_action`. itch has no controls — the daemon only watches and auto-starts it.
+- Both are read-only and keep last-good data when the app is down (output flags unreachability and staleness). Revuto runs inside Atrium now; act through `atrium_agent_action` for pause/resume, trigger, review/learn/decay, or scheduler reload/stop. itch has no controls — the daemon only watches and auto-starts it.
 
 ## Daemon down
 

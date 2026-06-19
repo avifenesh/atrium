@@ -4,6 +4,8 @@ import type { Mute, MuteKind, MuteRequest } from '../../shared/types.js';
 import { config } from './config.js';
 import { store } from './state.js';
 import { iso, readJson, sh } from './util.js';
+import { setRevutoPaused } from './core/revuto.js';
+import { reloadRevutoScheduler, stopRevutoScheduler } from './core/revuto-scheduler.js';
 
 const FILE = join(config.configDir, 'mutes.json');
 
@@ -30,8 +32,12 @@ interface Adapter {
   unenforce(): Promise<void>;
 }
 
-function systemctl(verb: 'start' | 'stop', unit: string): Promise<string> {
+function systemctl(verb: 'start' | 'stop' | 'restart', unit: string): Promise<string> {
   return sh('systemctl', ['--user', verb, unit]);
+}
+
+function reloadRevutoInProcess(): void {
+  reloadRevutoScheduler();
 }
 
 function hermesCronAdapter(jobId: string): Adapter | null {
@@ -66,34 +72,27 @@ function adapterFor(kind: MuteKind, target: string, until: string | null): Adapt
     const repo = target.slice('revuto:'.length);
     if (!REPO_RE.test(repo)) return null;
     return {
-      enforcedBy: 'revuto cli pause',
+      enforcedBy: 'atrium revuto core pause (in-process)',
       enforce: async () => {
-        await sh('node', [config.paths.revutoCli, 'pause', repo]);
+        const ok = await setRevutoPaused(config.paths.revutoVault, repo, true);
+        if (!ok) throw new Error(`not registered: ${repo}`);
+        reloadRevutoInProcess();
       },
       unenforce: async () => {
-        await sh('node', [config.paths.revutoCli, 'resume', repo]);
+        const ok = await setRevutoPaused(config.paths.revutoVault, repo, false);
+        if (!ok) throw new Error(`not registered: ${repo}`);
+        reloadRevutoInProcess();
       },
     };
   }
 
   if (kind === 'agent' && target === 'revuto') {
+    // revuto runs in-process inside Atrium; muting the whole agent stops the
+    // in-process cron scheduler (no external daemon/timer to touch).
     return {
-      enforcedBy: 'systemctl --user stop revuto-guard.timer + revuto.service',
-      enforce: async () => {
-        // ORDER MATTERS: the guard timer restarts dead units within 5 min — stop it first
-        await systemctl('stop', 'revuto-guard.timer');
-        try {
-          await systemctl('stop', 'revuto.service');
-        } catch (err) {
-          // don't leave the watchdog dead while the daemon keeps running
-          await systemctl('start', 'revuto-guard.timer').catch(() => {});
-          throw err;
-        }
-      },
-      unenforce: async () => {
-        await systemctl('start', 'revuto-guard.timer');
-        await systemctl('start', 'revuto.service');
-      },
+      enforcedBy: 'atrium in-process scheduler stop',
+      enforce: async () => { stopRevutoScheduler(); },
+      unenforce: async () => { reloadRevutoScheduler(); },
     };
   }
 
@@ -126,21 +125,12 @@ function adapterFor(kind: MuteKind, target: string, until: string | null): Adapt
 
   if (kind === 'service') {
     if (!config.watchedUnits.includes(target)) return null; // arbitrary units are not enforceable
-    const guardFirst = target.startsWith('revuto') && target !== 'revuto-guard.timer';
     return {
       enforcedBy: `systemctl --user stop ${target}`,
       enforce: async () => {
-        if (guardFirst) await systemctl('stop', 'revuto-guard.timer'); // guard would restart the unit
-        try {
-          await systemctl('stop', target);
-        } catch (err) {
-          // don't leave the watchdog dead while the unit keeps running
-          if (guardFirst) await systemctl('start', 'revuto-guard.timer').catch(() => {});
-          throw err;
-        }
+        await systemctl('stop', target);
       },
       unenforce: async () => {
-        if (guardFirst) await systemctl('start', 'revuto-guard.timer');
         await systemctl('start', target);
       },
     };

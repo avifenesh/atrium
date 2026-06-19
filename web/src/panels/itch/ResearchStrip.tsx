@@ -43,6 +43,11 @@ export function ResearchStrip({
   const [temp, setTemp] = useState(0); // 0 = baseline (collision_temp omitted); >0 = chaos dial
   // drags move by 1 (tween is a no-op); track clicks and pgup/pgdn jump — those glide
   const shownTemp = useTweenNumber(temp, 200);
+  const [orbit, setOrbit] = useState(''); // free-text center to focus the run; '' = off
+  // collide (scatter) and orbit (focus) are opposites — the engine refuses both,
+  // so the UI makes them mutually exclusive: a non-empty value disables the other.
+  const orbitOn = orbit.trim().length > 0;
+  const collideOn = temp > 0;
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
   const [msg, setMsg] = useState<{ text: string; isError: boolean } | null>(null);
@@ -159,7 +164,10 @@ export function ResearchStrip({
     setExit(null);
     const f: Record<string, boolean | number | string> = {};
     for (const [key] of FLAG_DEFS) if (flags[key]) f[key] = true;
-    if (temp > 0) f.collision_temp = temp / 100; // 0 must be OMITTED — baseline
+    // collide and orbit are mutually exclusive; orbit (when set) wins and the
+    // dial is forced off, mirroring the engine's ref-to-run-both guard.
+    if (orbitOn) f.orbit = orbit.trim();
+    else if (temp > 0) f.collision_temp = temp / 100; // 0 must be OMITTED — baseline
     if (model) f.model = model; // upstream reads flags.model (how the standalone app passes it)
     try {
       const { status, body } = await startResearch(f);
@@ -274,6 +282,9 @@ export function ResearchStrip({
 
   // idle: a calm launcher row — the exit line of the last finished run sits above it.
   // jade ONLY when it did work (saved a run); kills and failures are coral.
+  const hasUnsavedResult = Boolean(
+    exit && !exit.savedStem && !exit.killedReason && exit.code === 0 && (log.length > 0 || partial),
+  );
   const exitView = exit
     ? exit.savedStem
       ? { tone: 'text-jade', text: `research finished — saved ${exit.savedStem}` }
@@ -281,7 +292,7 @@ export function ResearchStrip({
         ? { tone: 'text-coral', text: `research stopped — ${exit.killedReason}` }
         : exit.code !== null && exit.code !== 0
           ? { tone: 'text-coral', text: `research exited (${exit.code})` }
-          : { tone: 'text-mist-faint', text: 'research finished — nothing saved' }
+          : { tone: 'text-mist-faint', text: hasUnsavedResult ? 'research finished — unsaved result below' : 'research finished — nothing saved' }
     : null;
 
   return (
@@ -293,6 +304,36 @@ export function ResearchStrip({
           title={msg.text}
         >
           {msg.text}
+        </div>
+      )}
+      {hasUnsavedResult && (
+        <div
+          ref={logBoxRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 12;
+            if (glidingRef.current) {
+              if (atBottom) glidingRef.current = false;
+              return;
+            }
+            stickRef.current = atBottom;
+          }}
+          onWheel={() => {
+            glidingRef.current = false;
+          }}
+          onTouchMove={() => {
+            glidingRef.current = false;
+          }}
+          className="mb-3 max-h-72 overflow-y-auto overscroll-contain font-mono text-xs leading-relaxed"
+        >
+          {log.map((l, i) => (
+            <div key={i} className="fade-in whitespace-pre-wrap break-words text-mist-dim">
+              {l}
+            </div>
+          ))}
+          {partial && (
+            <div className="stream-cursor whitespace-pre-wrap break-words text-mist-faint">{partial}</div>
+          )}
         </div>
       )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -320,12 +361,33 @@ export function ResearchStrip({
             min={0}
             max={100}
             value={temp}
+            disabled={orbitOn}
             onChange={(e) => setTemp(Number(e.target.value))}
             aria-label="collide temperature"
-            title="chaos dial — zero stays baseline"
-            className="range-glass w-24"
+            title={orbitOn ? 'disabled while orbit is set (they are opposites)' : 'chaos dial — zero stays baseline'}
+            className="range-glass w-24 disabled:opacity-40"
           />
           <span className="w-8 tabular-nums">{(shownTemp / 100).toFixed(2)}</span>
+        </label>
+        <label
+          className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px] text-mist-dim"
+          title={
+            collideOn
+              ? 'disabled while collide is set (they are opposites)'
+              : 'focus this run around a center you name — a theme, tech, problem, or half-formed idea'
+          }
+        >
+          <span className="text-mist-faint">orbit</span>
+          <input
+            type="text"
+            value={orbit}
+            disabled={collideOn}
+            onChange={(e) => setOrbit(e.target.value)}
+            placeholder="focus around… (theme / tech / problem)"
+            aria-label="orbit center"
+            maxLength={4000}
+            className="glass min-w-0 flex-1 px-2 py-1 text-mist outline-none placeholder:text-mist-faint disabled:opacity-40"
+          />
         </label>
         <span className="ml-auto flex items-center gap-3">
           {models && model !== null && (

@@ -67,8 +67,8 @@ export function emptySnapshot(): Snapshot {
     notes: { updatedAt: null, vaultPath: null, recent: [], error: null },
     surreal: { updatedAt: null, up: false, endpoint: '', version: null, namespaces: [], error: null },
     revuto: {
-      updatedAt: null, up: false, counts: null, schedules: null, limits: null, store: null,
-      services: [], models: [], reviewers: [], jobs: [], logs: [], error: null,
+      updatedAt: null, up: false, scheduler: null, counts: null, schedules: null, limits: null, store: null,
+      dependencies: [], models: [], reviewers: [], jobs: [], logs: [], error: null,
     },
     itch: {
       updatedAt: null, up: false, runs: [],

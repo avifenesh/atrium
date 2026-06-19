@@ -2,11 +2,12 @@
   "name": "atrium",
   "private": true,
   "version": "0.1.0",
-  "description": "Personal life-management dashboard: GitHub tasks, local AI agents, system health, email/calendar, subscriptions — with a global quiet switch.",
+  "description": "Personal life-management dashboard: GitHub tasks, local AI agents, system health, email/calendar, subscriptions \u2014 with a global quiet switch.",
   "workspaces": [
     "server",
     "web",
-    "mcp"
+    "mcp",
+    "revuto-engine"
   ],
   "scripts": {
     "build": "npm run build -w server && npm run build -w web && npm run build -w mcp",

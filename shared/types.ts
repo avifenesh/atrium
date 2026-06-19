@@ -337,16 +337,21 @@ export interface SurrealState {
   error: string | null;
 }
 
-// ---------- revuto (PR-reviewer watch — proxied from the local dashboard service) ----------
+// ---------- revuto (PR-reviewer watch — in-process scheduler + local vault) ----------
 
-export interface RevutoService {
-  id: string; // systemd unit, e.g. "revuto.service"
-  label: string; // human label, e.g. "Revuto daemon"
-  kind: 'service' | 'timer';
+export interface RevutoScheduler {
+  active: boolean; // Atrium has initialized the in-process scheduler
+  tasks: number; // active cron tasks currently registered inside this process
+  repos: number; // reviewers loaded from the vault, including paused reviewers
+  plan: { repo: string; schedules: { review: string; learn: string; decay: string } }[];
+}
+
+export interface RevutoDependency {
+  id: string; // external helper unit, e.g. "revuto-surreal.service"
+  label: string;
   activeState: string; // systemd ActiveState, e.g. "active"
-  subState: string; // systemd SubState, e.g. "running" | "waiting"
+  subState: string; // systemd SubState, e.g. "running"
   since: string | null; // systemd human timestamp string, NOT ISO — display raw
-  nextElapse: string | null; // timers only, systemd human timestamp string
 }
 
 export interface RevutoModel {
@@ -386,11 +391,13 @@ export interface RevutoLog {
 
 export interface RevutoState {
   updatedAt: string | null;
-  /** dashboard endpoint reachable and returned a snapshot this poll (or last poll kept stale data) */
+  /** Atrium's in-process Revuto core collected successfully this poll. */
   up: boolean;
+  scheduler: RevutoScheduler | null;
   counts: {
-    servicesActive: number;
-    servicesTotal: number;
+    schedulerTasks: number;
+    dependenciesReady: number;
+    dependenciesTotal: number;
     reviewers: number;
     pausedReviewers: number;
     recentJobs: number;
@@ -401,7 +408,7 @@ export interface RevutoState {
   schedules: { review: string; learn: string; decay: string } | null;
   limits: { maxSteps: number; dailyReviews: number; dailyLearn: number; dailyTokens: number } | null;
   store: { backend: string; url: string | null; namespace: string | null } | null;
-  services: RevutoService[];
+  dependencies: RevutoDependency[];
   models: RevutoModel[];
   reviewers: RevutoReviewer[];
   /** newest first, capped at 60 */
@@ -411,7 +418,7 @@ export interface RevutoState {
   error: string | null;
 }
 
-// ---------- itch (idea scout — proxied from the local itch UI server :8799) ----------
+// ---------- itch (idea scout — core data loaded in Atrium; long AI calls still proxied) ----------
 
 export interface ItchRunInfo {
   stem: string; // "YYYYMMDD-HHMMSS", lexicographic == chronological
@@ -433,7 +440,7 @@ export interface ItchResearch {
 
 export interface ItchState {
   updatedAt: string | null;
-  /** itch UI server reachable this poll (stale data kept when not) */
+  /** live research API reachable this poll; run journal/decisions are loaded directly */
   up: boolean;
   runs: ItchRunInfo[]; // newest first
   research: ItchResearch;

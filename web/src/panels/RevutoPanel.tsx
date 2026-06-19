@@ -7,7 +7,8 @@ import type {
   RevutoLog,
   RevutoModel,
   RevutoReviewer,
-  RevutoService,
+  RevutoDependency,
+  RevutoScheduler,
   Snapshot,
 } from '../../../shared/types';
 
@@ -17,11 +18,17 @@ function fmtMs(ms: number | null): string | null {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 }
 
-function serviceDot(s: RevutoService): string {
+function dependencyDot(s: RevutoDependency): string {
   if (s.activeState === 'active') return s.subState === 'running' ? 'running' : 'idle';
   if (s.activeState === 'failed') return 'error';
   if (s.activeState === 'inactive') return 'off';
   return 'unknown';
+}
+
+function schedulerDot(s: RevutoScheduler | null): string {
+  if (!s) return 'unknown';
+  if (!s.active) return 'off';
+  return s.tasks > 0 ? 'running' : 'idle';
 }
 
 function probeDot(state: RevutoModel['probe']['state']): string {
@@ -52,12 +59,12 @@ const JOB_DOT: Record<ReturnType<typeof jobClass>, string> = {
   unknown: 'unknown',
 };
 
-function ServiceRow({ s }: { s: RevutoService }) {
+function DependencyRow({ s }: { s: RevutoDependency }) {
   return (
     // 'since' is a systemd human string, not ISO — tooltip only, never RelTime
     <Row className="group" title={s.since ? `since ${s.since}` : undefined}>
       <div className="flex w-full min-w-0 items-center gap-2">
-        <Dot status={serviceDot(s)} />
+        <Dot status={dependencyDot(s)} />
         <span className="shrink-0 text-sm lowercase text-mist">{s.label}</span>
         <div className="min-w-0 flex-1 overflow-hidden">
           <CopyText text={s.id}>
@@ -66,14 +73,6 @@ function ServiceRow({ s }: { s: RevutoService }) {
             </span>
           </CopyText>
         </div>
-        {s.kind === 'timer' && (
-          <span
-            className="max-w-40 shrink-0 truncate rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-faint"
-            title={s.nextElapse ?? 'timer'}
-          >
-            {s.nextElapse ? `next ${s.nextElapse}` : 'timer'}
-          </span>
-        )}
         <span className="shrink-0 font-mono text-[11px] text-mist-faint">
           {s.activeState === 'active' ? s.subState : s.activeState}
         </span>
@@ -82,9 +81,17 @@ function ServiceRow({ s }: { s: RevutoService }) {
   );
 }
 
-/** services panel owns the daemon start/stop controls — stop is destructive, so it
- *  uses the same two-click arm pattern as AgentsPanel fire(). */
-function ServicesCard({ services, riseIndex }: { services: RevutoService[]; riseIndex: number }) {
+/** Scheduler panel owns in-process start/stop controls — stop is destructive, so
+ *  it uses the same two-click arm pattern as AgentsPanel fire(). */
+function SchedulerCard({
+  scheduler,
+  dependencies,
+  riseIndex,
+}: {
+  scheduler: RevutoScheduler | null;
+  dependencies: RevutoDependency[];
+  riseIndex: number;
+}) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ text: string; isError: boolean } | null>(null);
@@ -97,7 +104,7 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
     [],
   );
 
-  const run = async (action: 'start' | 'stop') => {
+  const run = async (action: 'start' | 'stop' | 'restart') => {
     setBusy(action);
     try {
       const res = await agentAction('revuto', action);
@@ -114,7 +121,7 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
     }
   };
 
-  const fire = (action: 'start' | 'stop') => {
+  const fire = (action: 'start' | 'stop' | 'restart') => {
     if (action === 'stop' && !armed) {
       setArmed(true);
       setTimeout(() => setArmed(false), 4000);
@@ -126,7 +133,7 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
 
   return (
     <Panel
-      title="services"
+      title="scheduler"
       riseIndex={riseIndex}
       right={
         <span className="flex items-center gap-2">
@@ -143,11 +150,11 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
           </button>
           <button
             type="button"
-            disabled={busy === 'start'}
-            onClick={() => fire('start')}
+            disabled={busy === 'restart'}
+            onClick={() => fire('restart')}
             className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-mist-dim transition-colors glass hover:text-mist disabled:opacity-40"
           >
-            {busy === 'start' ? '◌' : 'start'}
+            {busy === 'restart' ? '◌' : 'reload'}
           </button>
         </span>
       }
@@ -160,10 +167,25 @@ function ServicesCard({ services, riseIndex }: { services: RevutoService[]; rise
           {result.text}
         </div>
       )}
-      {services.length === 0 ? (
-        <EmptyState>no services</EmptyState>
-      ) : (
-        services.map((s) => <ServiceRow key={s.id} s={s} />)
+      <Row className="group">
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <Dot status={schedulerDot(scheduler)} />
+          <span className="shrink-0 text-sm lowercase text-mist">in-process</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-faint">
+            {scheduler ? `${scheduler.repos} reviewers, ${scheduler.tasks} cron tasks` : 'waiting for scheduler status'}
+          </span>
+          <span className="shrink-0 font-mono text-[11px] text-mist-faint">
+            {scheduler?.active ? 'active' : 'inactive'}
+          </span>
+        </div>
+      </Row>
+      {dependencies.length > 0 && (
+        <div className="mt-3">
+          <div className="px-2.5 pb-1 font-mono text-[10px] uppercase text-mist-faint">
+            dependencies
+          </div>
+          {dependencies.map((s) => <DependencyRow key={s.id} s={s} />)}
+        </div>
       )}
     </Panel>
   );
@@ -323,7 +345,8 @@ export default function RevutoPanel({
     (!r.up && r.updatedAt === null && r.error === null) ||
     (r.up &&
       !counts &&
-      r.services.length === 0 &&
+      r.scheduler === null &&
+      r.dependencies.length === 0 &&
       r.models.length === 0 &&
       r.reviewers.length === 0 &&
       r.jobs.length === 0 &&
@@ -339,23 +362,22 @@ export default function RevutoPanel({
   return (
     <div>
       {!r.up && (
-        // the daemon self-heals the dashboard service — surface staleness, keep last-known data below
+        // surface scheduler/core staleness without implying the legacy dashboard exists
         <div className="mb-3 flex min-w-0 items-center gap-2 px-1 font-mono text-xs">
           <Dot status="error" />
-          <span className="shrink-0 text-coral">dashboard unreachable</span>
+          <span className="shrink-0 text-coral">revuto status unavailable</span>
           {r.error && (
             <span className="min-w-0 truncate text-mist-faint" title={r.error}>
               {r.error}
             </span>
           )}
-          <span className="shrink-0 text-mist-faint">— atrium is restarting it</span>
           <span className="ml-auto flex shrink-0 items-baseline gap-1.5 text-[11px] text-mist-faint">
             last data <RelTime iso={r.updatedAt} />
           </span>
         </div>
       )}
 
-      {/* upstream config errors arrive with up=true (dashboard serving, daemon misconfigured) */}
+      {/* config/vault errors can arrive while the in-process scheduler is still alive */}
       {r.up && r.error && (
         <div className="mb-3 flex min-w-0 items-center gap-2 px-1 font-mono text-xs">
           <Dot status="error" />
@@ -384,6 +406,16 @@ export default function RevutoPanel({
             <span className="text-[11px] text-mist-faint">jobs</span>
           </div>
           <div className="flex items-baseline gap-1.5">
+            <TweenStat value={counts.schedulerTasks} className="font-mono text-xl leading-none tabular-nums text-mist" />
+            <span className="text-[11px] text-mist-faint">cron tasks</span>
+          </div>
+          {counts.dependenciesTotal > 0 && (
+            <div className="flex items-baseline gap-1.5">
+              <TweenStat value={counts.dependenciesReady} className="font-mono text-xl leading-none tabular-nums text-mist" />
+              <span className="text-[11px] text-mist-faint">/ {counts.dependenciesTotal} deps</span>
+            </div>
+          )}
+          <div className="flex items-baseline gap-1.5">
             <TweenStat
               value={counts.recentFailures}
               className={`font-mono text-xl leading-none tabular-nums ${
@@ -410,7 +442,7 @@ export default function RevutoPanel({
       )}
 
       <div className="grid items-start gap-4 xl:grid-cols-2">
-        <ServicesCard services={r.services} riseIndex={1} />
+        <SchedulerCard scheduler={r.scheduler} dependencies={r.dependencies} riseIndex={1} />
 
         <Panel title="models" riseIndex={2}>
           {r.models.length === 0 ? (

@@ -55,7 +55,7 @@ node scripts/register-eigen.mjs   # add MCP server + atrium-ops skill to ~/.eige
 | source | hook |
 | --- | --- |
 | github | `gh` / GitHub API as `avifenesh` — review requests, assigned issues, my PRs, mentions, org queue (external PRs/issues on owned repos, ranked first), team queue, notifications, repo counts |
-| revuto | full watch view proxied from the local dashboard (`http://127.0.0.1:5180/api/snapshot`, self-healed via systemd when down) + revuto CLI (pause/resume reviewers) |
+| revuto | in-process scheduler via the vendored Revuto engine, vault-backed reviewer/config reads from `~/revuto`, direct pause/resume/review/learn/decay actions |
 | hermes | `~/.hermes/gateway_state.json`, `~/.hermes/cron/jobs.json` + hermes CLI |
 | eigen | `~/.eigen/sessions*`, `~/.eigen/observe/events.jsonl`, daemon socket |
 | claude code | `~/.claude/projects` session files |

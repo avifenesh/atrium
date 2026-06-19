@@ -2,11 +2,17 @@ import { stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from './config.js';
 import { iso, sh } from './util.js';
+import { setRevutoPaused } from './core/revuto.js';
+import { startItchResearch, stopItchResearch } from './core/itch-research.js';
+import { runRevutoDoctor, runRevutoRepoJob, runRevutoReviewPr } from './core/revuto-engine.js';
+import { reloadRevutoScheduler, stopRevutoScheduler } from './core/revuto-scheduler.js';
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+const REVIEW_TARGET_RE = /^([\w.-]+\/[\w.-]+)#(\d+)$/;
 const JOB_RE = /^[\w-]+$/;
 const RUN_RE = /^run-[\w-]+$/;
 const TIMEOUT = { timeoutMs: 15_000 };
+const REVUTO_JOB_TIMEOUT = { timeoutMs: 660_000 };
 
 interface ActionResult {
   ok: boolean;
@@ -23,6 +29,12 @@ function fail(error: string): ActionResult {
   return { ok: false, error };
 }
 
+function reloadScheduler(): void {
+  // pause/resume/schedule edits are file-backed; reload the IN-PROCESS scheduler
+  // so they take effect immediately. No external daemon to restart.
+  reloadRevutoScheduler();
+}
+
 export async function runAgentAction(agentId: string, action: string, target?: string): Promise<ActionResult> {
   try {
     switch (agentId) {
@@ -33,6 +45,7 @@ export async function runAgentAction(agentId: string, action: string, target?: s
       case 'any-mission':
         return await anyMissionAction(action, target);
       case 'itch':
+        return await itchAction(action, target);
       case 'claude':
       case 'codex':
       case 'eigen':
@@ -49,24 +62,62 @@ export async function runAgentAction(agentId: string, action: string, target?: s
 async function revutoAction(action: string, target?: string): Promise<ActionResult> {
   switch (action) {
     case 'pause':
-    case 'resume':
-    case 'trigger': {
+    case 'resume': {
       if (!target || !REPO_RE.test(target)) return fail('target must be owner/repo');
-      return ok(await sh('node', [config.paths.revutoCli, action, target], TIMEOUT));
+      const changed = await setRevutoPaused(config.paths.revutoVault, target, action === 'pause');
+      if (!changed) return fail(`not registered: ${target}`);
+      reloadScheduler();
+      return ok(`${action}d ${target} in Atrium core (scheduler reloaded in-process)`);
     }
-    case 'stop': {
-      // ORDER MATTERS: the guard timer restarts dead units within 5 min — stop it first
-      await sh('systemctl', ['--user', 'stop', 'revuto-guard.timer'], TIMEOUT);
-      return ok(await sh('systemctl', ['--user', 'stop', 'revuto.service'], TIMEOUT));
+    case 'doctor':
+      return await runRevutoDoctor();
+    case 'trigger':
+    case 'learn':
+    case 'decay': {
+      if (!target || !REPO_RE.test(target)) return fail('target must be owner/repo');
+      const job = action === 'trigger' ? 'review' : (action as 'review' | 'learn' | 'decay');
+      return await runRevutoRepoJob(job, target);
     }
-    case 'start': {
-      await sh('systemctl', ['--user', 'start', 'revuto-guard.timer'], TIMEOUT);
-      return ok(await sh('systemctl', ['--user', 'start', 'revuto.service'], TIMEOUT));
+    case 'review': {
+      const m = target?.match(REVIEW_TARGET_RE);
+      if (!m) return fail('target must be owner/repo#123');
+      return await runRevutoReviewPr(m[1], Number(m[2]));
+    }
+    case 'stop':
+      stopRevutoScheduler();
+      return ok('revuto in-process scheduler stopped');
+    case 'start':
+      reloadScheduler();
+      return ok('revuto in-process scheduler (re)loaded');
+    case 'restart': {
+      reloadScheduler();
+      return ok('revuto in-process scheduler reloaded');
     }
     default:
       return fail('unknown action');
   }
 }
+
+
+async function itchAction(action: string, target?: string): Promise<ActionResult> {
+  switch (action) {
+    case 'start':
+      return ok('itch is built into Atrium; no separate API server needed');
+    case 'trigger':
+    case 'research': {
+      const flags = target === 'fresh' ? { fresh: true } : {};
+      const result = await startItchResearch(flags);
+      return result.ok ? ok(`research started pid=${result.pid}`) : fail(result.error ?? 'research failed');
+    }
+    case 'stop':
+    case 'stop-research':
+      stopItchResearch();
+      return ok('itch research stop requested');
+    default:
+      return fail('unknown action');
+  }
+}
+
 
 const HERMES_CRON_VERBS: Record<string, string | undefined> = {
   'cron-pause': 'pause',

@@ -49,13 +49,13 @@ export const defaults = {
     resticRepo: join(HOME, 'backups', 'restic'),
     resticPasswordFile: join(HOME, '.config', 'restic', 'password'),
     revutoVault: join(HOME, 'revuto'),
-    revutoCli: join(HOME, 'projects', 'revuto', 'dist', 'daemon', 'src', 'cli.js'),
     hermesCli: join(HOME, '.local', 'bin', 'hermes'),
     projectsDir: join(HOME, 'projects'),
   },
 
   revuto: {
-    snapshotUrl: 'http://127.0.0.1:5180/api/snapshot',
+    // engine runs in-process (@atrium/revuto-engine); no external dashboard/CLI
+    snapshotUrl: '',
   },
 
   itch: {
@@ -75,7 +75,6 @@ export const defaults = {
   knownPorts: {
     8000: 'surrealdb (revuto memory)',
     8181: 'bge embedder (revuto)',
-    5180: 'revuto dashboard',
     8787: 'bedrock-codex-bridge',
     8888: 'searxng',
     6379: 'valkey',
@@ -93,11 +92,8 @@ export const defaults = {
 
   /** systemd user units that constitute personal infra */
   watchedUnits: [
-    'revuto.service',
-    'revuto-dashboard.service',
     'revuto-surreal.service',
     'revuto-embedder.service',
-    'revuto-guard.timer',
     'hermes-gateway.service',
     'bedrock-codex-bridge.service',
     'voiced.service',
