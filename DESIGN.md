@@ -80,7 +80,7 @@ muted items must disappear (archive), the app must feel like a finished product.
 - **Hero numerals**: Instrument Serif has no tnum — tween inside a fixed ch-width slot to stop reflow wobble.
 - **GitHub slide-over** (ItemDetail.tsx): read + comment without leaving atrium; "open on github" stays
   one click. Markdown rendered React-elements-only, scheme-whitelisted links.
-- **Revuto view**: ninth view, the standalone revuto-watch dashboard absorbed — in-process scheduler
+- **Revuto view**: ninth view, the standalone revuto-watch dashboard embedded — service-backed scheduler
   controls (two-click stop), external dependency status, model probes, reviewers with enforced pause, jobs timeline where
   zero-result polls read as quiet texture (only reviewed>0 earns jade), journal logs, config strip.
 - **Tone discipline refinements**: upstream "warn"-level log noise never gets amber (two-tone feeds:

@@ -49,13 +49,14 @@ export const defaults = {
     resticRepo: join(HOME, 'backups', 'restic'),
     resticPasswordFile: join(HOME, '.config', 'restic', 'password'),
     revutoVault: join(HOME, 'revuto'),
+    revutoRepo: join(HOME, 'projects', 'revuto'),
+    revutoCli: join(HOME, '.local', 'bin', 'revuto'),
     hermesCli: join(HOME, '.local', 'bin', 'hermes'),
     projectsDir: join(HOME, 'projects'),
   },
 
   revuto: {
-    // engine runs in-process (@atrium/revuto-engine); no external dashboard/CLI
-    snapshotUrl: '',
+    snapshotUrl: 'http://127.0.0.1:5180/api/snapshot',
   },
 
   itch: {

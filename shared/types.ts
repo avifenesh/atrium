@@ -337,11 +337,11 @@ export interface SurrealState {
   error: string | null;
 }
 
-// ---------- revuto (PR-reviewer watch — in-process scheduler + local vault) ----------
+// ---------- revuto (PR-reviewer watch — standalone daemon + local vault/dashboard) ----------
 
 export interface RevutoScheduler {
-  active: boolean; // Atrium has initialized the in-process scheduler
-  tasks: number; // active cron tasks currently registered inside this process
+  active: boolean; // revuto.service is active
+  tasks: number; // expected active cron tasks for unpaused reviewers
   repos: number; // reviewers loaded from the vault, including paused reviewers
   plan: { repo: string; schedules: { review: string; learn: string; decay: string } }[];
 }
@@ -361,9 +361,13 @@ export interface RevutoModel {
   model: string; // model id, e.g. "openai.gpt-5.5"
   probe: {
     state: 'ok' | 'failed' | 'disabled' | 'unknown';
+    kind?: 'chat' | 'embedding' | 'none';
     ms: number | null;
     checkedAt: string | null; // ISO
     error: string | null;
+    sharedRoles?: string[];
+    responseModel?: string | null;
+    responseId?: string | null;
   };
 }
 
@@ -391,7 +395,7 @@ export interface RevutoLog {
 
 export interface RevutoState {
   updatedAt: string | null;
-  /** Atrium's in-process Revuto core collected successfully this poll. */
+  /** Atrium collected the standalone Revuto service/dashboard successfully this poll. */
   up: boolean;
   scheduler: RevutoScheduler | null;
   counts: {

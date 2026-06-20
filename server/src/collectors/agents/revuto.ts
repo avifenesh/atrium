@@ -2,7 +2,6 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentInfo } from '../../../../shared/types.js';
 import { config } from '../../config.js';
-import { revutoSchedulerStatus } from '../../core/revuto-scheduler.js';
 import { store } from '../../state.js';
 import { iso, readText } from '../../util.js';
 import { baseAgent, tsToMs, type SourceResult } from './common.js';
@@ -29,17 +28,17 @@ export async function collectRevuto(): Promise<SourceResult> {
     { action: 'restart', label: 'reload scheduler' },
   ];
 
-  // reviewers live in the local vault and scheduler liveness is in this Atrium process
+  // reviewers live in the local vault; scheduler liveness comes from revuto.service.
   agent.resources = await readReviewers();
   const paused = agent.resources.filter((r) => r.state === 'paused').length;
   const reviewerSummary = `${agent.resources.length} reviewers (${paused} paused)`;
 
-  const scheduler = revutoSchedulerStatus();
   const snap = store.get().revuto;
+  const scheduler = snap.scheduler;
   const jobCount = snap.jobs.length;
   const failCount = snap.jobs.filter((j: { status: string }) => j.status === 'failed').length;
 
-  if (!scheduler.active && !snap.updatedAt) {
+  if (!scheduler?.active && !snap.updatedAt) {
     agent.status = 'unknown';
     agent.detail = `scheduler not initialized yet; ${reviewerSummary}`;
     return { agent, flags };
@@ -49,10 +48,10 @@ export async function collectRevuto(): Promise<SourceResult> {
     agent.status = 'error';
     agent.error = `${failCount} recent failures`;
   } else {
-    agent.status = scheduler.tasks > 0 ? 'running' : 'idle';
+    agent.status = (scheduler?.tasks ?? 0) > 0 ? 'running' : 'idle';
   }
   agent.detail =
-    `${reviewerSummary}, ${scheduler.tasks} cron tasks, ${jobCount} jobs recent${failCount ? `, ${failCount} failures` : ''}`;
+    `${reviewerSummary}, ${scheduler?.tasks ?? 0} cron tasks, ${jobCount} jobs recent${failCount ? `, ${failCount} failures` : ''}`;
   const last = newestJobTs({ jobs: snap.jobs });
   agent.lastActivity = last !== null ? iso(last) : null;
   return { agent, flags };

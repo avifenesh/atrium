@@ -6,8 +6,7 @@
   "workspaces": [
     "server",
     "web",
-    "mcp",
-    "revuto-engine"
+    "mcp"
   ],
   "scripts": {
     "build": "npm run build -w server && npm run build -w web && npm run build -w mcp",

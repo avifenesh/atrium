@@ -2,10 +2,8 @@ import { stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from './config.js';
 import { iso, sh } from './util.js';
-import { setRevutoPaused } from './core/revuto.js';
 import { startItchResearch, stopItchResearch } from './core/itch-research.js';
-import { runRevutoDoctor, runRevutoRepoJob, runRevutoReviewPr } from './core/revuto-engine.js';
-import { reloadRevutoScheduler, stopRevutoScheduler } from './core/revuto-scheduler.js';
+import { restartRevutoDaemon, runRevutoCli, systemctlUser } from './core/revuto-cli.js';
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 const REVIEW_TARGET_RE = /^([\w.-]+\/[\w.-]+)#(\d+)$/;
@@ -29,10 +27,8 @@ function fail(error: string): ActionResult {
   return { ok: false, error };
 }
 
-function reloadScheduler(): void {
-  // pause/resume/schedule edits are file-backed; reload the IN-PROCESS scheduler
-  // so they take effect immediately. No external daemon to restart.
-  reloadRevutoScheduler();
+async function reloadScheduler(): Promise<void> {
+  await restartRevutoDaemon();
 }
 
 export async function runAgentAction(agentId: string, action: string, target?: string): Promise<ActionResult> {
@@ -64,34 +60,31 @@ async function revutoAction(action: string, target?: string): Promise<ActionResu
     case 'pause':
     case 'resume': {
       if (!target || !REPO_RE.test(target)) return fail('target must be owner/repo');
-      const changed = await setRevutoPaused(config.paths.revutoVault, target, action === 'pause');
-      if (!changed) return fail(`not registered: ${target}`);
-      reloadScheduler();
-      return ok(`${action}d ${target} in Atrium core (scheduler reloaded in-process)`);
+      const out = await runRevutoCli([action, target], REVUTO_JOB_TIMEOUT.timeoutMs);
+      await restartRevutoDaemon();
+      return ok(`${out.trim()}\nrevuto.service restarted`);
     }
     case 'doctor':
-      return await runRevutoDoctor();
+      return ok(await runRevutoCli(['doctor'], REVUTO_JOB_TIMEOUT.timeoutMs));
     case 'trigger':
     case 'learn':
     case 'decay': {
       if (!target || !REPO_RE.test(target)) return fail('target must be owner/repo');
-      const job = action === 'trigger' ? 'review' : (action as 'review' | 'learn' | 'decay');
-      return await runRevutoRepoJob(job, target);
+      const args = action === 'trigger' ? ['trigger', target, 'review'] : [action, target];
+      return ok(await runRevutoCli(args, REVUTO_JOB_TIMEOUT.timeoutMs));
     }
     case 'review': {
       const m = target?.match(REVIEW_TARGET_RE);
       if (!m) return fail('target must be owner/repo#123');
-      return await runRevutoReviewPr(m[1], Number(m[2]));
+      return ok(await runRevutoCli(['review', m[1], String(Number(m[2]))], REVUTO_JOB_TIMEOUT.timeoutMs));
     }
     case 'stop':
-      stopRevutoScheduler();
-      return ok('revuto in-process scheduler stopped');
+      return ok(await systemctlUser('stop', 'revuto.service'));
     case 'start':
-      reloadScheduler();
-      return ok('revuto in-process scheduler (re)loaded');
+      return ok(await systemctlUser('start', 'revuto.service'));
     case 'restart': {
-      reloadScheduler();
-      return ok('revuto in-process scheduler reloaded');
+      await reloadScheduler();
+      return ok('revuto.service restart requested');
     }
     default:
       return fail('unknown action');

@@ -2,10 +2,16 @@ import { readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { RevutoReviewer, RevutoState } from '../../../shared/types.js';
 
-type RevutoVaultState = Pick<RevutoState, 'counts' | 'schedules' | 'limits' | 'store' | 'reviewers'>;
 type RevutoSchedules = NonNullable<RevutoState['schedules']>;
 type RevutoLimits = NonNullable<RevutoState['limits']>;
 type RevutoStoreInfo = NonNullable<RevutoState['store']>;
+interface RevutoVaultState {
+  counts: NonNullable<RevutoState['counts']>;
+  schedules: RevutoSchedules;
+  limits: RevutoLimits;
+  store: RevutoStoreInfo;
+  reviewers: RevutoReviewer[];
+}
 
 type Frontmatter = Record<string, string | boolean | string[] | Record<string, string>>;
 
@@ -157,11 +163,7 @@ export async function setRevutoPaused(vaultPath: string, repo: string, paused: b
   return true;
 }
 
-/** Load Revuto's durable registry/config directly from the vault.
- *
- * The scheduler/review engine runs in-process; this only reads durable vault
- * config that survives Atrium restarts.
- */
+/** Load Revuto's durable registry/config directly from the standalone vault. */
 export async function loadRevutoVaultState(vaultPath: string): Promise<RevutoVaultState> {
   const cfg = await readJson<any>(join(vaultPath, 'revuto.config.json'));
   const sched = schedules(cfg);

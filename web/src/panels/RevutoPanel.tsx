@@ -81,7 +81,7 @@ function DependencyRow({ s }: { s: RevutoDependency }) {
   );
 }
 
-/** Scheduler panel owns in-process start/stop controls — stop is destructive, so
+/** Scheduler panel owns standalone daemon controls — stop is destructive, so
  *  it uses the same two-click arm pattern as AgentsPanel fire(). */
 function SchedulerCard({
   scheduler,
@@ -170,7 +170,7 @@ function SchedulerCard({
       <Row className="group">
         <div className="flex w-full min-w-0 items-center gap-2">
           <Dot status={schedulerDot(scheduler)} />
-          <span className="shrink-0 text-sm lowercase text-mist">in-process</span>
+          <span className="shrink-0 text-sm lowercase text-mist">revuto.service</span>
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-faint">
             {scheduler ? `${scheduler.repos} reviewers, ${scheduler.tasks} cron tasks` : 'waiting for scheduler status'}
           </span>
@@ -198,9 +198,9 @@ function ModelRow({ m }: { m: RevutoModel }) {
         <Dot status={probeDot(m.probe.state)} />
         <span className={`w-16 shrink-0 text-sm ${m.enabled ? 'text-mist' : 'text-mist-faint'}`}>{m.role}</span>
         <div className="min-w-0 flex-1 overflow-hidden">
-          <CopyText text={m.model}>
+          <CopyText text={m.probe.responseModel ?? m.model}>
             <span className="block truncate text-left font-mono text-xs text-mist-dim" title={m.model}>
-              {m.model}
+              {m.probe.responseModel ?? m.model}
             </span>
           </CopyText>
         </div>
@@ -377,7 +377,7 @@ export default function RevutoPanel({
         </div>
       )}
 
-      {/* config/vault errors can arrive while the in-process scheduler is still alive */}
+      {/* config/vault errors can arrive while the standalone daemon is still alive */}
       {r.up && r.error && (
         <div className="mb-3 flex min-w-0 items-center gap-2 px-1 font-mono text-xs">
           <Dot status="error" />

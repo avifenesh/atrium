@@ -368,7 +368,7 @@ server.registerTool(
   'atrium_revuto',
   {
     description:
-      'Revuto PR-reviewer watch: in-process scheduler, external dependencies, per-repo reviewers, model probes, recent jobs, counts, schedules/limits.',
+      'Revuto PR-reviewer watch: standalone scheduler, external dependencies, per-repo reviewers, model probes, recent jobs, counts, schedules/limits.',
     inputSchema: {},
     annotations: RO,
   },

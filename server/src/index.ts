@@ -24,7 +24,6 @@ import subsCollector from './collectors/subs.js';
 import notesCollector from './collectors/notes.js';
 import surrealCollector from './collectors/surreal.js';
 import revutoCollector from './collectors/revuto.js';
-import { startRevutoScheduler } from './core/revuto-scheduler.js';
 import itchWatchCollector from './collectors/itch-watch.js';
 import cloudCollector from './collectors/cloud.js';
 import backupCollector from './collectors/backup.js';
@@ -371,7 +370,6 @@ if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host)) {
 // init before startAll or boot-time crits are dropped; mutes already loaded above
 initNotify({ ...config.notify, sendCmd: [config.paths.hermesCli, 'send', '--to', config.notify.target] });
 
-startRevutoScheduler(); // revuto engine in-process (no standalone daemon)
 startAll();
 
 server.listen(config.port, config.host, () => {

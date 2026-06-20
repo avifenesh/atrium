@@ -4,8 +4,7 @@ import type { Mute, MuteKind, MuteRequest } from '../../shared/types.js';
 import { config } from './config.js';
 import { store } from './state.js';
 import { iso, readJson, sh } from './util.js';
-import { setRevutoPaused } from './core/revuto.js';
-import { reloadRevutoScheduler, stopRevutoScheduler } from './core/revuto-scheduler.js';
+import { restartRevutoDaemon, runRevutoCli, systemctlUser } from './core/revuto-cli.js';
 
 const FILE = join(config.configDir, 'mutes.json');
 
@@ -33,11 +32,7 @@ interface Adapter {
 }
 
 function systemctl(verb: 'start' | 'stop' | 'restart', unit: string): Promise<string> {
-  return sh('systemctl', ['--user', verb, unit]);
-}
-
-function reloadRevutoInProcess(): void {
-  reloadRevutoScheduler();
+  return systemctlUser(verb, unit);
 }
 
 function hermesCronAdapter(jobId: string): Adapter | null {
@@ -72,27 +67,23 @@ function adapterFor(kind: MuteKind, target: string, until: string | null): Adapt
     const repo = target.slice('revuto:'.length);
     if (!REPO_RE.test(repo)) return null;
     return {
-      enforcedBy: 'atrium revuto core pause (in-process)',
+      enforcedBy: 'revuto cli pause + systemd restart',
       enforce: async () => {
-        const ok = await setRevutoPaused(config.paths.revutoVault, repo, true);
-        if (!ok) throw new Error(`not registered: ${repo}`);
-        reloadRevutoInProcess();
+        await runRevutoCli(['pause', repo]);
+        await restartRevutoDaemon();
       },
       unenforce: async () => {
-        const ok = await setRevutoPaused(config.paths.revutoVault, repo, false);
-        if (!ok) throw new Error(`not registered: ${repo}`);
-        reloadRevutoInProcess();
+        await runRevutoCli(['resume', repo]);
+        await restartRevutoDaemon();
       },
     };
   }
 
   if (kind === 'agent' && target === 'revuto') {
-    // revuto runs in-process inside Atrium; muting the whole agent stops the
-    // in-process cron scheduler (no external daemon/timer to touch).
     return {
-      enforcedBy: 'atrium in-process scheduler stop',
-      enforce: async () => { stopRevutoScheduler(); },
-      unenforce: async () => { reloadRevutoScheduler(); },
+      enforcedBy: 'systemctl --user stop revuto.service',
+      enforce: async () => { await systemctl('stop', 'revuto.service'); },
+      unenforce: async () => { await systemctl('start', 'revuto.service'); },
     };
   }
 

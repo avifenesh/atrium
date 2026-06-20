@@ -2,9 +2,13 @@ import { execFile } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 
 /** Run a command (argv form, no shell). Resolves stdout; rejects on non-zero exit. */
-export function sh(cmd: string, args: string[], opts: { timeoutMs?: number; input?: string } = {}): Promise<string> {
+export function sh(
+  cmd: string,
+  args: string[],
+  opts: { timeoutMs?: number; input?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(cmd, args, { timeout: opts.timeoutMs ?? 15_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { timeout: opts.timeoutMs ?? 15_000, maxBuffer: 16 * 1024 * 1024, env: opts.env }, (err, stdout, stderr) => {
       if (err) reject(new Error(`${cmd} ${args.join(' ')}: ${err.message}${stderr ? ` — ${String(stderr).slice(0, 400)}` : ''}`));
       else resolve(String(stdout));
     });
@@ -22,6 +26,18 @@ export async function shTry(cmd: string, args: string[], opts: { timeoutMs?: num
   } catch {
     return null;
   }
+}
+
+export function userSystemdEnv(): NodeJS.ProcessEnv {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const runtimeDir = process.env.XDG_RUNTIME_DIR ?? (uid === null ? undefined : `/run/user/${uid}`);
+  return {
+    ...process.env,
+    ...(runtimeDir ? { XDG_RUNTIME_DIR: runtimeDir } : {}),
+    DBUS_SESSION_BUS_ADDRESS:
+      process.env.DBUS_SESSION_BUS_ADDRESS ?? (runtimeDir ? `unix:path=${runtimeDir}/bus` : undefined),
+    SYSTEMD_PAGER: '',
+  };
 }
 
 export async function readJson<T = any>(path: string): Promise<T | null> {

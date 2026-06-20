@@ -1,30 +1,55 @@
-import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { loadRevutoVaultState } from '../core/revuto.js';
-import { revutoSchedulerStatus } from '../core/revuto-scheduler.js';
 import { store } from '../state.js';
-import { iso } from '../util.js';
-import type { RevutoDependency, RevutoJob, RevutoLog, RevutoModel, RevutoState } from '../../../shared/types.js';
+import { iso, sh, userSystemdEnv } from '../util.js';
+import type { RevutoDependency, RevutoJob, RevutoLog, RevutoModel, RevutoReviewer, RevutoState } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
 
-// no flags here — dependency health has its own system/surreal signals; the agent card owns scheduler state.
-
-const execFileP = promisify(execFile);
-
 const DEPENDENCIES: Array<{ id: string; label: string }> = [
+  { id: 'revuto.service', label: 'Revuto daemon' },
+  { id: 'revuto-dashboard.service', label: 'Revuto dashboard' },
   { id: 'revuto-surreal.service', label: 'SurrealDB memory store' },
   { id: 'revuto-embedder.service', label: 'Embedder' },
 ];
 
-function str(v: unknown): string {
-  return typeof v === 'string' ? v : '';
+interface DashboardSnapshot {
+  generatedAt: string;
+  configError: string | null;
+  store: { backend: string; url: string | null; namespace: string | null } | null;
+  schedules: { review: string; learn: string; decay: string } | null;
+  limits: { maxSteps: number; dailyReviews: number; dailyLearn: number; dailyTokens: number } | null;
+  counts: {
+    servicesActive: number;
+    servicesTotal: number;
+    reviewers: number;
+    pausedReviewers: number;
+    recentJobs: number;
+    recentFailures: number;
+    reviewed: number;
+    skipped: number;
+  };
+  services: Array<{
+    id: string;
+    label: string;
+    activeState: string;
+    subState: string;
+    since: string | null;
+  }>;
+  models: RevutoModel[];
+  reviewers: Array<{
+    repo: string;
+    paused: boolean;
+    autoActivate: boolean;
+    schedules: { review: string; learn: string; decay: string };
+  }>;
+  jobs: Array<RevutoJob & { result?: Record<string, unknown> | null; raw?: string }>;
+  logs: Array<RevutoLog & { raw?: string }>;
 }
 
-function strOrNull(v: unknown): string | null {
-  return typeof v === 'string' && v.trim() ? v : null;
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : '';
 }
 
 async function readJson<T = any>(path: string): Promise<T | null> {
@@ -35,10 +60,9 @@ async function readJson<T = any>(path: string): Promise<T | null> {
   }
 }
 
-async function command(cmd: string, args: string[], timeout = 10_000): Promise<string> {
+async function command(cmd: string, args: string[], timeoutMs = 10_000): Promise<string> {
   try {
-    const { stdout } = await execFileP(cmd, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
-    return stdout;
+    return await sh(cmd, args, { timeoutMs, env: userSystemdEnv() });
   } catch {
     return '';
   }
@@ -69,7 +93,7 @@ async function readDependencies(): Promise<RevutoDependency[]> {
       label: unit.label,
       activeState: row?.ActiveState ?? 'unknown',
       subState: row?.SubState ?? 'unknown',
-      since: strOrNull(row?.ActiveEnterTimestamp),
+      since: row?.ActiveEnterTimestamp || null,
     };
   });
 }
@@ -121,9 +145,9 @@ function parseJob(raw: string): RevutoJob | null {
   };
 }
 
-async function readJournal(): Promise<{ jobs: RevutoJob[]; logs: RevutoLog[]; reviewed: number; skipped: number }> {
+async function readJournal(since: string): Promise<{ jobs: RevutoJob[]; logs: RevutoLog[]; reviewed: number; skipped: number }> {
   const stdout = await command('journalctl', [
-    '--user', '-u', 'atrium.service', '--since', '7 days ago', '-o', 'short-iso', '--no-pager', '-n', '3000',
+    '--user', '-u', 'revuto.service', '--since', since, '-o', 'short-iso', '--no-pager', '-n', '3000',
   ], 10_000);
   const lines = stdout.split('\n').filter((line) => line.trim().length > 0 && /\snode\[\d+\]:\s/.test(line));
   const jobs = lines.map(parseJob).filter((j): j is RevutoJob => !!j);
@@ -154,7 +178,16 @@ async function readModels(): Promise<RevutoModel[]> {
       enabled,
       name: enabled ? str(spec.name) : '',
       model: enabled ? str(spec.model) : '',
-      probe: { state: enabled ? 'unknown' : 'disabled', ms: null, checkedAt: null, error: null },
+      probe: {
+        state: enabled ? 'unknown' : 'disabled',
+        kind: role === 'embedder' ? 'embedding' : 'chat',
+        ms: null,
+        checkedAt: null,
+        error: null,
+        sharedRoles: enabled ? [role] : [],
+        responseModel: null,
+        responseId: null,
+      },
     };
   });
 }
@@ -166,25 +199,115 @@ function emptyState(): RevutoState {
   };
 }
 
+async function readDashboardSnapshot(): Promise<DashboardSnapshot | null> {
+  if (!config.revuto.snapshotUrl) return null;
+  try {
+    const res = await fetch(config.revuto.snapshotUrl, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return null;
+    return await res.json() as DashboardSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function serviceActive(dependencies: RevutoDependency[], unit: string): boolean {
+  const dep = dependencies.find((d) => d.id === unit);
+  return dep?.activeState === 'active';
+}
+
+function toDependencies(snapshot: DashboardSnapshot, fallback: RevutoDependency[]): RevutoDependency[] {
+  if (!snapshot.services.length) return fallback;
+  return snapshot.services.map((service) => ({
+    id: service.id,
+    label: service.label,
+    activeState: service.activeState,
+    subState: service.subState,
+    since: service.since,
+  }));
+}
+
+function mapDashboardSnapshot(snapshot: DashboardSnapshot, fallbackDependencies: RevutoDependency[]): RevutoState {
+  const dependencies = toDependencies(snapshot, fallbackDependencies);
+  const reviewers: RevutoReviewer[] = snapshot.reviewers.map((reviewer) => ({
+    repo: reviewer.repo,
+    paused: reviewer.paused,
+    autoActivate: reviewer.autoActivate,
+    reviewSchedule: reviewer.schedules.review,
+  }));
+  const active = serviceActive(dependencies, 'revuto.service');
+  const plan = snapshot.reviewers.map((reviewer) => ({ repo: reviewer.repo, schedules: reviewer.schedules }));
+  const tasks = active ? reviewers.filter((reviewer) => !reviewer.paused).length * 3 : 0;
+  return {
+    updatedAt: snapshot.generatedAt,
+    up: !snapshot.configError && active,
+    scheduler: { active, tasks, repos: reviewers.length, plan },
+    counts: {
+      schedulerTasks: tasks,
+      dependenciesReady: snapshot.counts.servicesActive,
+      dependenciesTotal: snapshot.counts.servicesTotal,
+      reviewers: snapshot.counts.reviewers,
+      pausedReviewers: snapshot.counts.pausedReviewers,
+      recentJobs: snapshot.counts.recentJobs,
+      recentFailures: snapshot.counts.recentFailures,
+      reviewed: snapshot.counts.reviewed,
+      skipped: snapshot.counts.skipped,
+    },
+    schedules: snapshot.schedules,
+    limits: snapshot.limits,
+    store: snapshot.store,
+    dependencies,
+    models: snapshot.models,
+    reviewers,
+    jobs: snapshot.jobs.slice(0, 60).map((job) => ({
+      timestamp: job.timestamp,
+      job: job.job,
+      repo: job.repo,
+      status: job.status,
+      durationMs: job.durationMs,
+      summary: job.summary,
+    })),
+    logs: snapshot.logs.slice(0, 80).map((log) => ({
+      timestamp: log.timestamp,
+      level: log.level,
+      message: log.message,
+    })),
+    error: snapshot.configError,
+  };
+}
+
 let lastGood: RevutoState | null = null;
 
 async function run(): Promise<void> {
   try {
-    const scheduler = revutoSchedulerStatus();
-    const [vault, dependencies, journal, models] = await Promise.all([
+    const dependencies = await readDependencies();
+    const dashboard = await readDashboardSnapshot();
+    if (dashboard) {
+      const state = mapDashboardSnapshot(dashboard, dependencies);
+      lastGood = state;
+      store.setSection('revuto', state);
+      return;
+    }
+
+    const daemonSince = dependencies.find((d) => d.id === 'revuto.service')?.since ?? '7 days ago';
+    const [vault, journal, models] = await Promise.all([
       loadRevutoVaultState(config.paths.revutoVault),
-      readDependencies(),
-      readJournal(),
+      readJournal(daemonSince),
       readModels(),
     ]);
     const dependenciesReady = dependencies.filter((s) => /active|running/i.test(`${s.activeState} ${s.subState}`)).length;
     const recentFailures = journal.jobs.filter((j) => j.status === 'failed').length;
+    const active = serviceActive(dependencies, 'revuto.service');
+    const plan = vault.reviewers.map((reviewer) => ({
+      repo: reviewer.repo,
+      schedules: { review: reviewer.reviewSchedule, learn: vault.schedules.learn, decay: vault.schedules.decay },
+    }));
+    const tasks = active ? vault.reviewers.filter((reviewer) => !reviewer.paused).length * 3 : 0;
     const state: RevutoState = {
       updatedAt: iso(),
-      up: scheduler.active,
-      scheduler,
+      up: active,
+      scheduler: { active, tasks, repos: vault.reviewers.length, plan },
       counts: {
-        schedulerTasks: scheduler.tasks,
+        schedulerTasks: tasks,
         dependenciesReady,
         dependenciesTotal: dependencies.length,
         reviewers: vault.reviewers.length,
@@ -202,18 +325,16 @@ async function run(): Promise<void> {
       reviewers: vault.reviewers,
       jobs: journal.jobs,
       logs: journal.logs,
-      error: null,
+      error: config.revuto.snapshotUrl ? `revuto dashboard snapshot unavailable: ${config.revuto.snapshotUrl}` : null,
     };
     lastGood = state;
     store.setSection('revuto', state);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const scheduler = revutoSchedulerStatus();
     const state: RevutoState = {
       ...emptyState(),
       ...(lastGood ?? {}),
-      scheduler,
-      up: scheduler.active || (lastGood?.up ?? false),
+      up: lastGood?.up ?? false,
       error: msg,
     };
     store.setSection('revuto', state);
