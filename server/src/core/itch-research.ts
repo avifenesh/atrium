@@ -6,7 +6,7 @@
  * enforces a hard cap + idle watchdog. No external app is spawned.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, unlink, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { config } from '../config.js';
@@ -29,6 +29,23 @@ const ORBIT_MAX_CHARS = 4000;
 const HARD_CAP_MS = Number(process.env.ITCH_RESEARCH_TIMEOUT_MS || 30 * 60_000);
 const QUIET_AFTER_MS = Number(process.env.ITCH_RESEARCH_QUIET_MS || 10 * 60_000);
 
+// In-flight checkpoint: a long pass can be killed (OOM, server restart, the
+// watchdog) AFTER the model produced partial ideas but BEFORE the run is saved,
+// losing all that work. We stream the prompt + partial answer to disk so an
+// interrupted run can be RESUMED instead of re-run. Lives in the itch config
+// dir, NOT itchRuns, so the run globs never see it. Cleared on a clean save.
+const INFLIGHT_JSON = join(config.paths.itchConfig, 'research-inflight.json');
+const INFLIGHT_MD = join(config.paths.itchConfig, 'research-inflight.md');
+const INFLIGHT_FLUSH_MS = 8_000; // bound checkpoint IO; at most this stale
+const RESUME_PARTIAL_MAX_CHARS = 12_000;
+
+interface InflightCtx {
+  system: string;
+  user: string;
+  model: string;
+  meta: Record<string, unknown>;
+}
+
 type LineFn = (line: string) => void;
 
 interface RunHandle {
@@ -36,6 +53,8 @@ interface RunHandle {
   promptFile: string;
   args: string[];
   meta: Record<string, unknown>;
+  system: string;
+  user: string;
 }
 
 interface State {
@@ -49,14 +68,21 @@ interface State {
   savedStem: string | null;
   killedReason: string | null;
   lastActivity: number;
+  /** a checkpoint from a mid-flight kill exists on disk -> resume is offered */
+  resumable: boolean;
 }
 
 const state: State = {
   proc: null, pid: null, started: null, log: [], logOffset: 0, partial: '',
   exitCode: null, savedStem: null, killedReason: null, lastActivity: 0,
+  resumable: false,
 };
 
 let starting = false;
+
+// On boot, reflect any checkpoint left by a server that died mid-run (so the
+// UI offers resume even across a restart). Best-effort, fire-and-forget.
+void loadInflight().then((ctx) => { if (ctx) state.resumable = true; }).catch(() => {});
 
 function trimLog(): void {
   if (state.log.length <= MAX_LOG_LINES) return;
@@ -162,7 +188,59 @@ async function buildHandle(flags: Record<string, unknown>): Promise<RunHandle> {
   const dir = await mkdtemp(join(tmpdir(), 'atrium-itch-'));
   const promptFile = join(dir, 'prompt.md');
   await writeFile(promptFile, `${system}\n\n---\n\n${user}\n`, 'utf8');
-  return { model, promptFile, args: eigenArgsFor(model, promptFile), meta };
+  return { model, promptFile, args: eigenArgsFor(model, promptFile), meta, system, user };
+}
+
+// --- in-flight checkpoint / resume -----------------------------------------
+
+async function inflightBegin(handle: RunHandle): Promise<void> {
+  try {
+    await mkdir(config.paths.itchConfig, { recursive: true });
+    const ctx: InflightCtx = { system: handle.system, user: handle.user, model: handle.model, meta: handle.meta };
+    await writeFile(INFLIGHT_JSON, JSON.stringify({ schema: 1, ...ctx, started_at: iso() }, null, 2), 'utf8');
+    await writeFile(INFLIGHT_MD, '', 'utf8');
+  } catch { /* checkpoint IO must never block the run */ }
+}
+
+async function inflightFlush(text: string): Promise<void> {
+  try { await writeFile(INFLIGHT_MD, text, 'utf8'); } catch { /* best-effort */ }
+}
+
+async function inflightClear(): Promise<void> {
+  await Promise.all([
+    unlink(INFLIGHT_JSON).catch(() => {}),
+    unlink(INFLIGHT_MD).catch(() => {}),
+  ]);
+}
+
+/** The saved checkpoint, or null if there's nothing resumable (no context, or a
+ * partial that's empty -> the run died before the model wrote anything). */
+export async function loadInflight(): Promise<(InflightCtx & { partial: string }) | null> {
+  let ctx: any;
+  try { ctx = JSON.parse(await readFile(INFLIGHT_JSON, 'utf8')); } catch { return null; }
+  if (!ctx || typeof ctx.system !== 'string' || typeof ctx.user !== 'string' || !ctx.system || !ctx.user) return null;
+  let partial = '';
+  try { partial = await readFile(INFLIGHT_MD, 'utf8'); } catch { partial = ''; }
+  if (!partial.trim()) return null;
+  return { system: ctx.system, user: ctx.user, model: String(ctx.model ?? ''), meta: ctx.meta ?? {}, partial };
+}
+
+/** Directive appended to the user prompt on resume: hand back the partial ideas
+ * the killed run already wrote, tell the model to finish to 4 without
+ * re-researching, then re-emit the complete list + json tail. */
+function resumeContinuationBlock(partial: string): string {
+  let clipped = partial.trim();
+  if (clipped.length > RESUME_PARTIAL_MAX_CHARS) clipped = `${clipped.slice(0, RESUME_PARTIAL_MAX_CHARS)}\n…[truncated]`;
+  return `
+
+=== RESUMING AN INTERRUPTED RUN ===
+A previous pass for this exact request was KILLED before it finished (it ran out of time / was interrupted). Below is the partial answer it had already produced. DO NOT start over and DO NOT re-research the ideas that are already complete below -- reuse them as-is. Continue from where it stopped: finish any half-written idea, add only as many NEW ideas as needed to reach EXACTLY 4 total, and run web searches only for the missing/incomplete ideas.
+
+Then output the COMPLETE final answer from scratch: all 4 ideas in the required '## N.' markdown format (renumbered 1-4), followed by the one mandatory json tail. Do not emit only the new ideas -- emit the full, self-contained list, because the saved run replaces the partial entirely.
+
+--- PARTIAL ANSWER FROM THE KILLED RUN ---
+${clipped}
+--- END PARTIAL ANSWER ---`;
 }
 
 function killGroup(proc: ChildProcess, signal: NodeJS.Signals): void {
@@ -187,9 +265,20 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
     const start = Date.now();
     const stdoutChunks: string[] = [];
     let stderrBuf = '';
+    let lastFlush = Date.now();
 
     child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (d: string) => { state.lastActivity = Date.now(); stdoutChunks.push(d); });
+    child.stdout?.on('data', (d: string) => {
+      const now = Date.now();
+      state.lastActivity = now;
+      stdoutChunks.push(d);
+      // rate-limited checkpoint of the answer-so-far, so a kill mid-stream
+      // leaves a resumable partial on disk
+      if (now - lastFlush >= INFLIGHT_FLUSH_MS) {
+        lastFlush = now;
+        void inflightFlush(stdoutChunks.join('').trim());
+      }
+    });
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (d: string) => {
       state.lastActivity = Date.now();
@@ -223,7 +312,9 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
     child.on('close', (code) => {
       clearInterval(watchdog);
       if (stderrBuf.trim()) onStderr(stderrBuf);
-      resolve({ code: typeof code === 'number' ? code : 0, stdout: stdoutChunks.join('') });
+      const stdout = stdoutChunks.join('');
+      void inflightFlush(stdout.trim()); // final checkpoint
+      resolve({ code: typeof code === 'number' ? code : 0, stdout });
     });
   });
 }
@@ -247,30 +338,13 @@ export async function startItchResearch(flags: Record<string, unknown> = {}): Pr
   state.killedReason = null;
   state.started = iso();
   state.lastActivity = Date.now();
+  state.resumable = false; // a fresh run supersedes any prior checkpoint
   try {
     const handle = await buildHandle(flags);
-    state.log.push(`$ eigen ${handle.args.join(' ')}  (model=${handle.model})`);
-    void (async () => {
-      try {
-        const { code, stdout } = await runEigen(handle, (line) => append(`${line}\n`));
-        if (state.partial) { state.log.push(state.partial); state.partial = ''; trimLog(); }
-        const text = stdout.trim();
-        let savedStem: string | null = null;
-        if (text && !state.killedReason) {
-          try {
-            savedStem = await saveRun(text, handle.meta);
-          } catch (err) {
-            append(`[save failed] ${err instanceof Error ? err.message : String(err)}\n`);
-          }
-        }
-        state.exitCode = code;
-        state.savedStem = savedStem;
-      } finally {
-        state.proc = null;
-        state.pid = null;
-        try { await unlink(handle.promptFile); } catch { /* tmp */ }
-      }
-    })();
+    // Open the checkpoint BEFORE spawning so a kill at any point leaves a
+    // resumable trail (prompt + partial ideas streamed in by runEigen).
+    await inflightBegin(handle);
+    runHandleAsync(handle);
     return { ok: true, pid: state.pid ?? undefined, started: state.started };
   } catch (err) {
     state.exitCode = 1;
@@ -279,6 +353,85 @@ export async function startItchResearch(flags: Record<string, unknown> = {}): Pr
   } finally {
     starting = false;
   }
+}
+
+/** Resume the last pass killed mid-flight: rebuild a handle from the saved
+ * checkpoint (same prompt + model + meta) with a continuation directive that
+ * feeds back the partial ideas, then run to a clean save. */
+export async function resumeItchResearch(): Promise<StartResearchResult> {
+  if (starting || running()) return { ok: false, error: 'research already running' };
+  const ctx = await loadInflight();
+  if (!ctx) return { ok: false, error: 'no interrupted run to resume' };
+  starting = true;
+  state.log = [];
+  state.logOffset = 0;
+  state.partial = '';
+  state.exitCode = null;
+  state.savedStem = null;
+  state.killedReason = null;
+  state.started = iso();
+  state.lastActivity = Date.now();
+  state.resumable = false;
+  try {
+    const system = ctx.system;
+    const user = ctx.user + resumeContinuationBlock(ctx.partial);
+    const dir = await mkdtemp(join(tmpdir(), 'atrium-itch-'));
+    const promptFile = join(dir, 'prompt.md');
+    await writeFile(promptFile, `${system}\n\n---\n\n${user}\n`, 'utf8');
+    const handle: RunHandle = {
+      model: ctx.model, promptFile, args: eigenArgsFor(ctx.model, promptFile),
+      meta: ctx.meta as Record<string, unknown>, system, user,
+    };
+    state.log.push('[resume] continuing the interrupted run from its partial ideas');
+    state.log.push(`$ eigen ${handle.args.join(' ')}  (model=${handle.model})`);
+    // keep the SAME checkpoint files; reset the partial so the resumed pass
+    // overwrites it (and is itself resumable if it dies again).
+    await inflightBegin(handle);
+    runHandleAsync(handle);
+    return { ok: true, pid: state.pid ?? undefined, started: state.started };
+  } catch (err) {
+    state.exitCode = 1;
+    append(`[resume failed] ${err instanceof Error ? err.message : String(err)}\n`);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    starting = false;
+  }
+}
+
+/** Shared run body for start + resume: stream eigen, then save (clearing the
+ * checkpoint) on a clean finish or leave it in place when the watchdog killed
+ * the pass so it can be resumed. */
+function runHandleAsync(handle: RunHandle): void {
+  void (async () => {
+    try {
+      const { code, stdout } = await runEigen(handle, (line) => append(`${line}\n`));
+      if (state.partial) { state.log.push(state.partial); state.partial = ''; trimLog(); }
+      const text = stdout.trim();
+      let savedStem: string | null = null;
+      if (state.killedReason) {
+        // Killed mid-flight: keep the checkpoint, don't save a partial run.
+        append('[run interrupted] partial ideas checkpointed — use resume to continue\n');
+        state.resumable = (await loadInflight()) !== null;
+      } else if (text) {
+        try {
+          savedStem = await saveRun(text, handle.meta);
+          await inflightClear(); // clean save — nothing left to resume
+          state.resumable = false;
+        } catch (err) {
+          append(`[save failed] ${err instanceof Error ? err.message : String(err)}\n`);
+        }
+      } else {
+        await inflightClear(); // nothing useful to resume
+        state.resumable = false;
+      }
+      state.exitCode = code;
+      state.savedStem = savedStem;
+    } finally {
+      state.proc = null;
+      state.pid = null;
+      try { await unlink(handle.promptFile); } catch { /* tmp */ }
+    }
+  })();
 }
 
 export function stopItchResearch(): { ok: boolean } {
@@ -304,5 +457,6 @@ export function itchResearchStatus(since?: number): Record<string, unknown> {
     exit_code: state.exitCode,
     saved_stem: state.savedStem,
     killed_reason: state.killedReason,
+    resumable: !running() && state.resumable,
   };
 }

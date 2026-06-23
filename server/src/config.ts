@@ -62,6 +62,11 @@ export const defaults = {
   itch: {
     base: 'http://127.0.0.1:8799',
     repo: join(HOME, 'projects', 'itch'),
+    // sxc retriever override file. itch-intent mining reads this on every
+    // get_context call and lets it WIN over an explicit retriever= arg, so the
+    // atrium "fall back to bm25" toggle can route mining off a stale/rebuilding
+    // ColBERT index without editing the skill. Mirrors sxc.serve.FORCE_CONFIG_PATH.
+    sxcServeConfig: join(HOME, 'projects', 'splade-3-colbert-2', 'config', 'serve.json'),
   },
 
   surreal: {
@@ -121,7 +126,7 @@ export const defaults = {
     // 'crit' | 'warn' | 'info' — minimum severity that pings the phone
     minSeverity: 'crit' as 'info' | 'warn' | 'crit',
     throttleMs: 21_600_000, // one ping per flag id per 6h, even if it flaps
-    notifyClear: false, // single-line notice when a pinged flag disappears
+    notifyClear: true, // single-line notice when a pinged flag disappears (so a [crit] always gets a matching [clear] on recovery)
     target: 'telegram', // hermes send --to <target>
   },
 };

@@ -1,6 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState, Panel, Row, SectionLabel } from '../../components/ui';
-import { getDecisions, searchIdeas, type Decision } from './api';
+import {
+  getDecisions,
+  getIdeaBucketCounts,
+  searchIdeas,
+  type Decision,
+  type IdeaBucketCounts,
+  type IdeaBucketKey,
+} from './api';
 import { RATING_LABEL, displayTitle, fmtStem } from './util';
 import type { ItchRunInfo } from '../../../../shared/types';
 
@@ -10,14 +17,17 @@ export function DecisionsPanel({
   runs,
   version,
   onJump,
+  onOpenBucket,
 }: {
   runs: ItchRunInfo[];
   version: number;
   onJump: (stem: string, title: string) => void;
+  /** open the full scrollable page for a rank (5..1) or the undecided pile */
+  onOpenBucket: (bucket: IdeaBucketKey) => void;
 }) {
   const [decisions, setDecisions] = useState<Decision[] | null>(null);
+  const [counts, setCounts] = useState<IdeaBucketCounts | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<Record<number, boolean>>({});
   const [notice, setNotice] = useState<string | null>(null); // transient — jump resolve failed
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -37,6 +47,18 @@ export function DecisionsPanel({
       })
       .catch((e) => {
         if (!ac.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => ac.abort();
+  }, [version]);
+
+  // bucket counts feed the undecided row (and the count beside each rank header) —
+  // a separate aggregate over the run files, since the ledger holds only rated ideas
+  useEffect(() => {
+    const ac = new AbortController();
+    getIdeaBucketCounts(ac.signal)
+      .then(setCounts)
+      .catch(() => {
+        /* counts are a header garnish + the undecided doorway — a failure just hides them */
       });
     return () => ac.abort();
   }, [version]);
@@ -99,13 +121,19 @@ export function DecisionsPanel({
           <EmptyState>no decisions yet — rate some ideas</EmptyState>
         ) : (
           groups.map(({ rating, rows }) => {
-            const expanded = open[rating] ?? false;
-            const shown = expanded ? rows : rows.slice(0, 6);
+            const shown = rows.slice(0, 6);
             return (
               <Fragment key={rating}>
-                <SectionLabel>
+                {/* clickable header — opens the full scrollable page for this rank */}
+                <button
+                  type="button"
+                  onClick={() => onOpenBucket(String(rating) as IdeaBucketKey)}
+                  title="open the full page for this rank"
+                  className="group mb-2 mt-4 flex w-full cursor-pointer items-baseline gap-2 font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint transition-colors first:mt-0 hover:text-mist"
+                >
                   {RATING_LABEL[rating]} <span className="tabular-nums">· {rows.length}</span>
-                </SectionLabel>
+                  <span className="hover-cluster ml-auto text-slate-glow">→</span>
+                </button>
                 {shown.map((d) => (
                   <Row
                     key={`${d.as_of}-${d.title}`}
@@ -133,18 +161,34 @@ export function DecisionsPanel({
                     </div>
                   </Row>
                 ))}
-                {rows.length > 6 && !expanded && (
+                {rows.length > 6 && (
                   <button
                     type="button"
-                    onClick={() => setOpen((o) => ({ ...o, [rating]: true }))}
+                    onClick={() => onOpenBucket(String(rating) as IdeaBucketKey)}
+                    title="open the full page for this rank"
                     className="cursor-pointer px-2.5 py-1 font-mono text-[11px] tabular-nums text-mist-faint transition-colors hover:text-mist"
                   >
-                    {rows.length - 6} more
+                    {rows.length - 6} more →
                   </button>
                 )}
               </Fragment>
             );
           })
+        )}
+        {/* undecided — ideas surfaced in runs but never rated; the count comes from the
+            bucket aggregate, and the row is a doorway to its full scrollable page */}
+        {counts && counts.undecided > 0 && (
+          <Row
+            onClick={() => onOpenBucket('undecided')}
+            title="open every idea you haven't rated yet"
+            className="group mt-2"
+          >
+            <div className="flex w-full min-w-0 items-center gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">undecided</span>
+              <span className="font-mono text-[11px] tabular-nums text-mist-faint">· {counts.undecided}</span>
+              <span className="hover-cluster ml-auto shrink-0 font-mono text-[11px] text-slate-glow">→</span>
+            </div>
+          </Row>
         )}
       </div>
     </Panel>

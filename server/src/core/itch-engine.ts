@@ -105,7 +105,10 @@ ALSO THIS RUN -- ORBIT MODE IS ON. The builder has named a CENTER they want this
 - Everything else still binds: NEW only (honor every exclusion list), grounded web findings + source URLs, OFF-LIMITS WORK ECOSYSTEMS, CURRENTLY PURSUING orthogonality, AVOID THIS FLAVOR, and EXTRA RULES.
 - Spread AROUND the center; do not converge on one spot restated six times. Vary the angle, the layer (primitive / tool / app / research), and the distance so the list genuinely explores the orbit.`;
 
-const SYSTEM_CLOSE = '\n\nAim for 6-10 ideas. End with a one-line note on which two you would start with.';
+// Capped at 4 deliberately: each idea costs a couple of prior-art/competitor
+// searches, and long runs blow past the watchdog cap and die mid-flight. Four
+// validated ideas finishes inside budget; more is what hangs.
+const SYSTEM_CLOSE = '\n\nReturn EXACTLY 4 ideas -- no more. Each idea costs real verification searches, so keep the list to 4 and spend the searches making those 4 solid rather than padding the count. End with a one-line note on which two you would start with.';
 
 const NATIVE_INTENT_DIRECTIVE = `=== NATIVE ATRIUM INTENT PROFILE (no external profile dependency) ===
 Atrium has already assembled the builder profile in this prompt. Do not invoke profile-mining helpers or search local profile folders; use the sections below directly.
@@ -119,7 +122,7 @@ Use these signals in priority order:
 
 VALIDATE the claims, don't assert them. Before you call an idea novel, first, or "nothing exists for X", actually search for the closest existing tool / paper / competitor and a real date for any timeliness claim — state what you found (with a URL) or the query that came up empty, in a **Validation:** line on each idea. A "no X exists" claim you did not search for is wrong, not bold; drop or narrow an idea whose premise the search kills.
 
-CONVERGE — don't search forever, but DO spend the searches verification needs. Budget a couple of prior-art/competitor checks per idea on top of the finding that sparked it; once each idea's load-bearing claim is checked, STOP and WRITE the full ranked idea list in the required format, then end. Endless "rounding out" with no list is a FAILED run, but so is a list of unchecked "first / novel" claims — a written list of 6-10 grounded, validated ideas is the goal. Output the '## N.' ideas once their claims are checked, not before and not after more aimless searching.`;
+CONVERGE — don't search forever, but DO spend the searches verification needs. Budget a couple of prior-art/competitor checks per idea on top of the finding that sparked it; once each idea's load-bearing claim is checked, STOP and WRITE the full ranked idea list in the required format, then end. Endless "rounding out" with no list is a FAILED run, but so is a list of unchecked "first / novel" claims — a written list of EXACTLY 4 grounded, validated ideas is the goal. Four is a hard cap: more ideas means more searches and the run dies before it writes. Output the '## N.' ideas once their claims are checked, not before and not after more aimless searching.`;
 
 const COLLISION_SYSTEM_BLOCK = `
 
@@ -137,7 +140,7 @@ You have been handed real domains sampled from a live taxonomy, deliberately dra
 
 These are REAL published fields, never invented, sampled at a TUNED DISTANCE from the builder's interests (the chaos temperature): the closer the temperature, the nearer these domains sit to their orbit; the higher, the wilder. EVERY idea you return this run must be a collision: take a sampled domain and bridge it with the builder's demonstrated skills and interests above (systems / performance / inference / distributed primitives). Do NOT return any "normal" idea -- there is no main list this run, the whole list is collisions.
 
-Use ALL the sampled domains (one or two ideas each is fine; aim for 6-10 ideas total spread across the domains). Each bridge must be LOAD-BEARING: the core problem AND the solution must REQUIRE both sides -- the builder's expertise applied to a real bottleneck IN that domain, or a tool/library that authentically lives in both. A cosmetic mention of the domain is a failed bridge.
+Pick the 4 strongest domains for collisions (one idea each; EXACTLY 4 ideas total spread across distinct domains). Each bridge must be LOAD-BEARING: the core problem AND the solution must REQUIRE both sides -- the builder's expertise applied to a real bottleneck IN that domain, or a tool/library that authentically lives in both. A cosmetic mention of the domain is a failed bridge.
 
 Do NOT fabricate a connection. If a sampled domain has NO real substrate to bridge (the only link would be wordplay), skip that one and lean on the others -- but distant-but-real is the target, not a reason to bail.
 

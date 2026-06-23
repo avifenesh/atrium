@@ -241,6 +241,72 @@ export async function loadItchRunDetail(paths: Paths, stem: string): Promise<any
   };
 }
 
+// ---------- idea buckets (decisions by rank + the unrated "undecided" pile) ----------
+// the decisions ledger only holds RATED ideas (and only title/rating/note/as_of) —
+// to show a scrollable, full-context page per rank AND a page of everything still
+// undecided, we aggregate the run files themselves: every idea, deduped by title
+// (newest run wins, runs are newest-first), carrying its body + structured sidecar
+// row + run stem so the same IdeaCard the feed renders works on a bucket page.
+
+export type IdeaBucketKey = '5' | '4' | '3' | '2' | '1' | 'undecided';
+const IDEA_BUCKETS: IdeaBucketKey[] = ['5', '4', '3', '2', '1', 'undecided'];
+
+export function isIdeaBucketKey(v: string): v is IdeaBucketKey {
+  return (IDEA_BUCKETS as string[]).includes(v);
+}
+
+// mirror the web util's structuredFor: exact title, then resurface-marker-stripped
+function structuredForTitle(structured: any, title: string): any {
+  const ideas = structured?.ideas;
+  if (!Array.isArray(ideas) || ideas.length === 0) return null;
+  const exact = ideas.find((i: any) => i?.title === title);
+  if (exact) return exact;
+  const stripped = title.trim().replace(RESURFACE_RE, '').trim();
+  return ideas.find((i: any) => i?.title === stripped) ?? null;
+}
+
+async function aggregateIdeaBuckets(paths: Paths): Promise<Record<IdeaBucketKey, any[]>> {
+  const runs = await loadItchRuns(paths); // newest first
+  const buckets: Record<IdeaBucketKey, any[]> = { '5': [], '4': [], '3': [], '2': [], '1': [], undecided: [] };
+  const seen = new Set<string>();
+  for (const run of runs) {
+    const detail = await loadItchRunDetail(paths, run.stem);
+    if (!detail) continue;
+    for (const idea of detail.ideas) {
+      const key = idea.title.toLowerCase();
+      if (seen.has(key)) continue; // an idea resurfaces across runs — keep the newest instance
+      seen.add(key);
+      const r = idea.rating;
+      const bucket: IdeaBucketKey =
+        r === 5 || r === 4 || r === 3 || r === 2 || r === 1 ? (String(r) as IdeaBucketKey) : 'undecided';
+      buckets[bucket].push({
+        stem: run.stem,
+        idx: idea.idx,
+        title: idea.title,
+        body: idea.body,
+        metadata: idea.metadata,
+        rating: idea.rating,
+        note: idea.note,
+        outcome: idea.outcome,
+        outcome_note: idea.outcome_note,
+        structured: structuredForTitle(detail.structured, idea.title),
+      });
+    }
+  }
+  return buckets;
+}
+
+export async function loadItchIdeaBucketCounts(paths: Paths): Promise<Record<IdeaBucketKey, number>> {
+  const b = await aggregateIdeaBuckets(paths);
+  return { '5': b['5'].length, '4': b['4'].length, '3': b['3'].length, '2': b['2'].length, '1': b['1'].length, undecided: b.undecided.length };
+}
+
+export async function loadItchIdeaBucket(paths: Paths, bucket: string): Promise<{ bucket: IdeaBucketKey; entries: any[] } | null> {
+  if (!isIdeaBucketKey(bucket)) return null;
+  const b = await aggregateIdeaBuckets(paths);
+  return { bucket, entries: b[bucket] };
+}
+
 function snippetFor(text: string, q: string): string {
   const lower = text.toLowerCase();
   const i = lower.indexOf(q.toLowerCase());

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Dot, RelTime } from '../../components/ui';
 import { useTweenNumber } from '../../hooks';
-import { getModels, getResearchStatus, setModel as persistModel, startResearch, stopResearch } from './api';
+import { getModels, getResearchStatus, getRetriever, resumeResearch, setFallbackBm25, setModel as persistModel, startResearch, stopResearch } from './api';
 import type { ItchResearch } from '../../../../shared/types';
 
 // ---------- research strip (rise 0) ----------
@@ -20,6 +20,7 @@ interface ExitInfo {
   code: number | null;
   savedStem: string | null;
   killedReason: string | null;
+  resumable: boolean;
 }
 
 export function ResearchStrip({
@@ -61,6 +62,11 @@ export function ResearchStrip({
   const [models, setModels] = useState<{ id: string; label?: string }[] | null>(null);
   const [model, setModelId] = useState<string | null>(null);
 
+  // sxc retriever fallback — persistent toggle. true = itch-intent mining is
+  // forced onto bm25 (use while the ColBERT index is stale/rebuilding); false =
+  // the skill's own ColBERT choice applies. Loaded once; flips persist server-side.
+  const [fallbackBm25, setFallbackBm25State] = useState(false);
+
   const linesRef = useRef(0); // absolute log lines we hold (the delta protocol's `since`)
   const pollFailsRef = useRef(0);
   const startedRef = useRef<string | null>(null);
@@ -88,6 +94,15 @@ export function ResearchStrip({
         setModels(m.models);
         setModelId(m.selected || m.default || m.models[0].id);
       })
+      .catch(() => {});
+    return () => ac.abort();
+  }, []);
+
+  // retriever fallback state — once on mount; silent failure leaves it off
+  useEffect(() => {
+    const ac = new AbortController();
+    getRetriever(ac.signal)
+      .then((r) => setFallbackBm25State(r.fallback_bm25))
       .catch(() => {});
     return () => ac.abort();
   }, []);
@@ -129,7 +144,7 @@ export function ResearchStrip({
         setPartial(st.partial);
         if (!st.running) {
           setOverride(false);
-          setExit({ code: st.exit_code, savedStem: st.saved_stem, killedReason: st.killed_reason });
+          setExit({ code: st.exit_code, savedStem: st.saved_stem, killedReason: st.killed_reason, resumable: !!st.resumable });
           if (st.saved_stem) onSaved(st.saved_stem);
           return;
         }
@@ -158,6 +173,21 @@ export function ResearchStrip({
     el.scrollTo({ top: el.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
   }, [log, partial]);
 
+  // optimistic flip; revert + surface on failure so the UI never lies about state
+  const toggleFallback = async (on: boolean) => {
+    setFallbackBm25State(on);
+    try {
+      const { status, body } = await setFallbackBm25(on);
+      if (!body?.ok) {
+        setFallbackBm25State(!on);
+        setMsg({ text: body?.error ?? `retriever toggle failed (${status})`, isError: true });
+      }
+    } catch (e) {
+      setFallbackBm25State(!on);
+      setMsg({ text: e instanceof Error ? e.message : String(e), isError: true });
+    }
+  };
+
   const start = async () => {
     setBusy(true);
     setMsg(null);
@@ -185,6 +215,32 @@ export function ResearchStrip({
         setOverride(true);
       } else {
         setMsg({ text: body?.error ?? `start failed (${status})`, isError: true });
+      }
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : String(e), isError: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resume = async () => {
+    setBusy(true);
+    setMsg(null);
+    setExit(null);
+    try {
+      const { status, body } = await resumeResearch();
+      if (status === 409) {
+        setMsg({ text: body?.error ?? 'nothing to resume', isError: false });
+      } else if (body?.ok) {
+        startedRef.current = body.started ?? null;
+        setStartedAt(body.started ?? null);
+        linesRef.current = 0;
+        setLog([]);
+        setPartial('');
+        stickRef.current = true;
+        setOverride(true);
+      } else {
+        setMsg({ text: body?.error ?? `resume failed (${status})`, isError: true });
       }
     } catch (e) {
       setMsg({ text: e instanceof Error ? e.message : String(e), isError: true });
@@ -297,7 +353,22 @@ export function ResearchStrip({
 
   return (
     <section className="glass rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
-      {exitView && <div className={`fade-in mb-2 font-mono text-xs ${exitView.tone}`}>{exitView.text}</div>}
+      {exitView && (
+        <div className="fade-in mb-2 flex items-center gap-2">
+          <span className={`font-mono text-xs ${exitView.tone}`}>{exitView.text}</span>
+          {exit?.resumable && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void resume()}
+              title="continue the interrupted run from its partial ideas — no re-research"
+              className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-jade press glass glass-hover hover:text-jade disabled:opacity-50"
+            >
+              {busy ? '◌' : 'resume'}
+            </button>
+          )}
+        </div>
+      )}
       {msg && (
         <div
           className={`fade-in mb-2 truncate font-mono text-xs ${msg.isError ? 'text-coral' : 'text-mist-faint'}`}
@@ -390,6 +461,18 @@ export function ResearchStrip({
           />
         </label>
         <span className="ml-auto flex items-center gap-3">
+          <label
+            className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-mist-dim transition-colors hover:text-mist"
+            title="force itch-intent mining onto bm25 — use while the ColBERT index is stale or rebuilding; off uses ColBERT"
+          >
+            <input
+              type="checkbox"
+              checked={fallbackBm25}
+              onChange={(e) => void toggleFallback(e.target.checked)}
+              className="h-3 w-3 cursor-pointer accent-mist-dim"
+            />
+            <span className={fallbackBm25 ? 'text-amber' : undefined}>fallback bm25</span>
+          </label>
           {models && model !== null && (
             <select
               value={model}
