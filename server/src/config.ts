@@ -17,6 +17,11 @@ export const defaults = {
     noiseOrgs: ['zelos-social'],
     pollMs: 60_000,
     ownReposPollMs: 600_000,
+    /** consecutive failed polls before the crit flag (and phone ping) raises.
+     *  The dashboard error shows on the 1st failure; this only gates the page,
+     *  so a transient GitHub 5xx that heals next cycle never reaches your phone.
+     *  3 × pollMs = ~3 min of sustained failure before you're alerted. */
+    failThreshold: 3,
   },
 
   paths: {

@@ -47,6 +47,9 @@ const REVIEW_DECISIONS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUI
 let lastGood: GithubState | null = null;
 let ownReposCache: RepoCount[] = [];
 let ownReposLastSuccess = 0;
+// consecutive failed polls — gates the crit flag so a transient 5xx that heals
+// next cycle never pages. Reset to 0 on any successful poll.
+let consecutiveFailures = 0;
 
 function toItem(n: any, kind: 'issue' | 'pr'): GithubItem {
   const repo = String(n?.repository?.nameWithOwner ?? '');
@@ -291,6 +294,7 @@ const collector: Collector = {
         rateLimit,
       };
       lastGood = state;
+      consecutiveFailures = 0; // healthy poll clears the failure streak
       store.setSection('github', state);
 
       // "quiet until activity" wake-up: any seen item that moved since its mute
@@ -304,14 +308,20 @@ const collector: Collector = {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      flags.push({
-        id: 'github:poll-failed',
-        severity: 'crit',
-        title: 'GitHub poll failed',
-        detail: msg,
-        source: 'github',
-        raisedAt: iso(),
-      });
+      consecutiveFailures++;
+      // The dashboard error updates on every failure (visual), but the crit flag —
+      // which is what pages the phone via notify.ts — only raises once failures
+      // have persisted past the threshold. A lone transient 5xx stays silent.
+      if (consecutiveFailures >= config.github.failThreshold) {
+        flags.push({
+          id: 'github:poll-failed',
+          severity: 'crit',
+          title: 'GitHub poll failed',
+          detail: `${consecutiveFailures} consecutive failures — ${msg}`,
+          source: 'github',
+          raisedAt: iso(),
+        });
+      }
       const base: GithubState = lastGood ?? {
         updatedAt: null,
         error: null,
