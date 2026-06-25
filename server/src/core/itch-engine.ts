@@ -199,7 +199,7 @@ const USER_TEMPLATE = `Here is the builder's profile. Use it ONLY to understand 
 
 === OFF-LIMITS WORK ECOSYSTEMS (the builder's day job -- propose NOTHING here) ===
 {offlimits}
-{collision_directive}{orbit_directive}
+{collision_directive}{orbit_directive}{corroboration}
 === TASK ===
 Use your web search tools now and return a ranked list of NEW things to build or explore, following every rule in your instructions. Today is {today}.`;
 
@@ -377,6 +377,9 @@ export interface ResearchOptions {
   projectsDir?: string;
   noHistory?: boolean;
   historyBeforeStem?: string | null;
+  /** Pre-rendered TRANSCRIPT CORROBORATION block (from formatCorroboration);
+   *  empty string when sxc mining is unavailable/disabled. */
+  corroboration?: string;
 }
 
 export async function buildUserPrompt(opts: ResearchOptions = {}): Promise<string> {
@@ -410,6 +413,7 @@ export async function buildUserPrompt(opts: ResearchOptions = {}): Promise<strin
     offlimits: work.size ? `from work.md/work.txt: ${[...work].sort().join(', ')}` : '[none configured]',
     collision_directive: collisionDir,
     orbit_directive: orbitDir,
+    corroboration: opts.corroboration ?? '',
     today,
   }) + STRUCTURED_OUTPUT_DIRECTIVE;
 }
@@ -655,6 +659,131 @@ export async function sampleCollisionDomains(temperature: number, k = 8): Promis
       resolve([]);
     }
   });
+}
+
+// --- transcript corroboration miner (sxc ranked retrieval) ------------------
+// Grounds each interest seed against the builder's OWN past transcripts/notes
+// via the splade-3-colbert-2 (sxc) index, so the model sees genuine recurring
+// signal (and where it showed up) instead of reasoning blind. CPU by default
+// (a ColBERT query is ~32ms once the index is warm; the one-time load amortises
+// across the whole seed batch in a single background run) so this never needs
+// the GPU and never contends with anything else on the box. Degrades GRACEFULLY
+// to [] (exact ungrounded baseline) on any failure — missing index, stale
+// rebuild, sxc import error — mirroring the collide sampler's contract.
+const MINE_PY = process.env.ITCH_MINE_PY || join(HOME, 'projects', 'atrium', 'itch-collide', 'mine_transcripts.py');
+// Distilled-knowledge tiers (README/memory/skill/paper/surreal) are weighted
+// BELOW transcript tiers for corroboration, per the itch-intent skill: a stated
+// interest echoed across one's own conversations is stronger signal than a doc.
+const TRANSCRIPT_SOURCES = new Set(['claude', 'codex', 'hermes', 'eigen']);
+// Echo-chain guard (see itch-collide/intent_recency.py): itch's OWN scout runs
+// flood the transcripts and would self-corroborate every idea it ever proposed.
+// Drop hits whose project is an itch run dir or the itch app itself so
+// corroboration reflects genuine work/conversation, not itch feeding itself.
+const ITCH_SELF_PROJECT = /(?:^|[^a-z])itch(?:$|[^a-z])|atrium-itch/i;
+const MINE_MAX_SEEDS = Number(process.env.ITCH_MINE_MAX_SEEDS || 16);
+const MINE_TIMEOUT_MS = Number(process.env.ITCH_MINE_TIMEOUT_MS || 180_000);
+
+export interface MineHit {
+  source: string;
+  project: string | null;
+  session_id: string;
+  ts: number | null;
+  score: number;
+  quote: string;
+}
+export interface MineSeedResult { seed: string; hits: MineHit[]; }
+export interface MineResult { retriever: string; seeds: MineSeedResult[]; }
+
+/** Pull stated-interest seed terms from interests.md "What I'm drawn to" bullets.
+ *  These are the AUTHORITATIVE positive signal; we corroborate THEM against the
+ *  transcripts (not arbitrary frequency terms), which keeps the MEANS-vs-ENDS
+ *  guard intact — we surface where a stated interest actually showed up. */
+export async function loadInterestSeeds(max = MINE_MAX_SEEDS): Promise<string[]> {
+  const text = await readFile(INTERESTS_FILE, 'utf8').catch(() => '');
+  if (!text.trim()) return [];
+  const seeds: string[] = [];
+  let inDrawn = false;
+  for (const raw of text.split('\n')) {
+    const ln = raw.trim();
+    if (/^#+\s/.test(ln)) {
+      // Section gate: collect only under a "drawn to" heading, stop at the
+      // anti-signal ("NOT drawn to") section.
+      inDrawn = /drawn to/i.test(ln) && !/not drawn to/i.test(ln);
+      continue;
+    }
+    if (!inDrawn) continue;
+    const m = ln.match(/^[-*]\s+(.+)$/);
+    if (!m) continue;
+    // Take the lead clause before the first parenthetical / em-dash / period —
+    // the bullet's headline, not its whole prose, makes a tighter query.
+    let term = m[1].split(/\s+[—–-]\s+|\.\s|\(/)[0].trim();
+    term = term.replace(/[.,;:]+$/, '').trim();
+    if (term.length >= 4 && term.split(/\s+/).length <= 12) seeds.push(term);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const s of seeds) {
+    const k = s.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(s); }
+  }
+  return out.slice(0, max);
+}
+
+/** Run the sxc miner over seeds (CPU). Returns {retriever, seeds:[]} on any
+ *  failure so the caller can fold in an empty corroboration block. */
+export async function mineTranscripts(seeds: string[], k = 4): Promise<MineResult> {
+  const empty: MineResult = { retriever: 'none', seeds: [] };
+  const terms = seeds.map((s) => s.trim()).filter(Boolean).slice(0, MINE_MAX_SEEDS);
+  if (!terms.length) return empty;
+  return new Promise<MineResult>((resolve) => {
+    try {
+      const env = {
+        ...process.env,
+        ITCH_MINE_DEVICE: process.env.ITCH_MINE_DEVICE || 'cpu',
+      };
+      const child = execFile(
+        SXC_PY, [MINE_PY, '--k', String(k), '--max-seeds', String(MINE_MAX_SEEDS)],
+        { timeout: MINE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, env },
+        (err, stdout) => {
+          if (err) { resolve(empty); return; }
+          try {
+            const parsed = JSON.parse(String(stdout).trim() || '{}');
+            if (!parsed || !Array.isArray(parsed.seeds)) { resolve(empty); return; }
+            resolve({ retriever: String(parsed.retriever ?? 'unknown'), seeds: parsed.seeds });
+          } catch { resolve(empty); }
+        },
+      );
+      child.stdin?.end(JSON.stringify(terms));
+    } catch { resolve(empty); }
+  });
+}
+
+/** Render mined hits into a prompt block: per seed, the corroborating sources
+ *  (transcript tiers first, distilled-knowledge tiers flagged) with a short
+ *  quote. Empty string when nothing corroborated, so the prompt slot vanishes. */
+export function formatCorroboration(mined: MineResult): string {
+  const lines: string[] = [];
+  for (const s of mined.seeds) {
+    const hits = (s.hits || []).filter((h) =>
+      (h.quote || '').trim() && !(h.project && ITCH_SELF_PROJECT.test(h.project)));
+    if (!hits.length) continue;
+    const rendered = hits.slice(0, 4).map((h) => {
+      const tier = TRANSCRIPT_SOURCES.has(h.source) ? h.source : `${h.source}(doc)`;
+      const where = h.project ? `${tier}/${h.project}` : tier;
+      const quote = h.quote.replace(/\s+/g, ' ').trim().slice(0, 200);
+      return `    - [${where}] ${quote}`;
+    });
+    lines.push(`- "${s.seed}":\n${rendered.join('\n')}`);
+  }
+  if (!lines.length) return '';
+  return (
+    '\n=== TRANSCRIPT CORROBORATION (where each STATED INTEREST actually showed up in the ' +
+    "builder's own transcripts/notes; ranked by the sxc retriever). Use ONLY to gauge which " +
+    'interests are genuinely recurring vs noise — this is de-dup/grounding context, NOT a ' +
+    'source of new ideas, and transcript tiers outweigh doc tiers. The NEW-only and ' +
+    'orthogonality rules still bind. ===\n' +
+    lines.join('\n')
+  );
 }
 
 export { DEFAULT_PROJECTS_DIR };

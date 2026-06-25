@@ -16,7 +16,10 @@ import {
   buildUserPrompt,
   composeSystemPrompt,
   defaultOwners,
+  formatCorroboration,
+  loadInterestSeeds,
   loadWorkPatterns,
+  mineTranscripts,
   sampleCollisionDomains,
   saveRun,
   DEFAULT_PROJECTS_DIR,
@@ -147,6 +150,25 @@ async function buildHandle(flags: Record<string, unknown>): Promise<RunHandle> {
   }
   const collideActive = collideOn && sampledDomains.length > 0;
 
+  // Ground stated interests against the builder's own transcripts/notes via the
+  // sxc ranked retriever (CPU). Opt out with --no_mine; degrades to '' (exact
+  // ungrounded baseline) on any failure. Skipped in collide runs — those are
+  // deliberately FAR from the demonstrated profile, so self-corroboration would
+  // pull them back toward the orbit, defeating the point.
+  let corroboration = '';
+  if (!flags.no_mine && !collideActive) {
+    const seeds = await loadInterestSeeds();
+    if (seeds.length) {
+      append(`[mine] grounding ${seeds.length} interest seeds against transcripts (sxc, cpu)…\n`);
+      const mined = await mineTranscripts(seeds, 4);
+      corroboration = formatCorroboration(mined);
+      const n = mined.seeds.filter((x) => (x.hits || []).length).length;
+      append(n
+        ? `[mine] corroborated ${n}/${seeds.length} seeds via ${mined.retriever}\n`
+        : '[mine] no corroboration (sxc unavailable or no hits) — ungrounded baseline\n');
+    }
+  }
+
   const system = composeSystemPrompt({
     market: !!flags.market,
     collide: collideActive,
@@ -166,6 +188,7 @@ async function buildHandle(flags: Record<string, unknown>): Promise<RunHandle> {
     owners,
     work,
     projectsDir: typeof flags.projects_dir === 'string' ? flags.projects_dir : undefined,
+    corroboration,
   });
 
   const meta = buildResearchRunMeta({
