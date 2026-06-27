@@ -454,6 +454,39 @@ export interface ItchResearch {
   started: string | null;
   savedStem: string | null;
   killedReason: string | null;
+  resumable: boolean;
+}
+
+export type SxcGroundingFeedback = 'up' | 'down';
+
+export interface SxcGroundingReviewItem {
+  id: string;
+  status: 'review';
+  seed: string;
+  chunkId: string;
+  retriever: string;
+  source: string;
+  project: string | null;
+  sessionId: string;
+  ts: number | null;
+  score: number;
+  /** raw retriever score used for the confidence gate (higher is better) */
+  confidence: number;
+  threshold: number;
+  quote: string;
+  feedback: SxcGroundingFeedback | null;
+  updatedAt: string;
+}
+
+export interface SxcGroundingState {
+  updatedAt: string | null;
+  /** retriever that produced the latest observed low-confidence grounding batch */
+  retriever: string | null;
+  /** score threshold below which ColBERT/hybrid hits are tagged for review; 0 disables gating */
+  threshold: number;
+  pending: SxcGroundingReviewItem[];
+  reviewedTotal: number;
+  error: string | null;
 }
 
 export interface ItchState {
@@ -464,6 +497,8 @@ export interface ItchState {
   research: ItchResearch;
   /** decisions ledger size (rated ideas across all runs), null when unknown */
   ratedTotal: number | null;
+  /** low-confidence sxc grounding hits awaiting explicit relevance feedback */
+  sxcGrounding: SxcGroundingState;
   error: string | null;
 }
 

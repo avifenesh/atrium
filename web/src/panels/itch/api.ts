@@ -261,6 +261,44 @@ export function getRetriever(signal?: AbortSignal): Promise<RetrieverState> {
   return getJson<RetrieverState>('/retriever', signal);
 }
 
+export interface SxcGroundingReviewItem {
+  id: string;
+  status: 'review';
+  seed: string;
+  chunkId: string;
+  retriever: string;
+  source: string;
+  project: string | null;
+  sessionId: string;
+  ts: number | null;
+  score: number;
+  confidence: number;
+  threshold: number;
+  quote: string;
+  feedback: 'up' | 'down' | null;
+  updatedAt: string;
+}
+
+export interface SxcGroundingState {
+  updatedAt: string | null;
+  retriever: string | null;
+  threshold: number;
+  pending: SxcGroundingReviewItem[];
+  reviewedTotal: number;
+  error: string | null;
+}
+
+export function getGrounding(signal?: AbortSignal): Promise<SxcGroundingState> {
+  return getJson<SxcGroundingState>('/grounding', signal);
+}
+
+export function sendGroundingFeedback(id: string, feedback: 'up' | 'down') {
+  return mutate('POST', '/grounding/feedback', { id, feedback }) as Promise<{
+    status: number;
+    body: { ok?: boolean; grounding?: SxcGroundingState; error?: string } | null;
+  }>;
+}
+
 /** Persistent toggle: true forces bm25 (use while the ColBERT index is stale or
  *  rebuilding), false clears it so itch-intent mining uses ColBERT again. */
 export function setFallbackBm25(on: boolean) {

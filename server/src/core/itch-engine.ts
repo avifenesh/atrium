@@ -3,10 +3,13 @@
  * logic with no external app spawn. Calls `eigen` (the model harness) directly.
  */
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { config } from '../config.js';
+import { iso } from '../util.js';
+import type { SxcGroundingFeedback, SxcGroundingReviewItem, SxcGroundingState } from '../../../shared/types.js';
 
 const HOME = homedir();
 const STATE_DIR = config.paths.itchConfig;
@@ -16,6 +19,7 @@ const INTERESTS_FILE = join(STATE_DIR, 'interests.md');
 const RULES_FILE = join(STATE_DIR, 'rules.md');
 const WORK_FILE = join(STATE_DIR, 'work.txt');
 const WORK_MD_FILE = join(STATE_DIR, 'work.md');
+const SXC_FEEDBACK_FILE = join(STATE_DIR, 'sxc-grounding-feedback.json');
 
 const DEFAULT_PROJECTS_DIR = process.env.ITCH_PROJECTS_DIR || join(HOME, 'projects');
 const DEFAULT_MODEL_ID = 'us.anthropic.claude-sonnet-4-6';
@@ -684,15 +688,309 @@ const MINE_MAX_SEEDS = Number(process.env.ITCH_MINE_MAX_SEEDS || 16);
 const MINE_TIMEOUT_MS = Number(process.env.ITCH_MINE_TIMEOUT_MS || 180_000);
 
 export interface MineHit {
+  chunkId: string;
   source: string;
   project: string | null;
   session_id: string;
   ts: number | null;
+  /** Score after local explicit-feedback boosts/demotions. */
   score: number;
+  /** Raw retriever score before feedback; used as the confidence gate. */
+  confidence: number;
   quote: string;
+  status?: 'review';
+  feedback?: SxcGroundingFeedback | null;
 }
 export interface MineSeedResult { seed: string; hits: MineHit[]; }
 export interface MineResult { retriever: string; seeds: MineSeedResult[]; }
+
+interface SxcFeedbackStore {
+  schema: 1;
+  items: Record<string, SxcGroundingReviewItem>;
+}
+
+const SXC_REVIEW_LIMIT = boundedNumber(process.env.ITCH_SXC_REVIEW_LIMIT, 12, 1, 50);
+const SXC_FEEDBACK_MAX_ITEMS = boundedNumber(process.env.ITCH_SXC_FEEDBACK_MAX_ITEMS, 240, 20, 2000);
+const SXC_FEEDBACK_BOOST = boundedNumber(process.env.ITCH_SXC_FEEDBACK_BOOST, 3.0, 0, 20);
+const SXC_FEEDBACK_MIN_SIMILARITY = boundedNumber(process.env.ITCH_SXC_FEEDBACK_MIN_SIMILARITY, 0.35, 0, 1);
+const SXC_FEEDBACK_DECAY_DAYS = boundedNumber(process.env.ITCH_SXC_FEEDBACK_DECAY_DAYS, 90, 1, 3650);
+
+function boundedNumber(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function sxcReviewThreshold(retriever: string): number {
+  const explicit = Number(process.env.ITCH_SXC_REVIEW_THRESHOLD);
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
+  const r = retriever.toLowerCase();
+  // Scores are retriever-specific and not calibrated probabilities. Gate late
+  // interaction scores by default: sxc's `hybrid` is SPLADE first-stage with
+  // ColBERT rerank scores, while sparse-only retrievers need an explicit gate.
+  return r === 'colbert' || r === 'hybrid' || r.includes('colbert') ? 18 : 0;
+}
+
+function emptySxcFeedbackStore(): SxcFeedbackStore {
+  return { schema: 1, items: {} };
+}
+
+let sxcFeedbackWriteQueue: Promise<void> = Promise.resolve();
+
+async function updateSxcFeedbackStore<T>(
+  fn: (store: SxcFeedbackStore) => Promise<{ result: T; save?: boolean }> | { result: T; save?: boolean },
+): Promise<T> {
+  const run = sxcFeedbackWriteQueue.then(async () => {
+    const store = await loadSxcFeedbackStore();
+    const { result, save = true } = await fn(store);
+    if (save) await saveSxcFeedbackStore(store);
+    return result;
+  });
+  // Keep later writes from being poisoned by one failed validation/write.
+  sxcFeedbackWriteQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function loadSxcFeedbackStore(): Promise<SxcFeedbackStore> {
+  const raw = await readJson<any>(SXC_FEEDBACK_FILE);
+  if (!raw || typeof raw !== 'object' || raw.schema !== 1 || !raw.items || typeof raw.items !== 'object' || Array.isArray(raw.items)) {
+    return emptySxcFeedbackStore();
+  }
+  const items: Record<string, SxcGroundingReviewItem> = {};
+  for (const [id, v] of Object.entries(raw.items)) {
+    if (!v || typeof v !== 'object') continue;
+    const it = v as any;
+    const feedback = it.feedback === 'up' || it.feedback === 'down' ? it.feedback : null;
+    const item: SxcGroundingReviewItem = {
+      id: String(it.id || id),
+      status: 'review',
+      seed: typeof it.seed === 'string' ? it.seed : '',
+      chunkId: typeof it.chunkId === 'string' ? it.chunkId : '',
+      retriever: typeof it.retriever === 'string' ? it.retriever : 'unknown',
+      source: typeof it.source === 'string' ? it.source : '',
+      project: typeof it.project === 'string' ? it.project : null,
+      sessionId: typeof it.sessionId === 'string' ? it.sessionId : '',
+      ts: typeof it.ts === 'number' && Number.isFinite(it.ts) ? it.ts : null,
+      score: typeof it.score === 'number' && Number.isFinite(it.score) ? it.score : 0,
+      confidence: typeof it.confidence === 'number' && Number.isFinite(it.confidence) ? it.confidence : 0,
+      threshold: typeof it.threshold === 'number' && Number.isFinite(it.threshold) ? it.threshold : 0,
+      quote: typeof it.quote === 'string' ? it.quote : '',
+      feedback,
+      updatedAt: typeof it.updatedAt === 'string' ? it.updatedAt : iso(),
+    };
+    if (!item.id || !item.seed || !item.quote) continue;
+    items[item.id] = item;
+  }
+  return { schema: 1, items };
+}
+
+async function saveSxcFeedbackStore(store: SxcFeedbackStore): Promise<void> {
+  const entries = Object.values(store.items)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, SXC_FEEDBACK_MAX_ITEMS);
+  const compact: SxcFeedbackStore = { schema: 1, items: {} };
+  for (const item of entries) compact.items[item.id] = item;
+  await atomicWrite(SXC_FEEDBACK_FILE, JSON.stringify(compact, null, 2));
+}
+
+function hashId(prefix: string, parts: unknown[]): string {
+  const h = createHash('sha256');
+  h.update(JSON.stringify(parts));
+  return `${prefix}:${h.digest('hex').slice(0, 24)}`;
+}
+
+function groundingId(seed: string, hit: MineHit): string {
+  return hashId('sxc', [seed.trim().toLowerCase(), hit.chunkId || '', hit.source, hit.project, hit.session_id, hit.quote.slice(0, 240)]);
+}
+
+function tokens(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.toLowerCase().matchAll(/[a-z0-9][a-z0-9_-]{2,}/g)) out.add(m[0]);
+  return out;
+}
+
+function jaccard(a: string, b: string): number {
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (!ta.size || !tb.size) return 0;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter += 1;
+  return inter / (ta.size + tb.size - inter);
+}
+
+function feedbackDecay(updatedAt: string): number {
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return 1;
+  const ageDays = Math.max(0, (Date.now() - t) / 86_400_000);
+  return Math.pow(0.5, ageDays / SXC_FEEDBACK_DECAY_DAYS);
+}
+
+function feedbackLabelValue(feedback: SxcGroundingFeedback | null): number {
+  if (feedback === 'up') return 1;
+  if (feedback === 'down') return -1;
+  return 0;
+}
+
+function hitSimilarity(seed: string, hit: MineHit, item: SxcGroundingReviewItem): number {
+  const seedSimilarity = item.seed.trim().toLowerCase() === seed.trim().toLowerCase() ? 1 : jaccard(seed, item.seed);
+  if (seedSimilarity < SXC_FEEDBACK_MIN_SIMILARITY) return 0;
+  const sameChunk = item.chunkId && hit.chunkId && item.chunkId === hit.chunkId;
+  const sameQuote = item.quote && hit.quote && item.quote.slice(0, 160) === hit.quote.slice(0, 160);
+  if (sameChunk || sameQuote) return seedSimilarity;
+  // Gentle transfer to near-duplicate context slabs from the same source/project.
+  // This is the minimal explicit-feedback analogue of Rocchio/PRF: no embedding
+  // dependency, just lexical similarity to avoid boosting unrelated chunks.
+  const sameOrigin = item.source === hit.source && (item.project ?? '') === (hit.project ?? '');
+  if (!sameOrigin) return 0;
+  const quoteSimilarity = jaccard(item.quote, hit.quote);
+  return quoteSimilarity >= 0.6 ? seedSimilarity * quoteSimilarity : 0;
+}
+
+function normalizedMineHit(raw: any): MineHit | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const rawScore = Number(raw.score);
+  const rawConfidence = Number(raw.confidence);
+  const score = Number.isFinite(rawScore) ? rawScore : 0;
+  const confidence = Number.isFinite(rawConfidence) ? rawConfidence : score;
+  const quote = typeof raw.quote === 'string' ? raw.quote : '';
+  if (!quote.trim()) return null;
+  return {
+    chunkId: String(raw.chunk_id ?? raw.chunkId ?? ''),
+    source: typeof raw.source === 'string' ? raw.source : '',
+    project: typeof raw.project === 'string' ? raw.project : null,
+    session_id: typeof raw.session_id === 'string' ? raw.session_id : '',
+    ts: typeof raw.ts === 'number' && Number.isFinite(raw.ts) ? raw.ts : null,
+    score,
+    // Unknown scores are deliberately low-confidence: keep the hit visible for
+    // review instead of silently treating a malformed miner response as grounded.
+    confidence,
+    quote,
+  };
+}
+
+function normalizedMineResult(parsed: any, fallbackRetriever: string): MineResult {
+  const retriever = String(parsed?.retriever ?? fallbackRetriever ?? 'unknown');
+  const seeds: MineSeedResult[] = [];
+  for (const s of Array.isArray(parsed?.seeds) ? parsed.seeds : []) {
+    const seed = typeof s?.seed === 'string' ? s.seed : '';
+    if (!seed.trim()) continue;
+    const hits = (Array.isArray(s?.hits) ? s.hits : [])
+      .map(normalizedMineHit)
+      .filter((h: MineHit | null): h is MineHit => h !== null);
+    seeds.push({ seed, hits });
+  }
+  return { retriever, seeds };
+}
+
+async function applySxcFeedback(mined: MineResult, k: number): Promise<MineResult> {
+  if (!mined.seeds.length || SXC_FEEDBACK_BOOST <= 0) {
+    return { ...mined, seeds: mined.seeds.map((s) => ({ ...s, hits: s.hits.slice(0, k) })) };
+  }
+  const store = await loadSxcFeedbackStore();
+  const labelled = Object.values(store.items).filter((item) => item.feedback);
+  if (!labelled.length) {
+    return { ...mined, seeds: mined.seeds.map((s) => ({ ...s, hits: s.hits.slice(0, k) })) };
+  }
+  return {
+    ...mined,
+    seeds: mined.seeds.map((seedResult) => {
+      const rescored = seedResult.hits.map((hit, rank) => {
+        let delta = 0;
+        for (const item of labelled) {
+          const label = feedbackLabelValue(item.feedback);
+          if (!label) continue;
+          const sim = hitSimilarity(seedResult.seed, hit, item);
+          if (sim < SXC_FEEDBACK_MIN_SIMILARITY) continue;
+          delta += label * SXC_FEEDBACK_BOOST * sim * feedbackDecay(item.updatedAt);
+        }
+        return { hit: delta ? { ...hit, score: Number((hit.score + delta).toFixed(4)) } : hit, rank };
+      });
+      rescored.sort((a, b) => (b.hit.score - a.hit.score) || (a.rank - b.rank));
+      return { ...seedResult, hits: rescored.slice(0, k).map((x) => x.hit) };
+    }),
+  };
+}
+
+async function tagLowConfidenceGrounding(mined: MineResult): Promise<MineResult> {
+  const threshold = sxcReviewThreshold(mined.retriever);
+  if (threshold <= 0) return mined;
+  return updateSxcFeedbackStore((store) => {
+    let changed = false;
+    const now = iso();
+    for (const seed of mined.seeds) {
+      for (const hit of seed.hits) {
+        if (hit.confidence >= threshold) continue;
+        if (hit.project && ITCH_SELF_PROJECT.test(hit.project)) continue;
+        const id = groundingId(seed.seed, hit);
+        const existing = store.items[id];
+        const feedback = existing?.feedback ?? null;
+        const updatedAt = feedback ? existing?.updatedAt ?? now : now;
+        store.items[id] = {
+          id,
+          status: 'review',
+          seed: seed.seed,
+          chunkId: hit.chunkId,
+          retriever: mined.retriever,
+          source: hit.source,
+          project: hit.project,
+          sessionId: hit.session_id,
+          ts: hit.ts,
+          score: hit.score,
+          confidence: hit.confidence,
+          threshold,
+          quote: hit.quote.replace(/\s+/g, ' ').trim().slice(0, 360),
+          feedback,
+          updatedAt,
+        };
+        if (!feedback) {
+          hit.status = 'review';
+          hit.feedback = null;
+        }
+        changed = true;
+      }
+    }
+    return { result: mined, save: changed };
+  });
+}
+
+export async function loadSxcGroundingState(): Promise<SxcGroundingState> {
+  try {
+    const store = await loadSxcFeedbackStore();
+    const all = Object.values(store.items);
+    const pending = all
+      .filter((item) => item.feedback === null)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, SXC_REVIEW_LIMIT);
+    const newest = all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+    return {
+      updatedAt: newest?.updatedAt ?? null,
+      retriever: newest?.retriever ?? null,
+      threshold: newest?.threshold ?? sxcReviewThreshold(newest?.retriever ?? 'colbert'),
+      pending,
+      reviewedTotal: all.filter((item) => item.feedback !== null).length,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      updatedAt: null,
+      retriever: null,
+      threshold: sxcReviewThreshold('colbert'),
+      pending: [],
+      reviewedTotal: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function saveSxcGroundingFeedback(id: string, feedback: SxcGroundingFeedback): Promise<SxcGroundingState> {
+  await updateSxcFeedbackStore((store) => {
+    const item = store.items[id];
+    if (!item) throw new Error('unknown grounding review item');
+    store.items[id] = { ...item, feedback, updatedAt: iso() };
+    return { result: undefined };
+  });
+  return loadSxcGroundingState();
+}
 
 /** Pull stated-interest seed terms from interests.md "What I'm drawn to" bullets.
  *  These are the AUTHORITATIVE positive signal; we corroborate THEM against the
@@ -741,15 +1039,25 @@ export async function mineTranscripts(seeds: string[], k = 4): Promise<MineResul
         ...process.env,
         ITCH_MINE_DEVICE: process.env.ITCH_MINE_DEVICE || 'cpu',
       };
+      // Ask sxc for a few extra slabs, then trim after explicit-feedback
+      // reweighting so a down-voted near miss can fall out of the prompt.
+      const retrievalK = Math.min(20, Math.max(k * 2, k + 4));
       const child = execFile(
-        SXC_PY, [MINE_PY, '--k', String(k), '--max-seeds', String(MINE_MAX_SEEDS)],
+        SXC_PY, [MINE_PY, '--k', String(retrievalK), '--max-seeds', String(MINE_MAX_SEEDS)],
         { timeout: MINE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, env },
         (err, stdout) => {
           if (err) { resolve(empty); return; }
           try {
             const parsed = JSON.parse(String(stdout).trim() || '{}');
             if (!parsed || !Array.isArray(parsed.seeds)) { resolve(empty); return; }
-            resolve({ retriever: String(parsed.retriever ?? 'unknown'), seeds: parsed.seeds });
+            void (async () => {
+              try {
+                const mined = normalizedMineResult(parsed, String(parsed.retriever ?? 'unknown'));
+                resolve(await tagLowConfidenceGrounding(await applySxcFeedback(mined, k)));
+              } catch {
+                resolve(empty);
+              }
+            })();
           } catch { resolve(empty); }
         },
       );

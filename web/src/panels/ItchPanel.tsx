@@ -152,7 +152,7 @@ function ItchBody({
         />
       ) : (
         <>
-      <ResearchStrip research={it.research} onSaved={onSaved} />
+      <ResearchStrip research={it.research} grounding={it.sxcGrounding} onSaved={onSaved} />
       <SearchStrip onJump={(stem, idx) => jumpTo(stem, idx)} />
       <Feed
         runs={runs}

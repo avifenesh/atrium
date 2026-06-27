@@ -72,8 +72,10 @@ export function emptySnapshot(): Snapshot {
     },
     itch: {
       updatedAt: null, up: false, runs: [],
-      research: { running: false, started: null, savedStem: null, killedReason: null },
-      ratedTotal: null, error: null,
+      research: { running: false, started: null, savedStem: null, killedReason: null, resumable: false },
+      ratedTotal: null,
+      sxcGrounding: { updatedAt: null, retriever: null, threshold: 0, pending: [], reviewedTotal: 0, error: null },
+      error: null,
     },
     cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
     repos: { updatedAt: null, repos: [], error: null },

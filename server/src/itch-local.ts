@@ -25,6 +25,7 @@ import {
 } from './core/itch.js';
 import { itchResearchStatus, startItchResearch, stopItchResearch, resumeItchResearch } from './core/itch-research.js';
 import { baselineLaunchFlags, comparePayload } from './core/itch-compare.js';
+import { loadSxcGroundingState, saveSxcGroundingFeedback } from './core/itch-engine.js';
 import { handleItchAi } from './core/itch-ai.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -88,6 +89,20 @@ export async function handleLocalItch(req: IncomingMessage, res: ServerResponse,
     if (method === 'GET' && rest === 'retriever') {
       const forced = await getForceRetriever();
       json(res, 200, { forced, fallback_bm25: forced === 'bm25', options: [...RETRIEVERS] });
+      return true;
+    }
+    if (method === 'GET' && rest === 'grounding') {
+      json(res, 200, await loadSxcGroundingState());
+      return true;
+    }
+    if (method === 'POST' && rest === 'grounding/feedback') {
+      const body = await readBody(req);
+      const id = typeof body?.id === 'string' ? body.id : '';
+      const feedback = body?.feedback;
+      if (!id || (feedback !== 'up' && feedback !== 'down')) {
+        json(res, 400, { error: "expected id and feedback ('up' or 'down')" }); return true;
+      }
+      json(res, 200, { ok: true, grounding: await saveSxcGroundingFeedback(id, feedback) });
       return true;
     }
     if (method === 'POST' && rest === 'retriever') {

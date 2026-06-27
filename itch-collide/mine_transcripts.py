@@ -127,41 +127,56 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         from sxc.serve import get_context
+        try:
+            from sxc.serve.api import get_force_retriever
+        except Exception:
+            get_force_retriever = None
     except Exception as e:
         _emit({"error": f"{type(e).__name__}: {e}", "retriever": args.retriever, "seeds": []})
         return 0
 
-    retriever = args.retriever if args.retriever in (
-        "bm25", "splade", "colbert", "hybrid"
-    ) else "colbert"
+    valid_retrievers = ("bm25", "splade", "colbert", "hybrid")
+    retriever = args.retriever if args.retriever in valid_retrievers else "colbert"
+    forced_env = os.environ.get("SXC_FORCE_RETRIEVER")
+    forced_file = get_force_retriever() if get_force_retriever is not None else None
+    effective_retriever = (
+        forced_env if forced_env in valid_retrievers
+        else forced_file if forced_file in valid_retrievers
+        else retriever
+    )
 
     out_seeds: list[dict[str, object]] = []
     for seed in seeds:
         try:
-            ctxs = get_context(seed, top_k=args.k, retriever=retriever)
+            ctxs = get_context(seed, top_k=args.k, retriever=effective_retriever)
         except Exception as e:
             # On the very first seed a hard failure (e.g. ColBERT index missing)
             # means no seed will work: degrade the whole call to baseline.
             if not out_seeds:
                 _emit(
-                    {"error": f"{type(e).__name__}: {e}", "retriever": retriever, "seeds": []}
+                    {"error": f"{type(e).__name__}: {e}", "retriever": effective_retriever, "seeds": []}
                 )
                 return 0
             continue
         hits = [
             {
+                "chunk_id": c.chunk_id,
                 "source": c.source,
                 "project": c.project,
                 "session_id": c.session_id,
                 "ts": c.ts,
+                # `confidence` is the raw sxc score exposed to Atrium's review
+                # gate. `score` may be locally reweighted later by explicit
+                # thumbs feedback, but confidence remains the retriever signal.
                 "score": round(float(c.score), 4),
+                "confidence": round(float(c.score), 4),
                 "quote": (c.quote or "")[:_QUOTE_CHARS],
             }
             for c in ctxs
         ]
         out_seeds.append({"seed": seed, "hits": hits})
 
-    _emit({"retriever": retriever, "seeds": out_seeds})
+    _emit({"retriever": effective_retriever, "seeds": out_seeds})
     return 0
 
 
