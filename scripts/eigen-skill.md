@@ -14,7 +14,7 @@ For "what needs my attention" or any open-ended status ask, call `atrium_overvie
 - `myPRs` — my open PRs with draft/review/CI state.
 - `mentions` — issues/PRs that mention me.
 - `teamQueue` — team review requests minus direct minus bots. Secondary.
-- `notifications` — raw GitHub notification feed.
+- `notifications` — GitHub notification feed; known PR review-bot floods collapse into a digest so human activity stays prominent.
 
 ## Mute semantics (`atrium_mute`)
 

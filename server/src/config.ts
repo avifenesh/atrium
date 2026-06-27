@@ -15,6 +15,8 @@ export const defaults = {
     ownOrgs: ['agent-sh'],
     /** orgs excluded from authored-issue noise */
     noiseOrgs: ['zelos-social'],
+    /** PR review bots collapsed into a digest in notifications; human activity on the same PR stays visible */
+    reviewBotNoiseLogins: ['gemini-code-assist'],
     pollMs: 60_000,
     ownReposPollMs: 600_000,
     /** consecutive failed polls before the crit flag (and phone ping) raises.

@@ -25,6 +25,8 @@ const ORG_FILTER = [...config.github.ownOrgs.map((o) => `org:${o}`), `user:${con
 // also defensively drop by author type + login when mapping (imgbot etc. lack the prefix).
 const BOT_AUTHOR_FILTER = ' -author:app/dependabot -author:app/renovate -author:app/github-actions';
 const BOT_LOGINS = new Set(['dependabot', 'github-actions', 'renovate']);
+const REVIEW_BOT_NOISE_LOGINS = new Set(config.github.reviewBotNoiseLogins.map((login) => canonicalLogin(login)));
+const NOTIFICATION_ENRICH_LIMIT = 30;
 
 // Single aliased GraphQL search (cost: 1 point). Never use `gh search` here —
 // the REST search pool is only 30 req/min and shared with everything else.
@@ -42,6 +44,7 @@ const NOISE_TITLE = /^Bump |^build\(deps\)|Updated attribution files/;
 
 const CI_STATES = new Set(['SUCCESS', 'FAILURE', 'PENDING', 'ERROR', 'EXPECTED']);
 const REVIEW_DECISIONS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
+type NotificationActivity = NonNullable<GithubNotification['latestActivity']>;
 
 // last good state survives poll failures; own repos refresh on a slower cadence
 let lastGood: GithubState | null = null;
@@ -144,6 +147,186 @@ function nodesOf(section: any): any[] {
   return Array.isArray(nodes) ? nodes.filter((n) => typeof n?.number === 'number') : [];
 }
 
+function canonicalLogin(login: string): string {
+  return login.toLowerCase().replace(/\[bot\]$/, '');
+}
+
+function splitRepoName(repo: string): { owner: string; name: string } | null {
+  const slash = repo.indexOf('/');
+  if (slash <= 0 || slash === repo.length - 1) return null;
+  return { owner: repo.slice(0, slash), name: repo.slice(slash + 1) };
+}
+
+function apiPath(apiUrl: string): string | null {
+  try {
+    const url = new URL(apiUrl);
+    if (url.hostname !== 'api.github.com') return null;
+    return url.pathname.replace(/^\/+/, '');
+  } catch {
+    return null;
+  }
+}
+
+function parseApiItemUrl(apiUrl: unknown): { repo: string; kind: 'pulls' | 'issues'; number: number } | null {
+  if (typeof apiUrl !== 'string') return null;
+  const path = apiPath(apiUrl);
+  if (!path) return null;
+  const m = path.match(/^repos\/([^/]+\/[^/]+)\/(pulls|issues)\/(\d+)$/);
+  if (!m) return null;
+  return { repo: m[1], kind: m[2] as 'pulls' | 'issues', number: Number(m[3]) };
+}
+
+function itemIdFromApiUrl(apiUrl: unknown): string | null {
+  const item = parseApiItemUrl(apiUrl);
+  return item ? `${item.repo}#${item.number}` : null;
+}
+
+function parseApiCommentUrl(apiUrl: unknown): { path: string; kind: 'comment' | 'review_comment' } | null {
+  if (typeof apiUrl !== 'string') return null;
+  const path = apiPath(apiUrl);
+  if (!path) return null;
+  if (/^repos\/[^/]+\/[^/]+\/issues\/comments\/\d+$/.test(path)) return { path, kind: 'comment' };
+  if (/^repos\/[^/]+\/[^/]+\/pulls\/comments\/\d+$/.test(path)) return { path, kind: 'review_comment' };
+  return null;
+}
+
+function activityFromRestComment(node: any, kind: 'comment' | 'review_comment'): NotificationActivity | null {
+  const actor = typeof node?.user?.login === 'string' ? node.user.login : '';
+  if (!actor) return null;
+  return {
+    kind,
+    actor,
+    actorType: typeof node?.user?.type === 'string' ? node.user.type : null,
+    state: null,
+    updatedAt: String(node?.updated_at ?? node?.created_at ?? ''),
+  };
+}
+
+function activityFromGraphNode(node: any, kind: NotificationActivity['kind']): NotificationActivity | null {
+  const actor = typeof node?.author?.login === 'string' ? node.author.login : '';
+  if (!actor) return null;
+  return {
+    kind,
+    actor,
+    actorType: typeof node?.author?.__typename === 'string' ? node.author.__typename : null,
+    state: typeof node?.state === 'string' ? node.state : null,
+    updatedAt: String(node?.updatedAt ?? node?.submittedAt ?? node?.createdAt ?? ''),
+  };
+}
+
+async function fetchRestCommentActivity(apiUrl: unknown): Promise<NotificationActivity | null> {
+  const parsed = parseApiCommentUrl(apiUrl);
+  if (!parsed) return null;
+  const out = await shTry('gh', ['api', parsed.path], { timeoutMs: 10_000 });
+  if (out === null) return null;
+  try {
+    return activityFromRestComment(JSON.parse(out), parsed.kind);
+  } catch {
+    return null;
+  }
+}
+
+const PR_NOTIFICATION_ACTIVITY_QUERY = `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      comments(last:5){nodes{author{login __typename} createdAt updatedAt}}
+      latestReviews(last:10){nodes{author{login __typename} state submittedAt updatedAt}}
+      reviewThreads(last:20){nodes{comments(last:5){nodes{author{login __typename} createdAt updatedAt path outdated}}}}
+    }
+  }
+}`;
+
+async function fetchPullRequestActivity(repo: string, number: number): Promise<NotificationActivity | null> {
+  const parts = splitRepoName(repo);
+  if (!parts) return null;
+  const out = await shTry(
+    'gh',
+    [
+      'api',
+      'graphql',
+      '-f',
+      `query=${PR_NOTIFICATION_ACTIVITY_QUERY}`,
+      '-F',
+      `owner=${parts.owner}`,
+      '-F',
+      `name=${parts.name}`,
+      '-F',
+      `number=${number}`,
+    ],
+    { timeoutMs: 15_000 },
+  );
+  if (out === null) return null;
+  try {
+    const pr = JSON.parse(out)?.data?.repository?.pullRequest;
+    const candidates: NotificationActivity[] = [];
+    for (const c of pr?.comments?.nodes ?? []) {
+      const a = activityFromGraphNode(c, 'comment');
+      if (a?.updatedAt) candidates.push(a);
+    }
+    for (const r of pr?.latestReviews?.nodes ?? []) {
+      const a = activityFromGraphNode(r, 'review');
+      if (a?.updatedAt) candidates.push(a);
+    }
+    for (const thread of pr?.reviewThreads?.nodes ?? []) {
+      for (const c of thread?.comments?.nodes ?? []) {
+        const a = activityFromGraphNode(c, 'review_comment');
+        if (a?.updatedAt) candidates.push(a);
+      }
+    }
+    return candidates.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).at(-1) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchNotificationActivity(thread: any): Promise<NotificationActivity | null> {
+  const subjectType = String(thread?.subject?.type ?? '');
+  const latestUrl = thread?.subject?.latest_comment_url;
+
+  const restComment = await fetchRestCommentActivity(latestUrl);
+  if (restComment) return restComment;
+
+  const latestItem = parseApiItemUrl(latestUrl);
+  if (latestItem?.kind === 'pulls') return fetchPullRequestActivity(latestItem.repo, latestItem.number);
+
+  if (subjectType === 'PullRequest') {
+    const subjectItem = parseApiItemUrl(thread?.subject?.url);
+    if (subjectItem?.kind === 'pulls') return fetchPullRequestActivity(subjectItem.repo, subjectItem.number);
+  }
+
+  return null;
+}
+
+export function reviewBotNoise(activity: NotificationActivity | null): GithubNotification['noise'] {
+  if (!activity || (activity.kind !== 'review' && activity.kind !== 'review_comment')) return null;
+  const login = canonicalLogin(activity.actor);
+  if (!REVIEW_BOT_NOISE_LOGINS.has(login)) return null;
+  return {
+    kind: 'review-bot',
+    groupKey: `review-bot:${login}`,
+    label: `${activity.actor} review bot`,
+    detail: activity.kind === 'review' ? 'PR review summary' : 'inline PR review comment',
+  };
+}
+
+export async function githubNotificationFromThread(thread: any, enrich = true): Promise<GithubNotification> {
+  const repo = String(thread?.repository?.full_name ?? '');
+  const activity = enrich ? await fetchNotificationActivity(thread) : null;
+  return {
+    id: String(thread?.id ?? ''),
+    reason: String(thread?.reason ?? ''),
+    repo,
+    title: String(thread?.subject?.title ?? ''),
+    type: String(thread?.subject?.type ?? ''),
+    url: notifUrl(thread?.subject?.url, repo),
+    updatedAt: String(thread?.updated_at ?? ''),
+    unread: !!thread?.unread,
+    itemId: itemIdFromApiUrl(thread?.subject?.url),
+    latestActivity: activity,
+    noise: reviewBotNoise(activity),
+  };
+}
+
 /** api.github.com subject url -> html url; unknown patterns kept as-is */
 function notifUrl(apiUrl: unknown, repo: string): string {
   if (typeof apiUrl !== 'string' || !apiUrl) return repo ? `https://github.com/${repo}` : '';
@@ -158,19 +341,11 @@ async function fetchNotifications(): Promise<GithubNotification[] | null> {
   try {
     const threads = JSON.parse(out);
     if (!Array.isArray(threads)) return null;
-    return threads.map((t: any): GithubNotification => {
-      const repo = String(t?.repository?.full_name ?? '');
-      return {
-        id: String(t?.id ?? ''),
-        reason: String(t?.reason ?? ''),
-        repo,
-        title: String(t?.subject?.title ?? ''),
-        type: String(t?.subject?.type ?? ''),
-        url: notifUrl(t?.subject?.url, repo),
-        updatedAt: String(t?.updated_at ?? ''),
-        unread: !!t?.unread,
-      };
-    });
+    const notifications: GithubNotification[] = [];
+    for (const [i, t] of threads.entries()) {
+      notifications.push(await githubNotificationFromThread(t, i < NOTIFICATION_ENRICH_LIMIT));
+    }
+    return notifications;
   } catch {
     return null;
   }

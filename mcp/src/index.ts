@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type {
   AgentInfo,
   GithubItem,
+  GithubNotification,
   GithubPR,
   Mute,
   OrgItem,
@@ -92,6 +93,14 @@ function fmtOrg(it: OrgItem): string {
     if (it.ci && it.ci !== 'SUCCESS') bits.push(`ci:${it.ci.toLowerCase()}`);
   }
   return `${fmtItem(it)} [${bits.join(', ')}]`;
+}
+
+function fmtNotification(n: GithubNotification): string {
+  const bits = [n.reason];
+  if (n.latestActivity) {
+    bits.push(`${n.latestActivity.kind} by ${n.latestActivity.actor}`);
+  }
+  return `${n.unread ? '* ' : '- '}${n.repo} ${n.title} (${bits.join(', ')}, updated ${ago(n.updatedAt)}) ${n.url}`;
 }
 
 function activeMutes(mutes: Mute[]): Mute[] {
@@ -205,10 +214,15 @@ server.registerTool(
       const lines: string[] = [];
       if (gh.error) lines.push(`github error: ${gh.error}`);
       if (which === 'notifications') {
-        for (const n of gh.notifications.slice(0, 30))
-          lines.push(
-            `${n.unread ? '* ' : '- '}${n.repo} ${n.title} (${n.reason}, updated ${ago(n.updatedAt)}) ${n.url}`,
-          );
+        const reviewBot = gh.notifications.filter((n) => n.noise?.kind === 'review-bot');
+        for (const n of gh.notifications.filter((n) => n.noise?.kind !== 'review-bot').slice(0, 30)) {
+          lines.push(fmtNotification(n));
+        }
+        if (reviewBot.length) {
+          const repos = [...new Set(reviewBot.map((n) => n.repo))].slice(0, 5).join(', ');
+          lines.push(`review-bot digest: ${reviewBot.length} collapsed (${repos})`);
+          for (const n of reviewBot.slice(0, 5)) lines.push(`  ${fmtNotification(n)}`);
+        }
       } else if (which === 'orgQueue') {
         // server pre-ranks: review (non-draft first) above triage, oldest-waiting first
         // ?? [] — a pre-rollout daemon snapshot may lack orgQueue

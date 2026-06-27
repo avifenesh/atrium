@@ -61,6 +61,20 @@ export interface GithubNotification {
   url: string; // html url when resolvable, else api url
   updatedAt: string;
   unread: boolean;
+  itemId: string | null; // "owner/repo#123" when the subject is an issue/PR
+  latestActivity: {
+    kind: 'comment' | 'review' | 'review_comment' | 'subject';
+    actor: string;
+    actorType: string | null;
+    state: string | null;
+    updatedAt: string;
+  } | null;
+  noise: {
+    kind: 'review-bot';
+    groupKey: string;
+    label: string;
+    detail: string;
+  } | null;
 }
 
 export interface RepoCount {
