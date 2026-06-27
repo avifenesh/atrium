@@ -216,12 +216,12 @@ async function buildHandle(flags: Record<string, unknown>): Promise<RunHandle> {
 
 // --- in-flight checkpoint / resume -----------------------------------------
 
-async function inflightBegin(handle: RunHandle): Promise<void> {
+async function inflightBegin(handle: RunHandle, partial = ''): Promise<void> {
   try {
     await mkdir(config.paths.itchConfig, { recursive: true });
     const ctx: InflightCtx = { system: handle.system, user: handle.user, model: handle.model, meta: handle.meta };
     await writeFile(INFLIGHT_JSON, JSON.stringify({ schema: 1, ...ctx, started_at: iso() }, null, 2), 'utf8');
-    await writeFile(INFLIGHT_MD, '', 'utf8');
+    await writeFile(INFLIGHT_MD, partial, 'utf8');
   } catch { /* checkpoint IO must never block the run */ }
 }
 
@@ -270,6 +270,15 @@ function killGroup(proc: ChildProcess, signal: NodeJS.Signals): void {
   if (!proc.pid) return;
   try { process.kill(-proc.pid, signal); } // negative pid = whole process group
   catch { try { proc.kill(signal); } catch { /* ignore */ } }
+}
+
+function codeFromClose(code: number | null, signal: NodeJS.Signals | null): number {
+  if (typeof code === 'number') return code;
+  if (signal === 'SIGTERM') return 143;
+  if (signal === 'SIGKILL') return 137;
+  if (signal === 'SIGINT') return 130;
+  if (signal === 'SIGHUP') return 129;
+  return 1;
 }
 
 /** Spawn eigen with streamed stdout/stderr and a watchdog. Resolves with the
@@ -332,12 +341,12 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
       clearInterval(watchdog);
       resolve({ code: 1, stdout: stdoutChunks.join('') });
     });
-    child.on('close', (code) => {
+    child.on('close', async (code, signal) => {
       clearInterval(watchdog);
       if (stderrBuf.trim()) onStderr(stderrBuf);
       const stdout = stdoutChunks.join('');
-      void inflightFlush(stdout.trim()); // final checkpoint
-      resolve({ code: typeof code === 'number' ? code : 0, stdout });
+      await inflightFlush(stdout.trim()); // final checkpoint before resumable detection reads it
+      resolve({ code: codeFromClose(code, signal), stdout });
     });
   });
 }
@@ -363,6 +372,7 @@ export async function startItchResearch(flags: Record<string, unknown> = {}): Pr
   state.lastActivity = Date.now();
   state.resumable = false; // a fresh run supersedes any prior checkpoint
   try {
+    await inflightClear();
     const handle = await buildHandle(flags);
     // Open the checkpoint BEFORE spawning so a kill at any point leaves a
     // resumable trail (prompt + partial ideas streamed in by runEigen).
@@ -398,18 +408,19 @@ export async function resumeItchResearch(): Promise<StartResearchResult> {
   try {
     const system = ctx.system;
     const user = ctx.user + resumeContinuationBlock(ctx.partial);
+    const model = ctx.model || await resolveModel();
     const dir = await mkdtemp(join(tmpdir(), 'atrium-itch-'));
     const promptFile = join(dir, 'prompt.md');
     await writeFile(promptFile, `${system}\n\n---\n\n${user}\n`, 'utf8');
     const handle: RunHandle = {
-      model: ctx.model, promptFile, args: eigenArgsFor(ctx.model, promptFile),
+      model, promptFile, args: eigenArgsFor(model, promptFile),
       meta: ctx.meta as Record<string, unknown>, system, user,
     };
     state.log.push('[resume] continuing the interrupted run from its partial ideas');
     state.log.push(`$ eigen ${handle.args.join(' ')}  (model=${handle.model})`);
-    // keep the SAME checkpoint files; reset the partial so the resumed pass
-    // overwrites it (and is itself resumable if it dies again).
-    await inflightBegin(handle);
+    // Keep the prior partial until new stdout replaces it, so a failed resume
+    // can still be resumed again instead of losing the useful checkpoint.
+    await inflightBegin(handle, ctx.partial);
     runHandleAsync(handle);
     return { ok: true, pid: state.pid ?? undefined, started: state.started };
   } catch (err) {

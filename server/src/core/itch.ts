@@ -319,6 +319,7 @@ export async function searchItchIdeas(paths: Paths, query: string): Promise<any[
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const runs = await loadItchRuns(paths);
+  const ledger = await loadLedger(paths);
   const out: any[] = [];
   for (const run of runs) {
     const detail = await loadItchRunDetail(paths, run.stem);
@@ -326,7 +327,7 @@ export async function searchItchIdeas(paths: Paths, query: string): Promise<any[
     for (const idea of detail.ideas) {
       const hay = `${idea.title}\n${idea.body}`;
       if (!hay.toLowerCase().includes(q)) continue;
-      const ent = (await loadLedger(paths))[idea.title.toLowerCase()] ?? {};
+      const ent = ledger[idea.title.toLowerCase()] ?? {};
       out.push({
         stem: run.stem,
         idx: idea.idx,
