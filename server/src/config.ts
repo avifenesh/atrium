@@ -85,7 +85,7 @@ export const defaults = {
     // get_context call and lets it WIN over an explicit retriever= arg, so the
     // atrium "fall back to bm25" toggle can route mining off a stale/rebuilding
     // ColBERT index without editing the skill. Mirrors sxc.serve.FORCE_CONFIG_PATH.
-    sxcServeConfig: join(HOME, 'projects', 'splade-3-colbert-2', 'config', 'serve.json'),
+    sxcServeConfig: join(HOME, 'projects', 'colbert-2', 'config', 'serve.json'),
   },
 
   surreal: {
