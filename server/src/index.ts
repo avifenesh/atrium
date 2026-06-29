@@ -367,8 +367,9 @@ if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host)) {
   process.exit(2);
 }
 
-// init before startAll or boot-time crits are dropped; mutes already loaded above
-initNotify({ ...config.notify, sendCmd: [config.paths.hermesCli, 'send', '--to', config.notify.target] });
+// init before startAll or boot-time crits are dropped; mutes already loaded above.
+// sendCmd comes straight from config now (empty = push disabled); see examples/notify/.
+initNotify(config.notify);
 
 startAll();
 

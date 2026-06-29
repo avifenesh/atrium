@@ -9,12 +9,14 @@ import { fileURLToPath } from 'node:url';
 const home = homedir();
 const mcpPath = join(home, '.eigen', 'mcp.json');
 
+// derive both paths from the runtime instead of hardcoding: the node that ran this
+// script, and the mcp entrypoint relative to this script's own location (scripts/ → ../mcp/…)
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const mcpEntrypoint = join(scriptDir, '..', 'mcp', 'dist', 'mcp', 'src', 'index.js');
+
 const entry = {
   name: 'atrium',
-  command: [
-    '/home/avifenesh/.nvm/versions/node/v25.9.0/bin/node',
-    '/home/avifenesh/projects/atrium/mcp/dist/mcp/src/index.js',
-  ],
+  command: [process.execPath, mcpEntrypoint],
   // no tools allowlist = all atrium_* tools exposed
 };
 

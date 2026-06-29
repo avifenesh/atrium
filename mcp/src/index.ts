@@ -154,7 +154,7 @@ server.registerTool(
   'atrium_overview',
   {
     description:
-      "One-screen summary of avifenesh's life dashboard: act-now tasks, email, calendar, agents, flags, mutes. Call this first for 'what needs my attention'.",
+      "One-screen summary of the user's life dashboard: act-now tasks, email, calendar, agents, flags, mutes. Call this first for 'what needs my attention'.",
     inputSchema: {},
     annotations: RO,
   },
