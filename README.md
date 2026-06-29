@@ -113,7 +113,8 @@ For scripting or building on atrium, the daemon exposes:
 | agents | `POST /api/agents/:id/:action` · `POST /api/eigen/dispatch` |
 | github | `GET /api/github/item` · `POST /api/github/comment` · `POST /api/notifications/read` |
 | notes | `GET /api/notes/read` · `POST /api/notes/write` (optimistic concurrency, 409 on conflict) |
-| google / spotify | in-app OAuth/PKCE connect + loopback callback |
+| google | `GET /api/google/status` · `GET /api/google/auth-url` · `GET /api/google/callback` |
+| spotify | `POST /api/spotify/client` · `GET /api/spotify/auth-url` · `GET /api/spotify/callback` |
 
 Plugin collectors may register their own routes (the bundled itch plugin proxies `/api/itch/*`).
 
