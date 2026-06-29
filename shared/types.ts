@@ -33,6 +33,10 @@ export interface Snapshot {
    *  store.setExtra(). The web UI renders each entry in a generic panel keyed by
    *  its name. Core collectors never use this lane. */
   extra: Record<string, ExtraSection>;
+  /** names of the collectors actually registered this run (config.collectors.disabled
+   *  removed the rest). The web UI hides the nav view for any collector not listed,
+   *  so disabling a collector drops its data AND its tab. */
+  collectors: string[];
   mutes: Mute[];
   flags: Flag[];
 }

@@ -24,6 +24,13 @@ class Store extends EventEmitter {
     this.emit('section', 'extra', this.snapshot.extra);
   }
 
+  /** The set of collectors registered this run — set once at startup so the web
+   *  UI can hide views for collectors disabled in config. */
+  setCollectors(names: string[]): void {
+    this.snapshot.collectors = names;
+    this.emit('section', 'collectors', names);
+  }
+
   /** Each collector owns its flag namespace; replaces its own flags wholesale. */
   setFlags(source: string, flags: Flag[]): void {
     this.flagsBySource.set(source, flags);
@@ -87,6 +94,7 @@ export function emptySnapshot(): Snapshot {
     cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
     repos: { updatedAt: null, repos: [], error: null },
     extra: {},
+    collectors: [],
     mutes: [],
     flags: [],
   };
