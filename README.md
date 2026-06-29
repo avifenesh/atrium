@@ -11,6 +11,11 @@ It is **self-hosted and loopback-only by design** — there is no auth layer, no
 account. It runs as a systemd user service, binds `127.0.0.1`, and refuses to start on any
 non-loopback host. Your data never leaves the machine.
 
+![atrium now view](docs/img/now-view.png)
+
+*The `now` view: act-now GitHub tasks, who's waiting on you, agents working, and live
+system health — one screen, calm by default. (Some labels redacted for the screenshot.)*
+
 > **Heads up — this started as one person's dashboard.** The *core* collectors
 > (github, system, schedule, comms, subs, notes, cloud, backup, repos) are general and
 > driven entirely by config. A second set in `server/src/collectors/` (eigen, hermes,
