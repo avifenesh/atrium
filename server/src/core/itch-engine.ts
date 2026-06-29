@@ -640,7 +640,7 @@ export async function saveRun(text: string, meta?: Record<string, unknown>): Pro
 // --- collide sampler (real domains at a tuned semantic distance) ------------
 // The sampler is a torch/bge ML helper (needs sentence-transformers); itch runs
 // it CPU-only and degrades GRACEFULLY to [] (exact baseline) on any failure.
-const SXC_PY = process.env.ITCH_SXC_PY || join(HOME, 'projects', 'splade-3-colbert-2', '.venv', 'bin', 'python');
+const SXC_PY = process.env.ITCH_SXC_PY || join(HOME, 'projects', 'colbert-2', '.venv', 'bin', 'python');
 const COLLIDE_SAMPLE_PY = process.env.ITCH_COLLIDE_SAMPLE || join(HOME, 'projects', 'atrium', 'itch-collide', 'collide_sample.py');
 
 export async function sampleCollisionDomains(temperature: number, k = 8): Promise<string[]> {
@@ -667,7 +667,7 @@ export async function sampleCollisionDomains(temperature: number, k = 8): Promis
 
 // --- transcript corroboration miner (sxc ranked retrieval) ------------------
 // Grounds each interest seed against the builder's OWN past transcripts/notes
-// via the splade-3-colbert-2 (sxc) index, so the model sees genuine recurring
+// via the colbert-2 (sxc) index, so the model sees genuine recurring
 // signal (and where it showed up) instead of reasoning blind. CPU by default
 // (a ColBERT query is ~32ms once the index is warm; the one-time load amortises
 // across the whole seed batch in a single background run) so this never needs

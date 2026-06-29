@@ -3,7 +3,7 @@
 Atrium's native itch engine reasons from the builder profile + web search, but
 it never *grounded* a seed against the builder's own past transcripts/notes.
 This helper closes that gap: for each seed term it pulls the top ranked context
-slabs from the `splade-3-colbert-2` (sxc) index and emits a compact JSON the
+slabs from the `colbert-2` (sxc) index and emits a compact JSON the
 engine folds into the prompt as a CORROBORATION block (so the model can see
 "this is a genuine recurring interest, here's where it showed up" vs noise).
 
@@ -44,7 +44,7 @@ if _DEVICE != "cuda":
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 SXC_ROOT = os.environ.get(
-    "ITCH_SXC_ROOT", os.path.expanduser("~/projects/splade-3-colbert-2")
+    "ITCH_SXC_ROOT", os.path.expanduser("~/projects/colbert-2")
 )
 # Valid sxc retrievers, cheapest->best. "colbert" is the paraphrase-aware
 # primary; "bm25" is the instant lexical fallback when the ColBERT index is

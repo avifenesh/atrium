@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import { readdirSync, statSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
 import { config } from '../config.js';
 import { getCursorUsage } from '../cursor-usage.js';
 import { getGrokBillingDetailed } from '../grok-usage.js';
@@ -224,30 +225,202 @@ async function codexLastSessionDate(): Promise<string | null> {
   }
 }
 
+// ---------- codex rate-limit windows (the bars the desktop app shows) ----------
+//
+// ChatGPT plans have no REST usage API, but the codex CLI logs the account's
+// rate-limit snapshot the desktop renders: a `token_count` event in each session
+// rollout jsonl carries `rate_limits.{primary,secondary}` with `used_percent`,
+// `window_minutes` (300 = 5h, 10080 = weekly), and `resets_at` (epoch seconds).
+// The limit is account-wide (limit_id "codex"), so the freshest snapshot across
+// all sessions IS the current state. state_5.sqlite holds none of this.
+//
+// Cost control: rollouts live under ~/.codex/sessions/YYYY/MM/DD/. We walk only
+// the newest day-dirs and tail-read the few most-recently-modified files, so we
+// never stat the full history (4000+ files). Cached — limits move slowly.
+const CODEX_RL_TTL_MS = 5 * 60_000;
+let codexRateCache: { at: number; value: CodexRateLimits | null } | null = null;
+
+interface CodexWindow {
+  used_percent: number;
+  window_minutes: number;
+  resets_at: number; // epoch seconds
+}
+interface CodexRateLimits {
+  primary: CodexWindow | null;
+  secondary: CodexWindow | null;
+  planType: string | null;
+  atMs: number; // payload timestamp, for freshest-wins
+  src: string;
+}
+
+/** Read the last `maxBytes` of a file synchronously (rate-limit events are appended). */
+function tailReadSync(path: string, maxBytes: number): string {
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - maxBytes);
+    const len = size - start;
+    if (len <= 0) return '';
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Numeric-name subdirs of `dir`, newest first (year/month/day partitions). */
+function newestNumericDirs(dir: string, take: number): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  names.sort((a, b) => Number(b) - Number(a));
+  return names.slice(0, take).map((n) => join(dir, n));
+}
+
+/** Collect rollout files from the newest day-partitions, bounded to avoid a full walk. */
+function recentRolloutFiles(sessionsRoot: string): string[] {
+  const out: string[] = [];
+  for (const yearDir of newestNumericDirs(sessionsRoot, 1)) {
+    for (const monthDir of newestNumericDirs(yearDir, 2)) {
+      for (const dayDir of newestNumericDirs(monthDir, 3)) {
+        let files: string[];
+        try {
+          files = readdirSync(dayDir).filter((f) => f.startsWith('rollout-') && f.endsWith('.jsonl'));
+        } catch {
+          continue;
+        }
+        for (const f of files) out.push(join(dayDir, f));
+      }
+      if (out.length > 0) break; // newest month with any rollouts is enough
+    }
+    if (out.length > 0) break;
+  }
+  return out;
+}
+
+function readCodexRateLimits(): CodexRateLimits | null {
+  const root = join(config.paths.codexHome, 'sessions');
+  const files = recentRolloutFiles(root);
+  if (files.length === 0) return null;
+  // newest-modified first; the freshest token_count event lives in a recent file
+  const ranked = files
+    .map((f) => {
+      try {
+        return { f, m: statSync(f).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is { f: string; m: number } => x !== null)
+    .sort((a, b) => b.m - a.m)
+    .slice(0, 12);
+
+  let best: CodexRateLimits | null = null;
+  for (const { f } of ranked) {
+    let text: string;
+    try {
+      text = tailReadSync(f, 256 * 1024);
+    } catch {
+      continue;
+    }
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line.includes('rate_limits')) continue;
+      try {
+        const j = JSON.parse(line);
+        const rl = j?.payload?.rate_limits;
+        if (!rl || (!rl.primary && !rl.secondary)) continue;
+        const atMs = Date.parse(j.timestamp);
+        if (Number.isNaN(atMs)) continue;
+        if (!best || atMs > best.atMs) {
+          best = {
+            primary: rl.primary ?? null,
+            secondary: rl.secondary ?? null,
+            planType: typeof rl.plan_type === 'string' ? rl.plan_type : null,
+            atMs,
+            src: f,
+          };
+        }
+        break; // newest rate_limits line in this file
+      } catch {
+        /* skip malformed line */
+      }
+    }
+  }
+  return best;
+}
+
+function readCodexRateLimitsCached(): CodexRateLimits | null {
+  if (codexRateCache && Date.now() - codexRateCache.at < CODEX_RL_TTL_MS) {
+    return codexRateCache.value;
+  }
+  let value: CodexRateLimits | null = null;
+  try {
+    value = readCodexRateLimits();
+  } catch {
+    value = null;
+  }
+  codexRateCache = { at: Date.now(), value };
+  return value;
+}
+
+/** Human label for a rate-limit window from its length in minutes. */
+function codexWindowLabel(minutes: number): string {
+  if (minutes >= 10080) return `weekly`;
+  if (minutes >= 1440) return `${Math.round(minutes / 1440)}d limit`;
+  if (minutes >= 60) return `${Math.round(minutes / 60)}h limit`;
+  return `${minutes}m limit`;
+}
+
+function codexUsageBars(rl: CodexRateLimits): NonNullable<SubService['usage']> {
+  const bars: NonNullable<SubService['usage']> = [];
+  for (const w of [rl.primary, rl.secondary]) {
+    if (!w || typeof w.used_percent !== 'number') continue;
+    bars.push({
+      label: codexWindowLabel(w.window_minutes),
+      usedPct: Math.round(w.used_percent * 10) / 10,
+      resetAt: w.resets_at ? iso(w.resets_at * 1000) : null,
+    });
+  }
+  return bars;
+}
+
 async function codexService(): Promise<SubService | null> {
   const src = join(config.paths.codexHome, 'auth.json');
   const auth = await readJson<any>(src);
   if (!auth) return null;
   const stats = codexSqliteStatsCached();
+  const rl = readCodexRateLimitsCached();
+  const usage = rl ? codexUsageBars(rl) : [];
   let detail: string;
   let source = src;
+  // detail no longer needs the "no usage API" caveat once we surface the
+  // CLI-logged rate-limit bars; keep stats as the textual line.
   if (stats) {
-    detail = `disabled by user; ${stats.parts.join(', ')} — no usage API for chatgpt plans`;
+    detail = stats.parts.join(', ');
     source = `${src} + ${stats.src}`;
   } else {
     const lastDate = await codexLastSessionDate();
-    detail = lastDate
-      ? `disabled by user; last session ${lastDate} — no usage API for chatgpt plans`
-      : 'disabled by user; no usage API for ChatGPT plans';
+    detail = lastDate ? `last session ${lastDate}` : 'codex CLI';
     if (lastDate) source = `${src} + ${config.paths.codexSessionIndex}`;
   }
+  if (rl) source = `${source} + ${rl.src}`;
+  // plan: prefer the rate-limit payload's plan_type (e.g. 'pro'), else auth mode.
+  const plan = rl?.planType ?? (typeof auth.auth_mode === 'string' ? auth.auth_mode : null);
   return {
     id: 'codex',
     name: 'Codex',
-    status: 'off', // user disabled codex
-    plan: typeof auth.auth_mode === 'string' ? auth.auth_mode : null,
+    status: 'active', // re-enabled by user; live local sqlite stats + CLI rate-limit bars
+    plan,
     detail,
-    usage: null,
+    usage: usage.length > 0 ? usage : null,
     source,
   };
 }
