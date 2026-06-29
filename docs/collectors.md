@@ -88,3 +88,16 @@ Any collector can be disabled without touching code via
 Names match the collector `name`; bespoke agent sub-sources use the `agents:<id>` form.
 This is how a fork that doesn't run the author's bespoke tooling gets a clean core
 dashboard. See [config.md](config.md).
+
+## Reusable bespoke collectors
+
+Most of the author's plugin collectors integrate private tooling, but one is published and
+reusable on its own:
+
+- **revuto** — [github.com/avifenesh/revuto](https://github.com/avifenesh/revuto), a local,
+  supplier-agnostic autonomous PR reviewer. Clone and run it, then point
+  `config.revuto.snapshotUrl` at its local snapshot endpoint and the `revuto` collector
+  surfaces its state in atrium.
+
+The rest (itch, surreal, eigen, hermes, …) assume tooling specific to the author's machine;
+leave them in `collectors.disabled` unless you are adapting their source.

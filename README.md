@@ -140,6 +140,13 @@ local tooling you almost certainly don't run — switch them off with `collector
 For building your own, `examples/collectors/` holds standalone templates with no personal
 dependencies.
 
+Among the built-in bespoke collectors, one is reusable on its own:
+**[revuto](https://github.com/avifenesh/revuto)** — a local, supplier-agnostic autonomous
+PR reviewer that learns from maintainer feedback. If you run it, clone it and point
+`config.revuto.snapshotUrl` at its local snapshot endpoint; the `revuto` collector
+(`server/src/collectors/revuto.ts`) then surfaces its state in atrium. Otherwise leave that
+collector disabled.
+
 ## Security model
 
 There is deliberately **no auth layer**; safety comes from never being reachable:
