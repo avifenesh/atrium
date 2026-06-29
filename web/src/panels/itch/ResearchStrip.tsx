@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Dot, RelTime } from '../../components/ui';
 import { useTweenNumber } from '../../hooks';
-import { getModels, getResearchStatus, setModel as persistModel, startResearch, stopResearch } from './api';
-import type { ItchResearch } from '../../../../shared/types';
+import {
+  getGrounding,
+  getModels,
+  getResearchStatus,
+  getRetriever,
+  resumeResearch,
+  sendGroundingFeedback,
+  setFallbackBm25,
+  setModel as persistModel,
+  startResearch,
+  stopResearch,
+} from './api';
+import type { ItchResearch, SxcGroundingReviewItem, SxcGroundingState } from '../../../../shared/types';
 
 // ---------- research strip (rise 0) ----------
 
@@ -16,17 +27,29 @@ const FLAG_DEFS = [
 
 type FlagKey = (typeof FLAG_DEFS)[number][0];
 
+const EMPTY_GROUNDING: SxcGroundingState = {
+  updatedAt: null,
+  retriever: null,
+  threshold: 0,
+  pending: [],
+  reviewedTotal: 0,
+  error: null,
+};
+
 interface ExitInfo {
   code: number | null;
   savedStem: string | null;
   killedReason: string | null;
+  resumable: boolean;
 }
 
 export function ResearchStrip({
   research,
+  grounding,
   onSaved,
 }: {
   research: ItchResearch;
+  grounding?: SxcGroundingState;
   onSaved: (stem: string) => void;
 }) {
   // local truth once a start/stop/poll has spoken; null = follow the snapshot
@@ -57,9 +80,20 @@ export function ResearchStrip({
   const [partial, setPartial] = useState('');
   const [pollDown, setPollDown] = useState(false); // 3+ consecutive status-poll failures
 
+  // low-confidence sxc grounding hits are tagged for explicit review; thumbs feed
+  // the next mining pass by boosting/down-weighting similar seed+chunk pairs.
+  const [groundingState, setGroundingState] = useState<SxcGroundingState>(grounding ?? EMPTY_GROUNDING);
+  const [feedbackBusy, setFeedbackBusy] = useState<Record<string, boolean>>({});
+  const [feedbackErr, setFeedbackErr] = useState<string | null>(null);
+
   // model picker — null until /models answers; load failure keeps it hidden (upstream default applies)
   const [models, setModels] = useState<{ id: string; label?: string }[] | null>(null);
   const [model, setModelId] = useState<string | null>(null);
+
+  // sxc retriever fallback — persistent toggle. true = itch-intent mining is
+  // forced onto bm25 (use while the ColBERT index is stale/rebuilding); false =
+  // the skill's own ColBERT choice applies. Loaded once; flips persist server-side.
+  const [fallbackBm25, setFallbackBm25State] = useState(false);
 
   const linesRef = useRef(0); // absolute log lines we hold (the delta protocol's `since`)
   const pollFailsRef = useRef(0);
@@ -69,6 +103,10 @@ export function ResearchStrip({
   // our own smooth scrollTo emits intermediate scroll events that read as "not at
   // bottom" — they must not unstick the follow; wheel/touch hand control back
   const glidingRef = useRef(false);
+
+  useEffect(() => {
+    setGroundingState(grounding ?? EMPTY_GROUNDING);
+  }, [grounding]);
 
   // a run started elsewhere (cli, another tab): snapshot's started changes → follow it again
   const prevStartedProp = useRef(research.started);
@@ -88,6 +126,15 @@ export function ResearchStrip({
         setModels(m.models);
         setModelId(m.selected || m.default || m.models[0].id);
       })
+      .catch(() => {});
+    return () => ac.abort();
+  }, []);
+
+  // retriever fallback state — once on mount; silent failure leaves it off
+  useEffect(() => {
+    const ac = new AbortController();
+    getRetriever(ac.signal)
+      .then((r) => setFallbackBm25State(r.fallback_bm25))
       .catch(() => {});
     return () => ac.abort();
   }, []);
@@ -129,7 +176,7 @@ export function ResearchStrip({
         setPartial(st.partial);
         if (!st.running) {
           setOverride(false);
-          setExit({ code: st.exit_code, savedStem: st.saved_stem, killedReason: st.killed_reason });
+          setExit({ code: st.exit_code, savedStem: st.saved_stem, killedReason: st.killed_reason, resumable: !!st.resumable });
           if (st.saved_stem) onSaved(st.saved_stem);
           return;
         }
@@ -158,6 +205,43 @@ export function ResearchStrip({
     el.scrollTo({ top: el.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
   }, [log, partial]);
 
+  // optimistic flip; revert + surface on failure so the UI never lies about state
+  const toggleFallback = async (on: boolean) => {
+    setFallbackBm25State(on);
+    try {
+      const { status, body } = await setFallbackBm25(on);
+      if (!body?.ok) {
+        setFallbackBm25State(!on);
+        setMsg({ text: body?.error ?? `retriever toggle failed (${status})`, isError: true });
+      }
+    } catch (e) {
+      setFallbackBm25State(!on);
+      setMsg({ text: e instanceof Error ? e.message : String(e), isError: true });
+    }
+  };
+
+  const submitGroundingFeedback = async (item: SxcGroundingReviewItem, feedback: 'up' | 'down') => {
+    setFeedbackBusy((b) => ({ ...b, [item.id]: true }));
+    setFeedbackErr(null);
+    try {
+      const { status, body } = await sendGroundingFeedback(item.id, feedback);
+      if (body?.ok && body.grounding) {
+        setGroundingState(body.grounding);
+      } else {
+        setFeedbackErr(body?.error ?? `feedback failed (${status})`);
+        setGroundingState(await getGrounding());
+      }
+    } catch (e) {
+      setFeedbackErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFeedbackBusy((b) => {
+        const next = { ...b };
+        delete next[item.id];
+        return next;
+      });
+    }
+  };
+
   const start = async () => {
     setBusy(true);
     setMsg(null);
@@ -183,8 +267,38 @@ export function ResearchStrip({
         setPartial('');
         stickRef.current = true;
         setOverride(true);
+        // Mining completes before /research/start returns; refresh the review
+        // queue immediately instead of waiting for the next itch collector poll.
+        getGrounding().then(setGroundingState).catch(() => {});
       } else {
         setMsg({ text: body?.error ?? `start failed (${status})`, isError: true });
+      }
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : String(e), isError: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resume = async () => {
+    setBusy(true);
+    setMsg(null);
+    setExit(null);
+    try {
+      const { status, body } = await resumeResearch();
+      if (status === 409) {
+        setMsg({ text: body?.error ?? 'nothing to resume', isError: false });
+      } else if (body?.ok) {
+        startedRef.current = body.started ?? null;
+        setStartedAt(body.started ?? null);
+        linesRef.current = 0;
+        setLog([]);
+        setPartial('');
+        stickRef.current = true;
+        setOverride(true);
+        getGrounding().then(setGroundingState).catch(() => {});
+      } else {
+        setMsg({ text: body?.error ?? `resume failed (${status})`, isError: true });
       }
     } catch (e) {
       setMsg({ text: e instanceof Error ? e.message : String(e), isError: true });
@@ -213,6 +327,78 @@ export function ResearchStrip({
       setBusy(false);
     }
   };
+
+  const pendingGrounding = groundingState?.pending ?? [];
+  const groundingReview = (pendingGrounding.length > 0 || feedbackErr || groundingState?.error) ? (
+    <div className="fade-in mt-3 rounded-lg border border-amber/30 bg-amber/10 p-2.5">
+      <div className="mb-2 flex min-w-0 items-baseline gap-2 font-mono text-[11px]">
+        <span className="shrink-0 uppercase tracking-[0.14em] text-amber">sxc review</span>
+        {(groundingState?.threshold ?? 0) > 0 && (
+          <span className="shrink-0 text-mist-faint">confidence &lt; {(groundingState?.threshold ?? 0).toFixed(1)}</span>
+        )}
+        {groundingState?.retriever && <span className="shrink-0 text-mist-faint">via {groundingState.retriever}</span>}
+        <span className="min-w-0 flex-1 truncate text-mist-faint">thumbs adjust similar future grounding hits</span>
+        {(groundingState?.reviewedTotal ?? 0) > 0 && (
+          <span className="shrink-0 tabular-nums text-mist-faint">{groundingState?.reviewedTotal ?? 0} learned</span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {pendingGrounding.slice(0, 3).map((item) => {
+          const fbBusy = !!feedbackBusy[item.id];
+          const where = item.project ? `${item.source}/${item.project}` : item.source;
+          return (
+            <div key={item.id} className="rounded-md border border-white/10 bg-white/[0.03] p-2">
+              <div className="mb-1 flex min-w-0 items-center gap-2 font-mono text-[11px]">
+                <span className="min-w-0 truncate text-mist" title={item.seed}>
+                  “{item.seed}”
+                </span>
+                <span className="shrink-0 text-mist-faint">→</span>
+                <span className="min-w-0 truncate text-mist-dim" title={`${where} · ${item.sessionId}`}>
+                  {where}
+                </span>
+                <span className="shrink-0 tabular-nums text-amber" title={`raw sxc score ${item.confidence}, gate ${item.threshold}`}>
+                  {Number.isFinite(item.confidence) ? item.confidence.toFixed(1) : String(item.confidence)}
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={fbBusy}
+                    aria-label={`mark ${item.seed} grounding relevant`}
+                    title="relevant — boost this/similar future sxc hits"
+                    onClick={() => void submitGroundingFeedback(item, 'up')}
+                    className="cursor-pointer rounded px-1.5 py-0.5 text-xs text-mist-faint transition-colors hover:text-jade disabled:opacity-40"
+                  >
+                    👍
+                  </button>
+                  <button
+                    type="button"
+                    disabled={fbBusy}
+                    aria-label={`mark ${item.seed} grounding irrelevant`}
+                    title="not relevant — down-weight this/similar future sxc hits"
+                    onClick={() => void submitGroundingFeedback(item, 'down')}
+                    className="cursor-pointer rounded px-1.5 py-0.5 text-xs text-mist-faint transition-colors hover:text-coral disabled:opacity-40"
+                  >
+                    👎
+                  </button>
+                </span>
+              </div>
+              <div className="max-h-10 overflow-hidden text-xs leading-relaxed text-mist-dim" title={item.quote}>
+                {item.quote}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {pendingGrounding.length > 3 && (
+        <div className="mt-1.5 font-mono text-[11px] text-mist-faint">+{pendingGrounding.length - 3} more queued</div>
+      )}
+      {(feedbackErr || groundingState?.error) && (
+        <div className="mt-1.5 truncate font-mono text-[11px] text-coral" title={feedbackErr ?? groundingState?.error ?? undefined}>
+          {feedbackErr ?? groundingState?.error}
+        </div>
+      )}
+    </div>
+  ) : null;
 
   if (running) {
     return (
@@ -243,6 +429,7 @@ export function ResearchStrip({
             {msg.text}
           </div>
         )}
+        {groundingReview}
         <div
           ref={logBoxRef}
           onScroll={(e) => {
@@ -293,11 +480,29 @@ export function ResearchStrip({
         : exit.code !== null && exit.code !== 0
           ? { tone: 'text-coral', text: `research exited (${exit.code})` }
           : { tone: 'text-mist-faint', text: hasUnsavedResult ? 'research finished — unsaved result below' : 'research finished — nothing saved' }
-    : null;
+    : research.resumable
+      ? { tone: 'text-coral', text: 'interrupted research checkpoint available' }
+      : null;
+  const canResume = exit?.resumable || research.resumable;
 
   return (
     <section className="glass rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
-      {exitView && <div className={`fade-in mb-2 font-mono text-xs ${exitView.tone}`}>{exitView.text}</div>}
+      {exitView && (
+        <div className="fade-in mb-2 flex items-center gap-2">
+          <span className={`font-mono text-xs ${exitView.tone}`}>{exitView.text}</span>
+          {canResume && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void resume()}
+              title="continue the interrupted run from its partial ideas — no re-research"
+              className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-jade press glass glass-hover hover:text-jade disabled:opacity-50"
+            >
+              {busy ? '◌' : 'resume'}
+            </button>
+          )}
+        </div>
+      )}
       {msg && (
         <div
           className={`fade-in mb-2 truncate font-mono text-xs ${msg.isError ? 'text-coral' : 'text-mist-faint'}`}
@@ -336,6 +541,7 @@ export function ResearchStrip({
           )}
         </div>
       )}
+      {groundingReview && <div className="mb-3">{groundingReview}</div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">
           new research
@@ -390,6 +596,18 @@ export function ResearchStrip({
           />
         </label>
         <span className="ml-auto flex items-center gap-3">
+          <label
+            className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-mist-dim transition-colors hover:text-mist"
+            title="force itch-intent mining onto bm25 — use while the ColBERT index is stale or rebuilding; off uses ColBERT"
+          >
+            <input
+              type="checkbox"
+              checked={fallbackBm25}
+              onChange={(e) => void toggleFallback(e.target.checked)}
+              className="h-3 w-3 cursor-pointer accent-mist-dim"
+            />
+            <span className={fallbackBm25 ? 'text-amber' : undefined}>fallback bm25</span>
+          </label>
           {models && model !== null && (
             <select
               value={model}

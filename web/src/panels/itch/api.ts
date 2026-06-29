@@ -49,6 +49,23 @@ export interface Decision {
   metadata: IdeaMeta;
 }
 
+/** rank buckets 5..1 plus the unrated pile — the decisions panel's rows and pages. */
+export type IdeaBucketKey = '5' | '4' | '3' | '2' | '1' | 'undecided';
+
+export type IdeaBucketCounts = Record<IdeaBucketKey, number>;
+
+/** one aggregated run idea — RunIdea plus its run stem and resolved sidecar row, so a
+ *  bucket page can render the same IdeaCard the feed does (which needs stem + meta). */
+export interface BucketIdea extends RunIdea {
+  stem: string;
+  structured: StructuredIdea | null;
+}
+
+export interface IdeaBucket {
+  bucket: IdeaBucketKey;
+  entries: BucketIdea[];
+}
+
 export interface SearchHit {
   stem: string;
   idx: number;
@@ -70,6 +87,8 @@ export interface ResearchStatus {
   exit_code: number | null;
   saved_stem: string | null;
   killed_reason: string | null;
+  /** a run was killed mid-flight and a resumable checkpoint exists on disk */
+  resumable?: boolean;
 }
 
 // ---------- tiny typed fetch helpers ----------
@@ -116,12 +135,26 @@ export function getDecisions(signal?: AbortSignal): Promise<Decision[]> {
   return getJson<Decision[]>('/decisions', signal);
 }
 
+/** per-bucket counts (rank 5..1 + undecided) — drives the decisions panel rows. */
+export function getIdeaBucketCounts(signal?: AbortSignal): Promise<IdeaBucketCounts> {
+  return getJson<IdeaBucketCounts>('/ideas', signal);
+}
+
+/** all ideas in one bucket, deduped newest-run-first, with body + sidecar — the page. */
+export function getIdeaBucket(bucket: IdeaBucketKey, signal?: AbortSignal): Promise<IdeaBucket> {
+  return getJson<IdeaBucket>(`/ideas/${encodeURIComponent(bucket)}`, signal);
+}
+
 export function getResearchStatus(since: number, signal?: AbortSignal): Promise<ResearchStatus> {
   return getJson<ResearchStatus>(`/research/status?since=${since}`, signal);
 }
 
 export function startResearch(flags: Record<string, boolean | number | string>) {
   return mutate('POST', '/research/start', { flags });
+}
+
+export function resumeResearch() {
+  return mutate('POST', '/research/resume');
 }
 
 export function stopResearch() {
@@ -213,6 +246,63 @@ export function getModels(signal?: AbortSignal): Promise<ModelsInfo> {
 
 export function setModel(model: string) {
   return mutate('POST', '/model', { model });
+}
+
+// ---------- retriever override (itch-intent mining) ----------
+
+export interface RetrieverState {
+  /** the forced retriever, or null when the skill's own ColBERT choice applies */
+  forced: string | null;
+  fallback_bm25: boolean;
+  options: string[];
+}
+
+export function getRetriever(signal?: AbortSignal): Promise<RetrieverState> {
+  return getJson<RetrieverState>('/retriever', signal);
+}
+
+export interface SxcGroundingReviewItem {
+  id: string;
+  status: 'review';
+  seed: string;
+  chunkId: string;
+  retriever: string;
+  source: string;
+  project: string | null;
+  sessionId: string;
+  ts: number | null;
+  score: number;
+  confidence: number;
+  threshold: number;
+  quote: string;
+  feedback: 'up' | 'down' | null;
+  updatedAt: string;
+}
+
+export interface SxcGroundingState {
+  updatedAt: string | null;
+  retriever: string | null;
+  threshold: number;
+  pending: SxcGroundingReviewItem[];
+  reviewedTotal: number;
+  error: string | null;
+}
+
+export function getGrounding(signal?: AbortSignal): Promise<SxcGroundingState> {
+  return getJson<SxcGroundingState>('/grounding', signal);
+}
+
+export function sendGroundingFeedback(id: string, feedback: 'up' | 'down') {
+  return mutate('POST', '/grounding/feedback', { id, feedback }) as Promise<{
+    status: number;
+    body: { ok?: boolean; grounding?: SxcGroundingState; error?: string } | null;
+  }>;
+}
+
+/** Persistent toggle: true forces bm25 (use while the ColBERT index is stale or
+ *  rebuilding), false clears it so itch-intent mining uses ColBERT again. */
+export function setFallbackBm25(on: boolean) {
+  return mutate('POST', '/retriever', { fallback_bm25: on });
 }
 
 // ---------- run / idea mutation ----------

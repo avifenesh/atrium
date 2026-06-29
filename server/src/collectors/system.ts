@@ -111,11 +111,15 @@ async function collectGpu(): Promise<SystemState['gpu']> {
   };
 }
 
-// ---- disks via df, per-mount so a missing /data doesn't kill the rest ----
+// ---- disks via df, per-mount so a missing mount doesn't kill the rest ----
+// mounts come from config.system.diskMounts (default ['/']) so a fresh box reports
+// its root fs; the author's box adds '/data' etc. via config.
 
 async function collectDisks(): Promise<SystemState['disks']> {
   const disks: SystemState['disks'] = [];
-  for (const mount of ['/', '/data']) {
+  // config-editable — fall back to root fs if diskMounts is malformed
+  const mounts = Array.isArray(config.system?.diskMounts) ? config.system.diskMounts : ['/'];
+  for (const mount of mounts) {
     const out = await shTry('df', ['-B1', '--output=target,size,used', mount], { timeoutMs: 5_000 });
     if (!out) continue;
     const data = out.split('\n')[1]?.trim();

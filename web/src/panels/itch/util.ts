@@ -24,6 +24,15 @@ export const RATING_LABEL: Record<number, string> = {
   5: 'pursuing',
 };
 
+/** rank buckets 5..1 plus the unrated pile — the order the decisions panel lists them. */
+export const BUCKET_ORDER = ['5', '4', '3', '2', '1', 'undecided'] as const;
+export type BucketKey = (typeof BUCKET_ORDER)[number];
+
+/** display label for a bucket key — ranks reuse RATING_LABEL, 'undecided' is its own. */
+export function bucketLabel(key: BucketKey): string {
+  return key === 'undecided' ? 'undecided' : (RATING_LABEL[Number(key)] ?? key);
+}
+
 /** "n/m" = ideas/rated — labels must stay short enough for the run picker.
  *  same-day runs swap the date for 'today' so a deep picker scans by time alone.
  *  collide runs get a domain hint from sampledDomains — first domain only,

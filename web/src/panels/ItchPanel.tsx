@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { refreshSection } from '../api';
 import { Dot, EmptyState, Panel, RelTime } from '../components/ui';
+import { BucketPage } from './itch/BucketPage';
 import { ComparePanel } from './itch/Compare';
 import { DecisionsPanel } from './itch/Decisions';
 import { Feed, type ScrollTarget } from './itch/Feed';
@@ -8,6 +9,7 @@ import { ResearchStrip } from './itch/ResearchStrip';
 import { ScopesPanel } from './itch/Scopes';
 import { SearchStrip } from './itch/SearchStrip';
 import { ToolsPanel } from './itch/Tools';
+import type { IdeaBucketKey } from './itch/api';
 import type { ItchState, Snapshot } from '../../../shared/types';
 
 // itch view shell — section ordering plus the state that crosses sections
@@ -34,6 +36,8 @@ function ItchBody({
   const [decisionsVersion, setDecisionsVersion] = useState(0);
   const [filtersVersion, setFiltersVersion] = useState(0);
   const [scopesVersion, setScopesVersion] = useState(0);
+  // open bucket page (a rank 5..1 or 'undecided') — null shows the section stack
+  const [openBucket, setOpenBucket] = useState<IdeaBucketKey | null>(null);
   // a save the snapshot hasn't confirmed yet — see the runs effect below
   const pendingSelect = useRef<string | null>(null);
   // a delete the snapshot hasn't dropped yet — the adopt effect must not resurrect it
@@ -139,7 +143,16 @@ function ItchBody({
         </div>
       )}
 
-      <ResearchStrip research={it.research} onSaved={onSaved} />
+      {openBucket !== null ? (
+        <BucketPage
+          bucket={openBucket}
+          onBack={() => setOpenBucket(null)}
+          onRated={onRated}
+          onScoped={onScoped}
+        />
+      ) : (
+        <>
+      <ResearchStrip research={it.research} grounding={it.sxcGrounding} onSaved={onSaved} />
       <SearchStrip onJump={(stem, idx) => jumpTo(stem, idx)} />
       <Feed
         runs={runs}
@@ -165,9 +178,12 @@ function ItchBody({
         runs={runs}
         version={decisionsVersion}
         onJump={(stem, title) => jumpTo(stem, undefined, title)}
+        onOpenBucket={setOpenBucket}
       />
       <ScopesPanel riseIndex={5} version={scopesVersion} />
       <ToolsPanel riseIndex={6} filtersVersion={filtersVersion} onFiltersChanged={onFiltersChanged} />
+        </>
+      )}
     </div>
   );
 }

@@ -48,6 +48,14 @@ function parseItemUrl(url: string): { repo: string; number: number } | null {
   return { repo: m[1], number: Number(m[2]) };
 }
 
+function activityLabel(n: GithubNotification): string | null {
+  if (!n.latestActivity) return null;
+  if (n.noise?.kind === 'review-bot') return n.latestActivity.kind === 'review_comment' ? 'bot inline' : 'bot review';
+  if (n.latestActivity.kind === 'review_comment') return 'review note';
+  if (n.latestActivity.kind === 'review') return n.latestActivity.state?.toLowerCase() ?? 'review';
+  return n.latestActivity.kind;
+}
+
 /** Hover cluster tail: quiet THIS line first, then fainter repo / org variants. */
 function RepoMutes({ repo, itemId }: { repo: string; itemId?: string }) {
   const owner = repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : repo;
@@ -178,6 +186,15 @@ function NotificationRow({
       <Chip className="text-mist-dim">{n.reason}</Chip>
       <span className="w-32 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-40">{n.repo}</span>
       <span className={`min-w-0 flex-1 truncate text-sm ${n.unread ? 'text-mist' : 'text-mist-dim'}`}>{n.title}</span>
+      {activityLabel(n) && <Chip className={n.noise ? 'text-mist-dim' : 'text-mist-faint'}>{activityLabel(n)}</Chip>}
+      {n.latestActivity && (
+        <span
+          className={`hidden w-32 shrink-0 truncate text-right font-mono text-[11px] ${n.noise ? 'text-mist-dim' : 'text-mist-faint'} xl:block`}
+          title={`latest activity by ${n.latestActivity.actor}`}
+        >
+          @{n.latestActivity.actor}
+        </span>
+      )}
       <RelTime iso={n.updatedAt} />
       <span className="flex shrink-0 items-center gap-1">
         {item && <GithubLink href={n.url} />}
@@ -198,6 +215,48 @@ function NotificationRow({
         <RepoMutes repo={n.repo} />
       </span>
     </Row>
+  );
+}
+
+function ReviewBotDigest({
+  notifications,
+  open,
+  onToggle,
+  dispatches,
+  onClear,
+  onOpenItem,
+}: {
+  notifications: GithubNotification[];
+  open: boolean;
+  onToggle: () => void;
+  dispatches: EigenDispatch[];
+  onClear: (id: string) => void;
+  onOpenItem: (repo: string, number: number) => void;
+}) {
+  if (notifications.length === 0) return null;
+  const latest = notifications.map((n) => n.updatedAt).sort().at(-1) ?? null;
+  const repos = [...new Set(notifications.map((n) => n.repo))].slice(0, 3).join(' · ');
+  return (
+    <div className="mt-3 border-t hairline pt-3">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.04]"
+      >
+        <span className="shrink-0 font-mono text-[11px] text-mist-faint">{open ? '▾' : '▸'}</span>
+        <Chip className="text-mist-dim">review-bot digest</Chip>
+        <span className="min-w-0 flex-1 truncate text-sm text-mist-dim">{repos}</span>
+        <span className="shrink-0 font-mono text-xs tabular-nums text-mist-faint">{notifications.length}</span>
+        <RelTime iso={latest} />
+      </button>
+      {open && (
+        <div className="mt-2 space-y-0.5">
+          {notifications.map((n) => (
+            <NotificationRow key={n.id} n={n} dispatches={dispatches} onClear={onClear} onOpenItem={onOpenItem} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -239,6 +298,7 @@ export default function TasksPanel({
   const [cleared, setCleared] = useState<ReadonlySet<string>>(new Set());
   const [clearAllArmed, setClearAllArmed] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
+  const [reviewBotOpen, setReviewBotOpen] = useState(false);
 
   // older servers don't ship the repos section yet — skip the panel entirely
   const local = snapshot.repos as ReposState | undefined;
@@ -257,9 +317,11 @@ export default function TasksPanel({
   const teamQueue = g.teamQueue.filter(visible);
   const notifAll = g.notifications.filter((n) => !cleared.has(n.id));
   // notification ids are thread ids, not owner/repo#N — check repo mutes only
-  const notifications = notifAll.filter(
+  const visibleNotifications = notifAll.filter(
     (n) => visible({ repo: n.repo }) && !isMuted(snapshot, 'github-reason', n.reason),
   );
+  const reviewBotNotifications = visibleNotifications.filter((n) => n.noise?.kind === 'review-bot');
+  const notifications = visibleNotifications.filter((n) => n.noise?.kind !== 'review-bot');
   const ownRepos = g.ownRepos.filter(visible);
 
   const clearOne = (id: string) => {
@@ -449,12 +511,17 @@ export default function TasksPanel({
           title="notifications"
           riseIndex={5}
           className="col-span-12"
-          quietCount={notifAll.length - notifications.length}
+          quietCount={notifAll.length - visibleNotifications.length}
           onQuietClick={onOpenQuiet}
           right={
-            notifications.length > 0 ? (
+            visibleNotifications.length > 0 ? (
               <>
                 <span className="font-mono text-xs tabular-nums text-mist-faint">{notifications.length}</span>
+                {reviewBotNotifications.length > 0 && (
+                  <span className="font-mono text-[11px] tabular-nums text-mist-dim" title="collapsed review-bot notifications">
+                    {reviewBotNotifications.length} bot
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={clearAll}
@@ -469,13 +536,31 @@ export default function TasksPanel({
             ) : undefined
           }
         >
-          {notifications.length === 0 ? (
+          {visibleNotifications.length === 0 ? (
             <EmptyState>no notifications</EmptyState>
           ) : (
-            <div className="max-h-96 space-y-0.5 overflow-y-auto">
-              {notifications.map((n) => (
-                <NotificationRow key={n.id} n={n} dispatches={dispatches} onClear={clearOne} onOpenItem={onOpenItem} />
-              ))}
+            <div className="max-h-96 overflow-y-auto">
+              {notifications.length > 0 && (
+                <div className="space-y-0.5">
+                  {notifications.map((n) => (
+                    <NotificationRow
+                      key={n.id}
+                      n={n}
+                      dispatches={dispatches}
+                      onClear={clearOne}
+                      onOpenItem={onOpenItem}
+                    />
+                  ))}
+                </div>
+              )}
+              <ReviewBotDigest
+                notifications={reviewBotNotifications}
+                open={reviewBotOpen}
+                onToggle={() => setReviewBotOpen((o) => !o)}
+                dispatches={dispatches}
+                onClear={clearOne}
+                onOpenItem={onOpenItem}
+              />
             </div>
           )}
         </Panel>

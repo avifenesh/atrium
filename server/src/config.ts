@@ -9,14 +9,33 @@ export const defaults = {
   host: '127.0.0.1',
   configDir: join(HOME, '.config', 'atrium'),
 
+  /** Which collectors run. `disabled` names are skipped at registration — a fork
+   *  that doesn't use the author's bespoke tooling can switch off the plugin
+   *  collectors (itch, revuto, surreal, and the bespoke agent sources) and get a
+   *  clean core dashboard without touching code. Names match the collector `name`
+   *  field; for agent sub-sources use `agents:<id>` (e.g. 'agents:itch'). */
+  collectors: {
+    disabled: [] as string[],
+  },
+
   github: {
-    login: 'avifenesh',
+    /** your GitHub login. Empty = the github collector stays idle (set it in
+     *  ~/.config/atrium/config.json to enable the tasks view). */
+    login: '',
     /** orgs whose repos count as "my repos" in the tasks view */
-    ownOrgs: ['agent-sh'],
+    ownOrgs: [] as string[],
     /** orgs excluded from authored-issue noise */
-    noiseOrgs: ['zelos-social'],
+    noiseOrgs: [] as string[],
+    /** PR review bots collapsed into a digest in notifications; human activity on the same PR stays visible.
+     *  e.g. ['gemini-code-assist', 'coderabbitai'] */
+    reviewBotNoiseLogins: [] as string[],
     pollMs: 60_000,
     ownReposPollMs: 600_000,
+    /** consecutive failed polls before the crit flag (and phone ping) raises.
+     *  The dashboard error shows on the 1st failure; this only gates the page,
+     *  so a transient GitHub 5xx that heals next cycle never reaches your phone.
+     *  3 × pollMs = ~3 min of sustained failure before you're alerted. */
+    failThreshold: 3,
   },
 
   paths: {
@@ -62,6 +81,11 @@ export const defaults = {
   itch: {
     base: 'http://127.0.0.1:8799',
     repo: join(HOME, 'projects', 'itch'),
+    // sxc retriever override file. itch-intent mining reads this on every
+    // get_context call and lets it WIN over an explicit retriever= arg, so the
+    // atrium "fall back to bm25" toggle can route mining off a stale/rebuilding
+    // ColBERT index without editing the skill. Mirrors sxc.serve.FORCE_CONFIG_PATH.
+    sxcServeConfig: join(HOME, 'projects', 'colbert-2', 'config', 'serve.json'),
   },
 
   surreal: {
@@ -72,34 +96,24 @@ export const defaults = {
     pass: 'root',
   },
 
-  /** ports we expect; anything else listening gets flagged */
+  /** disk mounts shown in the system view. Defaults to the root filesystem; add
+   *  more (e.g. '/data', '/home') in ~/.config/atrium/config.json for your box. */
+  system: {
+    diskMounts: ['/'] as string[],
+  },
+
+  /** Ports you expect to be listening, mapped to a label. A known port is always
+   *  shown (labeled); an unknown port shows only when it binds beyond loopback.
+   *  Add your own infra in ~/.config/atrium/config.json — see examples/config.personal.json.
+   *  atrium's own port is added automatically below. */
   knownPorts: {
-    8000: 'surrealdb (revuto memory)',
-    8181: 'bge embedder (revuto)',
-    8787: 'bedrock-codex-bridge',
-    8888: 'searxng',
-    6379: 'valkey',
-    8001: 'llama-server qwen36-27b',
-    8003: 'llama-server judge-9b',
-    11434: 'ollama',
-    42030: 'tailscaled',
-    57575: 'tailscaled',
-    3389: 'gnome-remote-desktop',
-    3390: 'gnome-remote-desktop',
-    631: 'cups',
     5599: 'atrium (this app)',
     5173: 'vite dev',
   } as Record<number, string>,
 
-  /** systemd user units that constitute personal infra */
-  watchedUnits: [
-    'revuto-surreal.service',
-    'revuto-embedder.service',
-    'hermes-gateway.service',
-    'bedrock-codex-bridge.service',
-    'voiced.service',
-    'readd.service',
-  ],
+  /** systemd --user units to surface in the system view. Empty by default; list
+   *  your own services in ~/.config/atrium/config.json. */
+  watchedUnits: [] as string[],
 
   poll: {
     systemMs: 5_000,
@@ -121,8 +135,14 @@ export const defaults = {
     // 'crit' | 'warn' | 'info' — minimum severity that pings the phone
     minSeverity: 'crit' as 'info' | 'warn' | 'crit',
     throttleMs: 21_600_000, // one ping per flag id per 6h, even if it flaps
-    notifyClear: false, // single-line notice when a pinged flag disappears
-    target: 'telegram', // hermes send --to <target>
+    notifyClear: true, // single-line notice when a pinged flag disappears (so a [crit] always gets a matching [clear] on recovery)
+    // Push backend: an argv array; the alert message is appended as the final arg.
+    // Empty = push disabled (the flag still shows in the dashboard). Examples:
+    //   ['ntfy', 'publish', 'my-topic']
+    //   ['curl', '-fsS', '-d', '@-', 'https://my-webhook']  (message as last arg)
+    //   ['hermes', 'send', '--to', 'telegram']              (the author's setup)
+    // See examples/notify/ for ready-to-copy scripts.
+    sendCmd: [] as string[],
   },
 };
 

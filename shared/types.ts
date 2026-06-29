@@ -29,8 +29,34 @@ export interface Snapshot {
   itch: ItchState;
   cloud: CloudState;
   repos: ReposState;
+  /** Plugin collectors (anything not in the typed core above) write here via
+   *  store.setExtra(). The web UI renders each entry in a generic panel keyed by
+   *  its name. Core collectors never use this lane. */
+  extra: Record<string, ExtraSection>;
   mutes: Mute[];
   flags: Flag[];
+}
+
+/** A plugin collector's contribution to the snapshot. `title` and `rows` drive the
+ *  generic panel; `data` carries the raw payload for any custom MCP/consumer use. */
+export interface ExtraSection {
+  /** human label for the generic panel header; defaults to the section key */
+  title?: string;
+  updatedAt: string | null;
+  up?: boolean;
+  error?: string | null;
+  /** simple label/value rows the generic panel renders; optional href makes a row a link */
+  rows?: ExtraRow[];
+  /** arbitrary structured payload, untouched by the UI */
+  data?: unknown;
+}
+
+export interface ExtraRow {
+  label: string;
+  value: string;
+  href?: string;
+  /** tints the value: ok=jade, warn=amber, err=coral, else dim */
+  tone?: 'ok' | 'warn' | 'err';
 }
 
 // ---------- github ----------
@@ -61,6 +87,20 @@ export interface GithubNotification {
   url: string; // html url when resolvable, else api url
   updatedAt: string;
   unread: boolean;
+  itemId: string | null; // "owner/repo#123" when the subject is an issue/PR
+  latestActivity: {
+    kind: 'comment' | 'review' | 'review_comment' | 'subject';
+    actor: string;
+    actorType: string | null;
+    state: string | null;
+    updatedAt: string;
+  } | null;
+  noise: {
+    kind: 'review-bot';
+    groupKey: string;
+    label: string;
+    detail: string;
+  } | null;
 }
 
 export interface RepoCount {
@@ -440,6 +480,39 @@ export interface ItchResearch {
   started: string | null;
   savedStem: string | null;
   killedReason: string | null;
+  resumable: boolean;
+}
+
+export type SxcGroundingFeedback = 'up' | 'down';
+
+export interface SxcGroundingReviewItem {
+  id: string;
+  status: 'review';
+  seed: string;
+  chunkId: string;
+  retriever: string;
+  source: string;
+  project: string | null;
+  sessionId: string;
+  ts: number | null;
+  score: number;
+  /** raw retriever score used for the confidence gate (higher is better) */
+  confidence: number;
+  threshold: number;
+  quote: string;
+  feedback: SxcGroundingFeedback | null;
+  updatedAt: string;
+}
+
+export interface SxcGroundingState {
+  updatedAt: string | null;
+  /** retriever that produced the latest observed low-confidence grounding batch */
+  retriever: string | null;
+  /** score threshold below which ColBERT/hybrid hits are tagged for review; 0 disables gating */
+  threshold: number;
+  pending: SxcGroundingReviewItem[];
+  reviewedTotal: number;
+  error: string | null;
 }
 
 export interface ItchState {
@@ -450,6 +523,8 @@ export interface ItchState {
   research: ItchResearch;
   /** decisions ledger size (rated ideas across all runs), null when unknown */
   ratedTotal: number | null;
+  /** low-confidence sxc grounding hits awaiting explicit relevance feedback */
+  sxcGrounding: SxcGroundingState;
   error: string | null;
 }
 

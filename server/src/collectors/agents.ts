@@ -4,7 +4,7 @@ import { getDispatches } from '../eigen-dispatch.js';
 import { store } from '../state.js';
 import { iso, tailLines } from '../util.js';
 import { baseAgent, pruneFlagPins, type SourceResult } from './agents/common.js';
-import type { Collector } from './registry.js';
+import { isDisabled, type Collector } from './registry.js';
 
 import { collectAnyMission } from './agents/any-mission.js';
 import { collectClaude } from './agents/claude.js';
@@ -15,8 +15,10 @@ import { collectItch } from './agents/itch.js';
 import { collectRevuto } from './agents/revuto.js';
 import { collectTraining } from './agents/training.js';
 
-/** Stable order — the UI relies on it. */
-const SOURCES: [AgentId, string, () => Promise<SourceResult>][] = [
+/** Stable order — the UI relies on it. claude/codex are universal AI CLIs; the rest
+ *  integrate the author's bespoke tooling. Disable any with config.collectors.disabled
+ *  entry 'agents:<id>' (e.g. 'agents:itch'). */
+const ALL_SOURCES: [AgentId, string, () => Promise<SourceResult>][] = [
   ['revuto', 'Revuto', collectRevuto],
   ['hermes', 'Hermes', collectHermes],
   ['itch', 'Itch', collectItch],
@@ -26,6 +28,8 @@ const SOURCES: [AgentId, string, () => Promise<SourceResult>][] = [
   ['codex', 'Codex', collectCodex],
   ['training', 'Training', collectTraining],
 ];
+
+const SOURCES = ALL_SOURCES.filter(([id]) => !isDisabled(`agents:${id}`));
 
 async function guarded(id: AgentId, name: string, fn: () => Promise<SourceResult>): Promise<SourceResult> {
   try {

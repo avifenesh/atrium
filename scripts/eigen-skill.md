@@ -1,6 +1,6 @@
 ---
 name: atrium-ops
-description: Manage avifenesh's life dashboard (GitHub tasks, agents, system health, email/calendar, subscriptions, revuto/itch watch, quiet/mute) via atrium_* MCP tools. Use when asked about tasks, what needs attention, system status, muting noise, or pausing agents.
+description: Manage the user's atrium life dashboard (GitHub tasks, agents, system health, email/calendar, subscriptions, plugin watches, quiet/mute) via atrium_* MCP tools. Use when asked about tasks, what needs attention, system status, muting noise, or pausing agents.
 ---
 
 # atrium-ops
@@ -14,7 +14,7 @@ For "what needs my attention" or any open-ended status ask, call `atrium_overvie
 - `myPRs` — my open PRs with draft/review/CI state.
 - `mentions` — issues/PRs that mention me.
 - `teamQueue` — team review requests minus direct minus bots. Secondary.
-- `notifications` — raw GitHub notification feed.
+- `notifications` — GitHub notification feed; known PR review-bot floods collapse into a digest so human activity stays prominent.
 
 ## Mute semantics (`atrium_mute`)
 
@@ -34,4 +34,4 @@ Actions: `pause`, `resume`, `stop`, `start`, `trigger`, `kill` — availability 
 
 ## Daemon down
 
-If tools reply "atrium daemon not running": `systemctl --user start atrium`, or directly `node /home/avifenesh/projects/atrium/server/dist/server/src/index.js`. Health check: `curl http://127.0.0.1:5599/api/health`.
+If tools reply "atrium daemon not running": `systemctl --user start atrium`, or directly `node <atrium-repo>/server/dist/server/src/index.js`. Health check: `curl http://127.0.0.1:5599/api/health`.
