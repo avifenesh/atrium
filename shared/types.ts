@@ -29,8 +29,34 @@ export interface Snapshot {
   itch: ItchState;
   cloud: CloudState;
   repos: ReposState;
+  /** Plugin collectors (anything not in the typed core above) write here via
+   *  store.setExtra(). The web UI renders each entry in a generic panel keyed by
+   *  its name. Core collectors never use this lane. */
+  extra: Record<string, ExtraSection>;
   mutes: Mute[];
   flags: Flag[];
+}
+
+/** A plugin collector's contribution to the snapshot. `title` and `rows` drive the
+ *  generic panel; `data` carries the raw payload for any custom MCP/consumer use. */
+export interface ExtraSection {
+  /** human label for the generic panel header; defaults to the section key */
+  title?: string;
+  updatedAt: string | null;
+  up?: boolean;
+  error?: string | null;
+  /** simple label/value rows the generic panel renders; optional href makes a row a link */
+  rows?: ExtraRow[];
+  /** arbitrary structured payload, untouched by the UI */
+  data?: unknown;
+}
+
+export interface ExtraRow {
+  label: string;
+  value: string;
+  href?: string;
+  /** tints the value: ok=jade, warn=amber, err=coral, else dim */
+  tone?: 'ok' | 'warn' | 'err';
 }
 
 // ---------- github ----------

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Snapshot, SectionName, Flag, Mute } from '../../shared/types.js';
+import type { Snapshot, SectionName, ExtraSection, Flag, Mute } from '../../shared/types.js';
 import { iso } from './util.js';
 import { onFlagsChanged } from './notify.js';
 
@@ -15,6 +15,13 @@ class Store extends EventEmitter {
   setSection<K extends SectionName>(section: K, data: Snapshot[K]): void {
     (this.snapshot as any)[section] = data;
     this.emit('section', section, data);
+  }
+
+  /** Plugin collectors write here. The whole `extra` map is re-emitted as one
+   *  section so the SSE client merges it without needing per-plugin event names. */
+  setExtra(key: string, section: ExtraSection): void {
+    this.snapshot.extra[key] = section;
+    this.emit('section', 'extra', this.snapshot.extra);
   }
 
   /** Each collector owns its flag namespace; replaces its own flags wholesale. */
@@ -79,6 +86,7 @@ export function emptySnapshot(): Snapshot {
     },
     cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
     repos: { updatedAt: null, repos: [], error: null },
+    extra: {},
     mutes: [],
     flags: [],
   };
