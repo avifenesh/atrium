@@ -171,6 +171,19 @@ export default function App() {
     };
   }, [snapshot]);
 
+  // visible core views: hide any whose backing collector is disabled in config
+  // (absent from snapshot.collectors). Views without a `collector` always show; a
+  // pre-rollout snapshot lacking the list falls back to showing everything.
+  const coreViews = useMemo(() => {
+    const registered = snapshot?.collectors;
+    return VIEWS.filter(
+      (v) => !('collector' in v) || !Array.isArray(registered) || registered.includes(v.collector),
+    );
+  }, [snapshot?.collectors]);
+  // the keydown handler reads this via a ref so it never re-registers on view changes
+  const coreViewsRef = useRef(coreViews);
+  coreViewsRef.current = coreViews;
+
   // the tasks badge follows you to other tabs
   useEffect(() => {
     document.title = badges.tasks > 0 ? `atrium · ${badges.tasks}` : 'atrium';
@@ -217,10 +230,12 @@ export default function App() {
       } else if (e.key === 'q') {
         setMutesOpen((o) => !o);
       } else if (/^[0-9]$/.test(e.key)) {
-        // 1-9 keep their muscle memory; 0 maps to the tenth view. Digit keys only
-        // address the core views — plugin views are reached via palette / hash / click.
+        // 1-9 keep their muscle memory; 0 maps to the tenth view. Digit keys index the
+        // VISIBLE core views (read via ref) so a disabled collector's slot doesn't
+        // mis-fire. Plugin views are reached via palette / hash / click.
+        const views = coreViewsRef.current;
         const idx = e.key === '0' ? 9 : Number(e.key) - 1;
-        if (idx < VIEWS.length) setView(VIEWS[idx].id);
+        if (idx < views.length) setView(views[idx].id);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -236,14 +251,8 @@ export default function App() {
   }
 
   const activeMutes = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
-  // hide views whose backing collector is disabled in config (absent from
-  // snapshot.collectors). Views with no `collector` are always shown. A pre-rollout
-  // snapshot may lack the collectors list — fall back to showing everything.
-  const registered = snapshot.collectors;
-  const coreViews = VIEWS.filter(
-    (v) => !('collector' in v) || !Array.isArray(registered) || registered.includes(v.collector),
-  );
-  // plugin (extra) sections become extra nav entries after the core views
+  // coreViews (visible, collector-filtered) is memoized above; plugin (extra) sections
+  // become extra nav entries after the core views
   const extraViews = extraKeys(snapshot).map((k) => ({ id: k, label: snapshot.extra[k]?.title ?? k }));
   const allViews = [...coreViews, ...extraViews];
   const isKnownView = (v: string) => allViews.some((x) => x.id === v);
