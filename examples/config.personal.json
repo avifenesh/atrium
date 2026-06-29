@@ -1,0 +1,47 @@
+{
+  "_comment": "The author's own ~/.config/atrium/config.json, captured so the original instance keeps full behavior after the defaults were genericized. NOT a template — these names/paths are machine-specific. Copy to ~/.config/atrium/config.json only on the author's box; everyone else writes their own (see docs/config.md).",
+
+  "github": {
+    "login": "avifenesh",
+    "ownOrgs": ["agent-sh"],
+    "noiseOrgs": ["zelos-social"],
+    "reviewBotNoiseLogins": ["gemini-code-assist"]
+  },
+
+  "notify": {
+    "enabled": true,
+    "minSeverity": "crit",
+    "sendCmd": ["hermes", "send", "--to", "telegram"]
+  },
+
+  "system": {
+    "diskMounts": ["/", "/data"]
+  },
+
+  "knownPorts": {
+    "8000": "surrealdb (revuto memory)",
+    "8181": "bge embedder (revuto)",
+    "8787": "bedrock-codex-bridge",
+    "8888": "searxng",
+    "6379": "valkey",
+    "8001": "llama-server qwen36-27b",
+    "8003": "llama-server judge-9b",
+    "11434": "ollama",
+    "42030": "tailscaled",
+    "57575": "tailscaled",
+    "3389": "gnome-remote-desktop",
+    "3390": "gnome-remote-desktop",
+    "631": "cups",
+    "5599": "atrium (this app)",
+    "5173": "vite dev"
+  },
+
+  "watchedUnits": [
+    "revuto-surreal.service",
+    "revuto-embedder.service",
+    "hermes-gateway.service",
+    "bedrock-codex-bridge.service",
+    "voiced.service",
+    "readd.service"
+  ]
+}
