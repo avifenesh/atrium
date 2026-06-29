@@ -117,7 +117,9 @@ async function collectGpu(): Promise<SystemState['gpu']> {
 
 async function collectDisks(): Promise<SystemState['disks']> {
   const disks: SystemState['disks'] = [];
-  for (const mount of config.system.diskMounts) {
+  // config-editable — fall back to root fs if diskMounts is malformed
+  const mounts = Array.isArray(config.system?.diskMounts) ? config.system.diskMounts : ['/'];
+  for (const mount of mounts) {
     const out = await shTry('df', ['-B1', '--output=target,size,used', mount], { timeoutMs: 5_000 });
     if (!out) continue;
     const data = out.split('\n')[1]?.trim();

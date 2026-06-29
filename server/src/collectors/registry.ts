@@ -18,7 +18,8 @@ const collectors = new Map<string, { c: Collector; timer: NodeJS.Timeout | null;
 
 /** True when this collector name is switched off in config.collectors.disabled. */
 export function isDisabled(name: string): boolean {
-  return config.collectors.disabled.includes(name);
+  // config.collectors.disabled is user-editable — guard against a malformed value
+  return Array.isArray(config.collectors?.disabled) && config.collectors.disabled.includes(name);
 }
 
 export function register(c: Collector): void {

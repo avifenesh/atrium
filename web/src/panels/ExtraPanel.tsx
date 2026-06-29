@@ -41,7 +41,7 @@ export default function ExtraPanel({ section, sectionKey }: { section: ExtraSect
                   <a
                     href={r.href}
                     target="_blank"
-                    rel="noopener"
+                    rel="noopener noreferrer"
                     className={`truncate font-mono text-xs ${r.tone ? TONE[r.tone] : 'text-slate-glow'} hover:underline`}
                     title={r.value}
                   >
