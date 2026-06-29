@@ -48,6 +48,9 @@ for (const c of [
   register(c);
 }
 
+// publish the registered set so the web UI hides views for disabled collectors
+store.setCollectors(list());
+
 const sseClients = new Set<ServerResponse>();
 
 store.on('section', (section: string, data: unknown) => {

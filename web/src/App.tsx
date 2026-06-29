@@ -18,18 +18,21 @@ import ItemDetail from './components/ItemDetail';
 import CommandPalette from './components/CommandPalette';
 import { isSheetOpen } from './panels/itch/Sheet';
 
-// labels lowercase sans — DESIGN v2 typography
+// labels lowercase sans — DESIGN v2 typography.
+// `collector` names the backing collector; a view is hidden when that collector is
+// disabled in config (absent from snapshot.collectors). Views without one (now, comms,
+// subs) are always shown — they don't map to a single toggleable collector.
 const VIEWS = [
   { id: 'now', label: 'now' },
-  { id: 'tasks', label: 'tasks' },
-  { id: 'agents', label: 'agents' },
-  { id: 'revuto', label: 'revuto' },
-  { id: 'system', label: 'system' },
+  { id: 'tasks', label: 'tasks', collector: 'github' },
+  { id: 'agents', label: 'agents', collector: 'agents' },
+  { id: 'revuto', label: 'revuto', collector: 'revuto' },
+  { id: 'system', label: 'system', collector: 'system' },
   { id: 'comms', label: 'comms' },
   { id: 'subs', label: 'subs' },
-  { id: 'schedule', label: 'schedule' },
-  { id: 'notes', label: 'notes' },
-  { id: 'itch', label: 'itch' },
+  { id: 'schedule', label: 'schedule', collector: 'schedule' },
+  { id: 'notes', label: 'notes', collector: 'notes' },
+  { id: 'itch', label: 'itch', collector: 'itch' },
 ] as const;
 
 // extra (plugin) sections register as dynamic views; ids are not known at compile time
@@ -233,9 +236,16 @@ export default function App() {
   }
 
   const activeMutes = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
+  // hide views whose backing collector is disabled in config (absent from
+  // snapshot.collectors). Views with no `collector` are always shown. A pre-rollout
+  // snapshot may lack the collectors list — fall back to showing everything.
+  const registered = snapshot.collectors;
+  const coreViews = VIEWS.filter(
+    (v) => !('collector' in v) || !Array.isArray(registered) || registered.includes(v.collector),
+  );
   // plugin (extra) sections become extra nav entries after the core views
   const extraViews = extraKeys(snapshot).map((k) => ({ id: k, label: snapshot.extra[k]?.title ?? k }));
-  const allViews = [...VIEWS, ...extraViews];
+  const allViews = [...coreViews, ...extraViews];
   const isKnownView = (v: string) => allViews.some((x) => x.id === v);
   // resolve an unknown/stale hash (e.g. a plugin disabled since the link was made) to 'now'
   const activeView = isKnownView(view) ? view : 'now';
