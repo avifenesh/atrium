@@ -13,19 +13,25 @@ import type {
   RepoCount,
 } from '../../../shared/types.js';
 
-// noise orgs are excluded from the attention lanes (actNow/mentions/teamQueue), not from my own PRs
-const NOISE_ORGS = config.github.noiseOrgs.map((o) => ` -org:${o}`).join('');
+// config arrays are user-editable in config.json — coerce to arrays so a malformed
+// value (null, string, missing) degrades to empty instead of crashing at module load
+const noiseOrgs = Array.isArray(config.github.noiseOrgs) ? config.github.noiseOrgs : [];
+const ownOrgs = Array.isArray(config.github.ownOrgs) ? config.github.ownOrgs : [];
+const reviewBotLogins = Array.isArray(config.github.reviewBotNoiseLogins) ? config.github.reviewBotNoiseLogins : [];
 
-// org queue scope: each watched org plus his own personal repos. GitHub search ORs
-// same-qualifier terms, so `org:agent-sh user:avifenesh` returns items in EITHER
+// noise orgs are excluded from the attention lanes (actNow/mentions/teamQueue), not from your own PRs
+const NOISE_ORGS = noiseOrgs.map((o) => ` -org:${o}`).join('');
+
+// org queue scope: each watched org plus your own personal repos. GitHub search ORs
+// same-qualifier terms, so `org:<org> user:<login>` returns items in EITHER
 // (verified: combined issueCount == orgOnly + userOnly). One aliased sub-query, cost 1.
-const OWN_ORGS = new Set(config.github.ownOrgs);
-const ORG_FILTER = [...config.github.ownOrgs.map((o) => `org:${o}`), `user:${config.github.login}`].join(' ');
+const OWN_ORGS = new Set(ownOrgs);
+const ORG_FILTER = [...ownOrgs.map((o) => `org:${o}`), `user:${config.github.login}`].join(' ');
 // bots authored items are noise. The `app/` prefix excludes GitHub Apps in search; we
 // also defensively drop by author type + login when mapping (imgbot etc. lack the prefix).
 const BOT_AUTHOR_FILTER = ' -author:app/dependabot -author:app/renovate -author:app/github-actions';
 const BOT_LOGINS = new Set(['dependabot', 'github-actions', 'renovate']);
-const REVIEW_BOT_NOISE_LOGINS = new Set(config.github.reviewBotNoiseLogins.map((login) => canonicalLogin(login)));
+const REVIEW_BOT_NOISE_LOGINS = new Set(reviewBotLogins.map((login) => canonicalLogin(login)));
 const NOTIFICATION_ENRICH_LIMIT = 30;
 
 // Single aliased GraphQL search (cost: 1 point). Never use `gh search` here —
@@ -34,8 +40,8 @@ const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:$
 
 const REPO_FIELDS =
   'nodes { nameWithOwner isPrivate isArchived pushedAt issues(states: OPEN){ totalCount } pullRequests(states: OPEN){ totalCount } }';
-// owner treats his orgs' repos exactly like his own (agent-sh: "even more important")
-const OWN_REPOS_QUERY = `query { viewer { repositories(first: 100, affiliations: [OWNER], orderBy: {field: PUSHED_AT, direction: DESC}) { ${REPO_FIELDS} } } ${config.github.ownOrgs
+// your configured orgs' repos are treated exactly like your own personal repos
+const OWN_REPOS_QUERY = `query { viewer { repositories(first: 100, affiliations: [OWNER], orderBy: {field: PUSHED_AT, direction: DESC}) { ${REPO_FIELDS} } } ${ownOrgs
   .map((o, i) => `org${i}: organization(login: "${o}") { repositories(first: 100, orderBy: {field: PUSHED_AT, direction: DESC}) { ${REPO_FIELDS} } }`)
   .join(' ')} }`;
 
@@ -91,7 +97,7 @@ function isBotAuthor(author: any): boolean {
 function toOrgItem(n: any): OrgItem | null {
   const author = n?.author;
   const login = typeof author?.login === 'string' ? author.login : '';
-  // his own authored items live in myPRs/actNow, not the org queue; bots are noise
+  // your own authored items live in myPRs/actNow, not the org queue; bots are noise
   if (!login || login === config.github.login || isBotAuthor(author)) return null;
   const repo = String(n?.repository?.nameWithOwner ?? '');
   if (!repo) return null;
@@ -358,7 +364,7 @@ async function fetchOwnRepos(): Promise<RepoCount[] | null> {
     const data = JSON.parse(out)?.data;
     const nodes = [
       ...(data?.viewer?.repositories?.nodes ?? []),
-      ...config.github.ownOrgs.flatMap((_, i) => data?.[`org${i}`]?.repositories?.nodes ?? []),
+      ...ownOrgs.flatMap((_, i) => data?.[`org${i}`]?.repositories?.nodes ?? []),
     ];
     if (nodes.length === 0) return null;
     return nodes
@@ -382,6 +388,19 @@ const collector: Collector = {
 
   async run(): Promise<void> {
     const flags: Flag[] = [];
+    // no login configured = collector idle. Without it every search query would be
+    // `assignee:` / `author:` with a blank value, which the GitHub API rejects.
+    // Surface a one-time hint in the section instead of polling into errors forever.
+    if (typeof config.github.login !== 'string' || !config.github.login.trim()) {
+      store.setSection('github', {
+        updatedAt: null,
+        error: 'github.login not set — add it to ~/.config/atrium/config.json',
+        actNow: [], orgQueue: [], myPRs: [], mentions: [], teamQueue: [],
+        notifications: [], ownRepos: [], rateLimit: null,
+      });
+      store.setFlags('github', []);
+      return;
+    }
     try {
       const out = await sh('gh', ['api', 'graphql', '-f', `query=${POLL_QUERY}`], { timeoutMs: 30_000 });
       const data = JSON.parse(out)?.data;
@@ -403,8 +422,8 @@ const collector: Collector = {
 
       const myPRs: GithubPR[] = nodesOf(data.myPRs).map(toPR);
 
-      // external PRs/issues on repos he owns/admins, authored by others (not him, not bots).
-      // ranked above myPRs: a person blocked on him beats a status update.
+      // external PRs/issues on repos you own/admin, authored by others (not you, not bots).
+      // ranked above myPRs: a person blocked on you beats a status update.
       const orgQueue: OrgItem[] = rankOrgQueue(
         nodesOf(data.orgExt)
           .map(toOrgItem)

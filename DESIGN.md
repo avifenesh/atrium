@@ -1,7 +1,13 @@
 # atrium design language v2 — "glass observatory", professional pass
 
+> This is the design log for atrium's web UI. It is opinionated on purpose — the bar it sets
+> ("feels like a finished product") is the bar any contributed view should clear. Some views
+> named below (revuto, itch) belong to the author's own plugin collectors and are
+> disable-able; the tokens, typography, layout, and interaction rules apply to every view,
+> core or plugin.
+
 Dark glass control room. Calm by default; exactly one warm accent pulls the eye to what needs action.
-v2 incorporates owner feedback: serif headers were noisy, layout too narrow, rows not interactive enough,
+v2 incorporates maintainer feedback: serif headers were noisy, layout too narrow, rows not interactive enough,
 muted items must disappear (archive), the app must feel like a finished product.
 
 ## Tokens (defined in `web/src/styles.css` — never raw hex in components)

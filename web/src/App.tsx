@@ -11,6 +11,7 @@ import SubsPanel from './panels/SubsPanel';
 import SchedulePanel from './panels/SchedulePanel';
 import NotesPanel from './panels/NotesPanel';
 import ItchPanel from './panels/ItchPanel';
+import ExtraPanel, { extraKeys } from './panels/ExtraPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
 import ItemDetail from './components/ItemDetail';
@@ -31,9 +32,10 @@ const VIEWS = [
   { id: 'itch', label: 'itch' },
 ] as const;
 
-type ViewId = (typeof VIEWS)[number]['id'];
+// extra (plugin) sections register as dynamic views; ids are not known at compile time
+type ViewId = string;
 
-function isViewId(v: string): v is ViewId {
+function isCoreViewId(v: string): boolean {
   return VIEWS.some((x) => x.id === v);
 }
 
@@ -94,18 +96,16 @@ function QuietButton({
 
 export default function App() {
   const { snapshot, connected } = useSnapshot();
-  // initial view from the url hash — desktop entries deep-link e.g. #revuto
-  const [view, setView] = useState<ViewId>(() => {
-    const h = location.hash.slice(1);
-    return isViewId(h) ? h : 'now';
-  });
+  // initial view from the url hash — desktop entries deep-link e.g. #revuto or a plugin key.
+  // plugin keys aren't known until the snapshot lands, so accept any non-empty hash here
+  // and let the render fall back to 'now' if it never resolves to a real view.
+  const [view, setView] = useState<ViewId>(() => location.hash.slice(1) || 'now');
   // in-page hash changes (a deep-link landing on an already-open app) must also
   // switch the view — the lazy init above only runs at boot
   useEffect(() => {
     const onHash = () => {
       const h = location.hash.slice(1);
-      if (isViewId(h)) setView(h);
-      else if (h === '') setView('now');
+      setView(h || 'now');
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -214,7 +214,8 @@ export default function App() {
       } else if (e.key === 'q') {
         setMutesOpen((o) => !o);
       } else if (/^[0-9]$/.test(e.key)) {
-        // 1-9 keep their muscle memory; 0 maps to the tenth view
+        // 1-9 keep their muscle memory; 0 maps to the tenth view. Digit keys only
+        // address the core views — plugin views are reached via palette / hash / click.
         const idx = e.key === '0' ? 9 : Number(e.key) - 1;
         if (idx < VIEWS.length) setView(VIEWS[idx].id);
       }
@@ -232,8 +233,14 @@ export default function App() {
   }
 
   const activeMutes = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
+  // plugin (extra) sections become extra nav entries after the core views
+  const extraViews = extraKeys(snapshot).map((k) => ({ id: k, label: snapshot.extra[k]?.title ?? k }));
+  const allViews = [...VIEWS, ...extraViews];
+  const isKnownView = (v: string) => allViews.some((x) => x.id === v);
+  // resolve an unknown/stale hash (e.g. a plugin disabled since the link was made) to 'now'
+  const activeView = isKnownView(view) ? view : 'now';
   const navigate = (v: string) => {
-    if (isViewId(v)) setView(v);
+    if (isKnownView(v)) setView(v);
   };
   const openQuiet = () => setMutesOpen(true);
   const openItem = (repo: string, number: number) => setItem({ repo, number });
@@ -253,14 +260,14 @@ export default function App() {
     return b && b.n > 0 ? b : null;
   };
 
-  const navButton = (v: (typeof VIEWS)[number]) => {
+  const navButton = (v: { id: string; label: string }) => {
     const b = badgeFor(v.id);
     return (
       <button
         key={v.id}
         onClick={() => setView(v.id)}
         className={`cursor-pointer whitespace-nowrap rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
-          view === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
+          activeView === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
         }`}
       >
         {v.label}
@@ -274,7 +281,7 @@ export default function App() {
       {/* top bar — below lg the rail folds into a horizontal nav */}
       <header className="mb-4 flex items-center gap-3 lg:hidden">
         <Wordmark connected={connected} className="shrink-0 text-2xl" />
-        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">{VIEWS.map(navButton)}</nav>
+        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">{allViews.map(navButton)}</nav>
         <QuietButton count={activeMutes.length} onClick={openQuiet} className="shrink-0 px-3 py-1.5" />
       </header>
 
@@ -285,14 +292,14 @@ export default function App() {
             <Wordmark connected={connected} className="text-[1.7rem]" />
           </div>
           <ul className="space-y-0.5">
-            {VIEWS.map((v) => {
+            {allViews.map((v) => {
               const b = badgeFor(v.id);
               return (
                 <li key={v.id}>
                   <button
                     onClick={() => setView(v.id)}
                     className={`flex w-full cursor-pointer items-baseline justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
-                      view === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
+                      activeView === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
                     }`}
                   >
                     {v.label}
@@ -311,17 +318,17 @@ export default function App() {
         {/* main */}
         <main className="min-w-0 flex-1">
           <FlagStrip snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} />
-          {view === 'now' && (
+          {activeView === 'now' && (
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
           )}
-          {view === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
-          {view === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
-          {view === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
-          {view === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
-          {view === 'comms' && <CommsPanel snapshot={snapshot} />}
-          {view === 'subs' && <SubsPanel snapshot={snapshot} />}
-          {view === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
-          {view === 'notes' && (
+          {activeView === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
+          {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {activeView === 'comms' && <CommsPanel snapshot={snapshot} />}
+          {activeView === 'subs' && <SubsPanel snapshot={snapshot} />}
+          {activeView === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {activeView === 'notes' && (
             <NotesPanel
               snapshot={snapshot}
               overlayOpen={paletteOpen || !!item || mutesOpen}
@@ -329,12 +336,16 @@ export default function App() {
               onOpenTargetConsumed={() => setNoteTarget(null)}
             />
           )}
-          {view === 'itch' && (
+          {activeView === 'itch' && (
             <ItchPanel
               snapshot={snapshot}
               openTarget={runTarget}
               onOpenTargetConsumed={() => setRunTarget(null)}
             />
+          )}
+          {/* plugin (extra-lane) sections render in the generic panel */}
+          {snapshot.extra?.[activeView] && (
+            <ExtraPanel section={snapshot.extra[activeView]} sectionKey={activeView} />
           )}
         </main>
       </div>
@@ -354,7 +365,7 @@ export default function App() {
       {paletteOpen && (
         <CommandPalette
           snapshot={snapshot}
-          views={VIEWS}
+          views={allViews}
           onClose={() => setPaletteOpen(false)}
           onNavigate={navigate}
           onOpenQuiet={openQuiet}

@@ -215,7 +215,7 @@ export function useSnapshot(): { snapshot: Snapshot | null; connected: boolean }
       });
       es.addEventListener('section', (e) => {
         const { section, data } = JSON.parse((e as MessageEvent).data) as {
-          section: SectionName | 'mutes' | 'flags';
+          section: SectionName | 'extra' | 'mutes' | 'flags';
           data: unknown;
         };
         if (!snapRef.current) return;

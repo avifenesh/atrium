@@ -1,16 +1,33 @@
+import { config } from '../config.js';
+
 /** Collector contract: each collector module default-exports one of these.
  * The registry schedules them, isolates failures, and supports forced refresh. */
 export interface Collector {
   name: string; // matches a SectionName, or a custom name for multi-section collectors
   intervalMs: number;
-  /** Runs one poll cycle. Writes results into the store itself (store.setSection / store.setFlags). */
+  /** Core collectors write a typed snapshot section via store.setSection. Plugin
+   *  collectors (core:false, the default) write the generic `extra` lane via
+   *  store.setExtra and render in the generic panel. */
+  core?: boolean;
+  /** Runs one poll cycle. Writes results into the store itself (store.setSection /
+   *  store.setExtra / store.setFlags). */
   run(): Promise<void>;
 }
 
 const collectors = new Map<string, { c: Collector; timer: NodeJS.Timeout | null; running: boolean }>();
 
+/** True when this collector name is switched off in config.collectors.disabled. */
+export function isDisabled(name: string): boolean {
+  // config.collectors.disabled is user-editable — guard against a malformed value
+  return Array.isArray(config.collectors?.disabled) && config.collectors.disabled.includes(name);
+}
+
 export function register(c: Collector): void {
   if (collectors.has(c.name)) throw new Error(`collector ${c.name} already registered`);
+  if (isDisabled(c.name)) {
+    console.log(`[collector:${c.name}] disabled via config — not registered`);
+    return;
+  }
   collectors.set(c.name, { c, timer: null, running: false });
 }
 

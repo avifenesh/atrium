@@ -32,6 +32,21 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (body ? JSON.parse(body) : {}) as T;
 }
 
+// itch AI oneshots (ask/validate/roadmap) spawn an eigen oneshot upstream and can run
+// up to ~11min; the daemon's itch proxy already enforces a 660s ceiling, so we give the
+// bridge fetch a matching long leash instead of the default 5s (which would kill them).
+async function aiApi<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(670_000),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new HttpError(res.status, text.slice(0, 400));
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
 const snapshot = (): Promise<Snapshot> => api<Snapshot>('/api/snapshot');
 
 type ToolResult = { content: { type: 'text'; text: string }[] };
@@ -154,7 +169,7 @@ server.registerTool(
   'atrium_overview',
   {
     description:
-      "One-screen summary of avifenesh's life dashboard: act-now tasks, email, calendar, agents, flags, mutes. Call this first for 'what needs my attention'.",
+      "One-screen summary of the user's life dashboard: act-now tasks, email, calendar, agents, flags, mutes. Call this first for 'what needs my attention'.",
     inputSchema: {},
     annotations: RO,
   },
@@ -494,6 +509,195 @@ server.registerTool(
         if (it.runs.length > 12) lines.push(`  … ${it.runs.length - 12} more`);
       } else lines.push('runs: none');
       return lines.join('\n');
+    }),
+);
+
+// ---------- itch actions (drive the idea-scout through atrium) ----------
+// Thin callers over the daemon's /api/itch/* routes (proxy + itch-local).
+// The conversation steering the "find my itch" loop lives in the calling
+// agent; these tools just read context and commit decisions/runs/oneshots.
+
+type ItchDecision = {
+  title: string;
+  rating: number | null;
+  note: string | null;
+  as_of: string;
+  outcome: string | null;
+  outcome_note: string | null;
+};
+type ItchRun = {
+  stem: string;
+  n_ideas: number;
+  n_rated: number;
+  is_collide: boolean;
+  sampled_domains: string[];
+};
+
+server.registerTool(
+  'atrium_itch_context',
+  {
+    description:
+      "Avi's itch idea-scout profile for steering a 'find my itch' conversation: ideas he is pursuing (rating 5) and strongly interested in (4), recently dropped ideas (1-3) to steer AWAY from, count still unrated, and the latest runs. Read this FIRST before proposing directions.",
+    inputSchema: {},
+    annotations: RO,
+  },
+  () =>
+    guarded(async () => {
+      const [decisions, runs] = await Promise.all([
+        api<ItchDecision[]>('/api/itch/decisions'),
+        api<ItchRun[]>('/api/itch/runs'),
+      ]);
+      const pursuing = decisions.filter((d) => d.rating === 5);
+      const strong = decisions.filter((d) => d.rating === 4);
+      const dropped = decisions.filter((d) => d.rating !== null && d.rating <= 3);
+      const rated = decisions.filter((d) => d.rating !== null).length;
+      const lines: string[] = [];
+      const fmt = (d: ItchDecision) =>
+        `  • ${d.title}${d.note ? ` — "${d.note}"` : ''}${d.outcome ? ` [${d.outcome}]` : ''}`;
+      lines.push(`PURSUING (rating 5 — steer orthogonal to these): ${pursuing.length}`);
+      pursuing.slice(0, 12).forEach((d) => lines.push(fmt(d)));
+      lines.push(`STRONG INTEREST (rating 4): ${strong.length}`);
+      strong.slice(0, 12).forEach((d) => lines.push(fmt(d)));
+      lines.push(`DROPPED / LOW (rating 1-3 — avoid re-proposing): ${dropped.length}`);
+      dropped.slice(0, 10).forEach((d) => lines.push(fmt(d)));
+      lines.push(`rated ${rated} of ${decisions.length} total; ${decisions.length - rated} unrated`);
+      if (runs.length) {
+        lines.push(`latest runs:`);
+        runs.slice(0, 6).forEach((r) =>
+          lines.push(
+            `  ${r.stem} — ${r.n_rated}/${r.n_ideas} rated${r.is_collide ? ' [collide]' : ''}` +
+              `${r.sampled_domains?.length ? ` — ${r.sampled_domains.slice(0, 3).join(', ')}` : ''}`,
+          ),
+        );
+      }
+      return lines.join('\n');
+    }),
+);
+
+server.registerTool(
+  'atrium_itch_ideas',
+  {
+    description:
+      'List the ideas inside a specific itch run (by stem, e.g. "20260627-191227"), or search ideas across all runs by keyword. Use to pull candidate ideas to discuss/steer/rate.',
+    inputSchema: {
+      stem: z.string().optional().describe('run stem to list ideas from; omit when using query'),
+      query: z.string().optional().describe('keyword search across all runs; omit when using stem'),
+    },
+    annotations: RO,
+  },
+  ({ stem, query }) =>
+    guarded(async () => {
+      if (query) {
+        const hits = await api<Array<{ title: string; stem?: string }>>(
+          `/api/itch/search?q=${encodeURIComponent(query)}`,
+        );
+        if (!hits.length) return `no ideas match "${query}"`;
+        return hits
+          .slice(0, 25)
+          .map((h) => `• ${h.title}${h.stem ? ` (${h.stem})` : ''}`)
+          .join('\n');
+      }
+      if (!stem) return 'provide either stem or query';
+      const run = await api<{ ideas?: Array<{ title: string; body?: string }> }>(
+        `/api/itch/run/${encodeURIComponent(stem)}`,
+      );
+      const ideas = run.ideas ?? [];
+      if (!ideas.length) return `run ${stem} has no ideas`;
+      return ideas
+        .map((it, i) => `${i + 1}. ${it.title}${it.body ? `\n   ${it.body.slice(0, 240).replace(/\n+/g, ' ')}` : ''}`)
+        .join('\n');
+    }),
+);
+
+server.registerTool(
+  'atrium_itch_run',
+  {
+    description:
+      'Control an itch research run: action=start kicks off a new idea-scout run (optionally pass flags like "--collide"), status reports running/idle, stop/resume manage an in-flight run.',
+    inputSchema: {
+      action: z.enum(['start', 'status', 'stop', 'resume']),
+      flags: z.string().optional().describe('extra itch flags for start, e.g. "--collide"'),
+    },
+    annotations: RW,
+  },
+  ({ action, flags }) =>
+    guarded(async () => {
+      if (action === 'status') {
+        const s = await api<{ running?: boolean; started?: string; savedStem?: string; killedReason?: string }>(
+          '/api/itch/research/status',
+        );
+        const bits = [s.running ? 'running' : 'idle'];
+        if (s.started) bits.push(`started ${ago(s.started)}`);
+        if (s.savedStem) bits.push(`saved ${s.savedStem}`);
+        if (s.killedReason) bits.push(`killed: ${s.killedReason}`);
+        return `research: ${bits.join(', ')}`;
+      }
+      const body: Record<string, unknown> =
+        action === 'start' && flags ? { flags: { extra: flags } } : {};
+      const r = await api<{ ok?: boolean; started?: boolean; error?: string }>(
+        `/api/itch/research/${action}`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      if (r.error) return `itch run ${action} failed: ${r.error}`;
+      return `itch run ${action}: ${r.ok || r.started ? 'ok' : 'no-op'}`;
+    }),
+);
+
+server.registerTool(
+  'atrium_itch_ask',
+  {
+    description:
+      "Run an itch AI oneshot on a single idea to pressure-test a direction: kind=validate (fit/demand/risk/first-proof), kind=roadmap (milestones/risks/first week), kind=ask (answer a specific question about the idea). Synchronous and slow — may take minutes.",
+    inputSchema: {
+      kind: z.enum(['validate', 'roadmap', 'ask']),
+      title: z.string().describe('the idea title'),
+      body: z.string().optional().describe('idea body/description for context'),
+      question: z.string().optional().describe('required when kind=ask'),
+    },
+    annotations: RW,
+  },
+  ({ kind, title, body, question }) =>
+    guarded(async () => {
+      if (kind === 'ask' && !question) return 'kind=ask requires a question';
+      const payload =
+        kind === 'validate'
+          ? { title, description: body ?? '' }
+          : kind === 'ask'
+            ? { title, body: body ?? '', question }
+            : { title, body: body ?? '' };
+      const r = await aiApi<Record<string, string>>(`/api/itch/${kind}`, payload);
+      return r.answer ?? r.roadmap ?? r.markdown ?? JSON.stringify(r).slice(0, 4000);
+    }),
+);
+
+server.registerTool(
+  'atrium_itch_rate',
+  {
+    description:
+      "Commit a judgment back to itch's decisions ledger (the steering output of a 'find my itch' conversation). rating 5 = currently pursuing, 4 = strong interest, 1-3 = lower/dropped, null clears. note is Avi's reason; outcome/outcome_note record what happened if he acted on it.",
+    inputSchema: {
+      title: z.string().describe('exact idea title (keyed case-insensitively)'),
+      rating: z.number().min(1).max(5).nullable().optional().describe('1-5, or null to clear'),
+      note: z.string().optional().describe("Avi's free-text reason"),
+      outcome: z.string().optional(),
+      outcome_note: z.string().optional(),
+    },
+    annotations: RW,
+  },
+  ({ title, rating, note, outcome, outcome_note }) =>
+    guarded(async () => {
+      const payload: Record<string, unknown> = { title };
+      if (rating !== undefined) payload.rating = rating;
+      if (note !== undefined) payload.note = note;
+      if (outcome !== undefined) payload.outcome = outcome;
+      if (outcome_note !== undefined) payload.outcome_note = outcome_note;
+      await api('/api/itch/rating', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const r = rating === null ? 'cleared' : rating !== undefined ? `rating=${rating}` : 'updated';
+      return `saved ${title}: ${r}${note ? ` (note: "${note}")` : ''}`;
     }),
 );
 
