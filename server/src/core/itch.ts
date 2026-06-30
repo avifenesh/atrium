@@ -403,7 +403,7 @@ export async function deleteItchRun(paths: Paths, stem: string): Promise<boolean
 }
 
 const MODELS = [
-  { id: 'us.anthropic.claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Bedrock)' },
+  { id: 'us.anthropic.claude-sonnet-5', label: 'Claude Sonnet 5 (Bedrock)' },
   { id: 'us.anthropic.claude-opus-4-8', label: 'Claude Opus 4.8 (Bedrock)' },
   { id: 'global.anthropic.claude-fable-5', label: 'Claude Fable 5 (Bedrock)' },
   { id: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Claude Haiku 4.5 (Bedrock)' },
@@ -411,7 +411,7 @@ const MODELS = [
   { id: 'eigen:llama/aviary-local-qwen', label: 'Local — Qwen (Eigen · llama.cpp)' },
   { id: 'eigen:llama/aviary-local-qwen-trained', label: 'Local — Qwen trained (Eigen · llama.cpp)' },
 ];
-const DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6';
+const DEFAULT_MODEL = 'us.anthropic.claude-sonnet-5';
 
 async function loadPrefs(paths: Paths): Promise<Record<string, any>> {
   return (await readJson<Record<string, any>>(join(paths.itchConfig, 'prefs.json'))) ?? {};

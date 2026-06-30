@@ -22,7 +22,7 @@ const WORK_MD_FILE = join(STATE_DIR, 'work.md');
 const SXC_FEEDBACK_FILE = join(STATE_DIR, 'sxc-grounding-feedback.json');
 
 const DEFAULT_PROJECTS_DIR = process.env.ITCH_PROJECTS_DIR || join(HOME, 'projects');
-const DEFAULT_MODEL_ID = 'us.anthropic.claude-sonnet-4-6';
+const DEFAULT_MODEL_ID = 'us.anthropic.claude-sonnet-5';
 const DECAY_TOTAL = 5;
 const PURSUED_LOOKBACK = DECAY_TOTAL + 4;
 
