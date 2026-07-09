@@ -1,9 +1,9 @@
 /**
  * itch research lifecycle, fully native to Atrium: builds the prompt with
- * itch-engine, samples collision domains when collide is on, runs the model via
- * `eigen` directly (the model harness, allowed), STREAMS progress into a live
- * log, saves the run with faithful metadata (compare_key/baseline_for), and
- * enforces a hard cap + idle watchdog. No external app is spawned.
+ * itch-engine, samples collision domains when collide is on, runs the selected
+ * coding-agent CLI non-interactively, streams progress into a live log, saves
+ * the run with faithful metadata (compare_key/baseline_for), and enforces a
+ * hard cap + idle watchdog.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, writeFile, unlink, readFile, mkdir } from 'node:fs/promises';
@@ -25,6 +25,13 @@ import {
   DEFAULT_PROJECTS_DIR,
 } from './itch-engine.js';
 import { loadItchModels } from './itch.js';
+import {
+  buildItchAgentCommand,
+  formatItchAgentCommand,
+  normalizeItchModel,
+  parseItchAgentStdoutLine,
+  type ItchAgentCommand,
+} from './itch-agent.js';
 
 const MAX_LOG_LINES = 1000;
 const ORBIT_MAX_CHARS = 4000;
@@ -54,7 +61,7 @@ type LineFn = (line: string) => void;
 interface RunHandle {
   model: string;
   promptFile: string;
-  args: string[];
+  command: ItchAgentCommand;
   meta: Record<string, unknown>;
   system: string;
   user: string;
@@ -110,24 +117,8 @@ function running(): boolean {
 }
 
 async function resolveModel(modelFromFlag?: string): Promise<string> {
-  if (modelFromFlag && modelFromFlag.trim()) return modelFromFlag.trim();
+  if (modelFromFlag && modelFromFlag.trim()) return normalizeItchModel(modelFromFlag);
   return (await loadItchModels(config.paths)).selected;
-}
-
-function eigenArgsFor(model: string, promptFile: string): string[] {
-  const args = ['-p', '-perm', 'auto', '-prompt-file', promptFile];
-  if (model.startsWith('eigen:')) {
-    const rest = model.slice('eigen:'.length);
-    const i = rest.indexOf('/');
-    if (i >= 0) { args.push('-provider', rest.slice(0, i), '-model', rest.slice(i + 1)); } else args.push('-model', rest);
-  } else if (model.startsWith('pi:')) {
-    const rest = model.slice('pi:'.length);
-    const i = rest.indexOf('/');
-    args.push('-provider', 'llama', '-model', i >= 0 ? rest.slice(i + 1) : rest);
-  } else {
-    args.push('-provider', 'converse', '-model', model);
-  }
-  return args;
 }
 
 async function buildHandle(flags: Record<string, unknown>): Promise<RunHandle> {
@@ -211,7 +202,7 @@ async function buildHandle(flags: Record<string, unknown>): Promise<RunHandle> {
   const dir = await mkdtemp(join(tmpdir(), 'atrium-itch-'));
   const promptFile = join(dir, 'prompt.md');
   await writeFile(promptFile, `${system}\n\n---\n\n${user}\n`, 'utf8');
-  return { model, promptFile, args: eigenArgsFor(model, promptFile), meta, system, user };
+  return { model, promptFile, command: buildItchAgentCommand(model, dir), meta, system, user };
 }
 
 // --- in-flight checkpoint / resume -----------------------------------------
@@ -281,21 +272,25 @@ function codeFromClose(code: number | null, signal: NodeJS.Signals | null): numb
   return 1;
 }
 
-/** Spawn eigen with streamed stdout/stderr and a watchdog. Resolves with the
+/** Spawn the selected coding-agent CLI with streamed stdout/stderr and a watchdog. Resolves with the
  * full stdout (the saved run text) and exit code. */
-function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; stdout: string }> {
+async function runAgent(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; stdout: string }> {
+  const prompt = await readFile(handle.promptFile, 'utf8');
   return new Promise((resolve) => {
-    const child = spawn('eigen', handle.args, {
-      env: process.env,
-      cwd: handle.promptFile.replace(/\/[^/]+$/, ''), // sandbox writes to the temp dir
+    const child = spawn(handle.command.bin, handle.command.args, {
+      env: handle.command.env,
+      cwd: handle.command.cwd, // sandbox writes to the temp dir
       detached: true,           // own process group so we can kill children too
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     state.proc = child;
     state.pid = child.pid ?? null;
     state.lastActivity = Date.now();
     const start = Date.now();
-    const stdoutChunks: string[] = [];
+    const answerChunks: string[] = [];
+    const rawStdoutChunks: string[] = [];
+    let stdoutBuf = '';
+    let finalText = '';
     let stderrBuf = '';
     let lastFlush = Date.now();
 
@@ -303,12 +298,25 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
     child.stdout?.on('data', (d: string) => {
       const now = Date.now();
       state.lastActivity = now;
-      stdoutChunks.push(d);
-      // rate-limited checkpoint of the answer-so-far, so a kill mid-stream
-      // leaves a resumable partial on disk
-      if (now - lastFlush >= INFLIGHT_FLUSH_MS) {
-        lastFlush = now;
-        void inflightFlush(stdoutChunks.join('').trim());
+      rawStdoutChunks.push(d);
+      stdoutBuf += d;
+      let nl: number;
+      while ((nl = stdoutBuf.indexOf('\n')) >= 0) {
+        const line = stdoutBuf.slice(0, nl).trim();
+        stdoutBuf = stdoutBuf.slice(nl + 1);
+        if (!line) continue;
+        const parsed = parseItchAgentStdoutLine(handle.command, line);
+        const text = parsed.delta ?? (!answerChunks.length ? parsed.final : undefined);
+        if (parsed.final) finalText = parsed.final;
+        if (!text) continue;
+        answerChunks.push(text);
+        append(text);
+        // rate-limited checkpoint of the answer-so-far, so a kill mid-stream
+        // leaves a resumable partial on disk
+        if (now - lastFlush >= INFLIGHT_FLUSH_MS) {
+          lastFlush = now;
+          void inflightFlush(answerChunks.join('').trim());
+        }
       }
     });
     child.stderr?.setEncoding('utf8');
@@ -322,6 +330,7 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
         if (line.trim()) onStderr(line);
       }
     });
+    child.stdin?.end(prompt);
 
     const watchdog = setInterval(() => {
       if (child.exitCode !== null) return;
@@ -329,7 +338,7 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
       if (HARD_CAP_MS && now - start > HARD_CAP_MS) {
         state.killedReason = `hard cap ${Math.round(HARD_CAP_MS / 1000)}s exceeded`;
         killGroup(child, 'SIGTERM');
-      } else if (QUIET_AFTER_MS && now - state.lastActivity > QUIET_AFTER_MS) {
+      } else if (handle.command.streamsProgress && QUIET_AFTER_MS && now - state.lastActivity > QUIET_AFTER_MS) {
         state.killedReason = `silent for >${Math.round(QUIET_AFTER_MS / 1000)}s`;
         killGroup(child, 'SIGTERM');
       }
@@ -339,12 +348,21 @@ function runEigen(handle: RunHandle, onStderr: LineFn): Promise<{ code: number; 
     child.on('error', (err) => {
       onStderr(`[spawn error] ${err instanceof Error ? err.message : String(err)}`);
       clearInterval(watchdog);
-      resolve({ code: 1, stdout: stdoutChunks.join('') });
+      resolve({ code: 1, stdout: answerChunks.length ? answerChunks.join('') : finalText || rawStdoutChunks.join('') });
     });
     child.on('close', async (code, signal) => {
       clearInterval(watchdog);
       if (stderrBuf.trim()) onStderr(stderrBuf);
-      const stdout = stdoutChunks.join('');
+      if (stdoutBuf.trim()) {
+        const parsed = parseItchAgentStdoutLine(handle.command, stdoutBuf.trim());
+        const text = parsed.delta ?? (!answerChunks.length ? parsed.final : undefined);
+        if (parsed.final) finalText = parsed.final;
+        if (text) {
+          answerChunks.push(text);
+          append(text);
+        }
+      }
+      const stdout = answerChunks.length ? answerChunks.join('') : finalText || rawStdoutChunks.join('');
       await inflightFlush(stdout.trim()); // final checkpoint before resumable detection reads it
       resolve({ code: codeFromClose(code, signal), stdout });
     });
@@ -375,7 +393,7 @@ export async function startItchResearch(flags: Record<string, unknown> = {}): Pr
     await inflightClear();
     const handle = await buildHandle(flags);
     // Open the checkpoint BEFORE spawning so a kill at any point leaves a
-    // resumable trail (prompt + partial ideas streamed in by runEigen).
+    // resumable trail (prompt + partial ideas streamed in by runAgent).
     await inflightBegin(handle);
     runHandleAsync(handle);
     return { ok: true, pid: state.pid ?? undefined, started: state.started };
@@ -413,11 +431,11 @@ export async function resumeItchResearch(): Promise<StartResearchResult> {
     const promptFile = join(dir, 'prompt.md');
     await writeFile(promptFile, `${system}\n\n---\n\n${user}\n`, 'utf8');
     const handle: RunHandle = {
-      model, promptFile, args: eigenArgsFor(model, promptFile),
+      model, promptFile, command: buildItchAgentCommand(model, dir),
       meta: ctx.meta as Record<string, unknown>, system, user,
     };
     state.log.push('[resume] continuing the interrupted run from its partial ideas');
-    state.log.push(`$ eigen ${handle.args.join(' ')}  (model=${handle.model})`);
+    state.log.push(`$ ${formatItchAgentCommand(handle.command)}  (model=${handle.model})`);
     // Keep the prior partial until new stdout replaces it, so a failed resume
     // can still be resumed again instead of losing the useful checkpoint.
     await inflightBegin(handle, ctx.partial);
@@ -432,13 +450,13 @@ export async function resumeItchResearch(): Promise<StartResearchResult> {
   }
 }
 
-/** Shared run body for start + resume: stream eigen, then save (clearing the
+/** Shared run body for start + resume: stream the model, then save (clearing the
  * checkpoint) on a clean finish or leave it in place when the watchdog killed
  * the pass so it can be resumed. */
 function runHandleAsync(handle: RunHandle): void {
   void (async () => {
     try {
-      const { code, stdout } = await runEigen(handle, (line) => append(`${line}\n`));
+      const { code, stdout } = await runAgent(handle, (line) => append(`${line}\n`));
       if (state.partial) { state.log.push(state.partial); state.partial = ''; trimLog(); }
       const text = stdout.trim();
       let savedStem: string | null = null;

@@ -2,6 +2,7 @@ import { readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Config } from '../config.js';
 import type { ItchRunInfo } from '../../../shared/types.js';
+import { DEFAULT_ITCH_MODEL, isSupportedItchModel, ITCH_MODELS, normalizeItchModel } from './itch-agent.js';
 
 const IDEA_RE = /^#{1,3}\s+[A-Za-z]*\d+\.\s*(.+?)\s*$/;
 const RESURFACE_RE = /^[↻⟳]\s*/;
@@ -402,35 +403,30 @@ export async function deleteItchRun(paths: Paths, stem: string): Promise<boolean
   return deleted;
 }
 
-const MODELS = [
-  { id: 'us.anthropic.claude-sonnet-5', label: 'Claude Sonnet 5 (Bedrock)' },
-  { id: 'us.anthropic.claude-opus-4-8', label: 'Claude Opus 4.8 (Bedrock)' },
-  { id: 'global.anthropic.claude-fable-5', label: 'Claude Fable 5 (Bedrock)' },
-  { id: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Claude Haiku 4.5 (Bedrock)' },
-  { id: 'openai.gpt-5.5', label: 'GPT 5.5 (Codex · Bedrock)' },
-  { id: 'eigen:llama/aviary-local-qwen', label: 'Local — Qwen (Eigen · llama.cpp)' },
-  { id: 'eigen:llama/aviary-local-qwen-trained', label: 'Local — Qwen trained (Eigen · llama.cpp)' },
-];
-const DEFAULT_MODEL = 'us.anthropic.claude-sonnet-5';
+const MODELS = ITCH_MODELS;
+const DEFAULT_MODEL = DEFAULT_ITCH_MODEL;
 
 async function loadPrefs(paths: Paths): Promise<Record<string, any>> {
   return (await readJson<Record<string, any>>(join(paths.itchConfig, 'prefs.json'))) ?? {};
 }
 
-export async function loadItchModels(paths: Paths): Promise<{ models: typeof MODELS; default: string; selected: string }> {
+export async function loadItchModels(paths: Paths): Promise<{ models: { id: string; label?: string }[]; default: string; selected: string }> {
   const prefs = await loadPrefs(paths);
-  const selected = typeof prefs.model === 'string' && MODELS.some((m) => m.id === prefs.model) ? prefs.model : DEFAULT_MODEL;
-  return { models: MODELS, default: DEFAULT_MODEL, selected };
+  const model = typeof prefs.model === 'string' ? normalizeItchModel(prefs.model) : '';
+  const selected = isSupportedItchModel(model) ? model : DEFAULT_MODEL;
+  const models = MODELS.some((m) => m.id === selected) ? MODELS : [{ id: selected, label: `Custom - ${selected}` }, ...MODELS];
+  return { models, default: DEFAULT_MODEL, selected };
 }
 
 export async function saveItchModel(paths: Paths, model: string): Promise<string> {
-  if (!MODELS.some((m) => m.id === model) && !model.startsWith('eigen:') && !model.startsWith('pi:')) {
+  const normalized = normalizeItchModel(model);
+  if (!isSupportedItchModel(normalized)) {
     throw new Error('unknown model');
   }
   const prefs = await loadPrefs(paths);
-  prefs.model = model;
+  prefs.model = normalized;
   await atomicWrite(join(paths.itchConfig, 'prefs.json'), JSON.stringify(prefs, null, 2));
-  return model;
+  return normalized;
 }
 
 export async function loadItchFilters(paths: Paths): Promise<Record<string, unknown>> {

@@ -1,6 +1,7 @@
 /**
  * Native itch research engine — ported from Python itch_core so Atrium owns the
- * logic with no external app spawn. Calls `eigen` (the model harness) directly.
+ * prompt, retrieval, and save logic. The selected coding-agent CLI runs the
+ * model outside this module.
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -10,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { config } from '../config.js';
 import { iso } from '../util.js';
 import type { SxcGroundingFeedback, SxcGroundingReviewItem, SxcGroundingState } from '../../../shared/types.js';
+import { DEFAULT_ITCH_MODEL } from './itch-agent.js';
 
 const HOME = homedir();
 const STATE_DIR = config.paths.itchConfig;
@@ -22,7 +24,7 @@ const WORK_MD_FILE = join(STATE_DIR, 'work.md');
 const SXC_FEEDBACK_FILE = join(STATE_DIR, 'sxc-grounding-feedback.json');
 
 const DEFAULT_PROJECTS_DIR = process.env.ITCH_PROJECTS_DIR || join(HOME, 'projects');
-const DEFAULT_MODEL_ID = 'us.anthropic.claude-sonnet-5';
+const DEFAULT_MODEL_ID = DEFAULT_ITCH_MODEL;
 const DECAY_TOTAL = 5;
 const PURSUED_LOOKBACK = DECAY_TOTAL + 4;
 
