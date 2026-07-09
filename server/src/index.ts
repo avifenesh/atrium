@@ -89,9 +89,8 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 // localhost-daemon defense: strict Host allowlist on every request, plus
 // same-origin-or-absent Origin on state-changing methods.
 //
-// Tailscale Serve / MagicDNS: traffic stays on the tailnet and arrives with
-// Host: avifenesh / avifenesh.<tailnet>.ts.net (often without :port on 443).
-// Still refuse arbitrary Host headers; only loopback + this node's tailnet names.
+// Tailscale Serve: allow only this node's canonical HTTPS endpoint. Do not widen
+// this to short MagicDNS names, tailnet IPs, alternate ports, or *.ts.net.
 const ALLOWED_HOSTS = new Set(
   [config.host, '127.0.0.1', 'localhost', '[::1]'].map((h) => `${h}:${config.port}`),
 );
@@ -99,26 +98,13 @@ const ALLOWED_HOSTS = new Set(
 // browser still sends its own Origin) — allow its loopback origin too
 const ALLOWED_ORIGIN_HOSTS = new Set([...ALLOWED_HOSTS, '127.0.0.1:5173', 'localhost:5173', '[::1]:5173']);
 
-const TAILNET_HOSTS = new Set([
-  'avifenesh',
-  'avifenesh.tail2582b9.ts.net',
-  '100.80.58.31',
-]);
-
-function hostNameOnly(host: string): string {
-  // strip port; IPv6 bracket form [::1]:5599 → [::1]
-  if (host.startsWith('[')) {
-    const end = host.indexOf(']');
-    return end >= 0 ? host.slice(0, end + 1) : host;
-  }
-  return host.split(':')[0] ?? host;
-}
+const TAILNET_HOST = 'avifenesh.tail2582b9.ts.net';
+const TAILNET_ORIGIN = `https://${TAILNET_HOST}`;
 
 function hostAllowed(host: string | undefined): boolean {
   if (!host) return false;
   const h = host.toLowerCase();
-  if (ALLOWED_HOSTS.has(h)) return true;
-  return TAILNET_HOSTS.has(hostNameOnly(h));
+  return ALLOWED_HOSTS.has(h) || h === TAILNET_HOST;
 }
 
 function originAllowed(origin: string | undefined): boolean {
@@ -127,7 +113,7 @@ function originAllowed(origin: string | undefined): boolean {
     const u = new URL(origin);
     const h = u.host.toLowerCase();
     if (ALLOWED_ORIGIN_HOSTS.has(h)) return true;
-    return TAILNET_HOSTS.has(hostNameOnly(h));
+    return origin.toLowerCase() === TAILNET_ORIGIN;
   } catch {
     return false; // includes Origin: null
   }

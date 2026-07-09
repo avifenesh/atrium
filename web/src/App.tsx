@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isMuted, useSnapshot } from './api';
-import { recordSystemSample, useNow } from './hooks';
+import { recordSystemSample, useNow, useScrollLock } from './hooks';
 import NowView from './panels/NowView';
 import TasksPanel from './panels/TasksPanel';
 import AgentsPanel from './panels/AgentsPanel';
@@ -121,6 +121,22 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   /** mobile overflow sheet for secondary views (bottom nav holds primaries) */
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreSheetRef = useRef<HTMLDivElement>(null);
+  useScrollLock(moreOpen);
+  useEffect(() => {
+    if (!moreOpen) return;
+    moreSheetRef.current?.focus({ preventScroll: true });
+    return () => moreButtonRef.current?.focus({ preventScroll: true });
+  }, [moreOpen]);
+  useEffect(() => {
+    const desktop = matchMedia('(min-width: 1024px)');
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMoreOpen(false);
+    };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
+  }, []);
   // github item slide-over: read + comment without leaving atrium
   const [item, setItem] = useState<{ repo: string; number: number } | null>(null);
   // palette → notes reader: pending open consumed by NotesPanel (itch scrollTarget idiom —
@@ -218,6 +234,7 @@ export default function App() {
         if (paletteOpen) setPaletteOpen(false);
         else if (item) (itemEscape.current ?? (() => setItem(null)))();
         else if (mutesOpen) setMutesOpen(false);
+        else if (moreOpen) setMoreOpen(false);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
@@ -246,7 +263,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paletteOpen, item, mutesOpen]);
+  }, [paletteOpen, item, mutesOpen, moreOpen]);
 
   if (!snapshot) {
     return (
@@ -394,8 +411,11 @@ export default function App() {
             );
           })}
           <button
+            ref={moreButtonRef}
             type="button"
-            onClick={() => setMoreOpen(true)}
+            aria-controls="mobile-more-sheet"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((open) => !open)}
             className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
               moreOpen || !primaryActive ? 'text-mist' : 'text-mist-faint'
             }`}
@@ -410,19 +430,26 @@ export default function App() {
 
       {moreOpen && (
         <>
-          <div className="fixed inset-0 z-40 bg-ink/60 backdrop-fade lg:hidden" onClick={() => setMoreOpen(false)} />
           <div
+            className="fixed inset-0 z-40 bg-ink/60 backdrop-fade lg:hidden"
+            aria-hidden="true"
+            onClick={() => setMoreOpen(false)}
+          />
+          <div
+            id="mobile-more-sheet"
+            ref={moreSheetRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label="more views"
-            className="glass-raised fixed inset-x-0 bottom-0 z-50 max-h-[70dvh] overflow-y-auto rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:hidden"
+            className="glass-raised fixed inset-x-0 bottom-0 z-50 max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] outline-none lg:hidden"
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">more</h2>
               <button
                 type="button"
                 onClick={() => setMoreOpen(false)}
-                className="cursor-pointer rounded px-2 py-1 font-mono text-[11px] text-mist-faint"
+                className="min-h-11 cursor-pointer rounded px-3 py-2 font-mono text-[11px] text-mist-faint"
               >
                 close
               </button>

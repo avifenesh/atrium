@@ -244,80 +244,83 @@ export default function NotesPanel({
       <div className="hidden min-w-0 lg:block lg:w-72 lg:shrink-0">{list}</div>
 
       <section className="glass rise min-w-0 flex-1 p-4 xl:p-5" style={{ '--rise-i': 1 } as CSSProperties}>
-        <header className="mb-3 flex min-w-0 items-baseline gap-3">
-          <button
-            type="button"
-            onClick={() => requestLeave(null)}
-            title="back to notes"
-            className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist lg:hidden"
-          >
-            ← notes
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-mist" title={title}>
-              {title}
+        <header className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-baseline sm:gap-3">
+          <div className="flex min-w-0 items-baseline gap-3 sm:flex-1">
+            <button
+              type="button"
+              onClick={() => requestLeave(null)}
+              title="back to notes"
+              className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist lg:hidden"
+            >
+              ← notes
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-mist" title={title}>
+                {title}
+              </div>
+              <div className="truncate font-mono text-xs text-mist-faint" title={relPath}>
+                {relPath}
+              </div>
             </div>
-            <div className="truncate font-mono text-xs text-mist-faint" title={relPath}>
-              {relPath}
-            </div>
+            {saved && <span className="shrink-0 font-mono text-[11px] text-jade">saved</span>}
+            <RelTime iso={modifiedAt} />
           </div>
 
-          {saved && <span className="shrink-0 font-mono text-[11px] text-jade">saved</span>}
-          <RelTime iso={modifiedAt} />
-
-          {editing ? (
-            <>
-              <button
-                type="button"
-                onClick={() => void doSave()}
-                disabled={saving || !dirty}
-                title="save (⌘/ctrl+s)"
-                className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-amber transition-colors hover:text-mist disabled:cursor-default disabled:text-mist-faint"
-              >
-                {saving ? '…' : 'save'}
-              </button>
-              <button
-                type="button"
-                onClick={() => requestLeave(openPath)}
-                title={dirty ? 'discard changes' : 'cancel edit'}
-                className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
-                  discardArm ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
-                }`}
-              >
-                {discardArm ? 'discard?' : 'cancel'}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={beginEdit}
-                disabled={!note}
-                title="edit this note"
-                className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber disabled:cursor-default disabled:opacity-40"
-              >
-                edit
-              </button>
-              <a
-                href={`obsidian://open?path=${encodeURIComponent(abs)}`}
-                title="open in obsidian"
-                className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
-              >
-                obsidian
-              </a>
-              <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
-                copy path
-              </CopyText>
-              <button
-                type="button"
-                onClick={() => requestLeave(null)}
-                title="close (esc)"
-                className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
-              >
-                close
-              </button>
-            </>
-          )}
+          <div className="mobile-actions flex min-w-0 flex-wrap items-center justify-end gap-1 sm:shrink-0">
+            {editing ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void doSave()}
+                  disabled={saving || !dirty}
+                  title="save (⌘/ctrl+s)"
+                  className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-amber transition-colors hover:text-mist disabled:cursor-default disabled:text-mist-faint"
+                >
+                  {saving ? '…' : 'save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requestLeave(openPath)}
+                  title={dirty ? 'discard changes' : 'cancel edit'}
+                  className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
+                    discardArm ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
+                  }`}
+                >
+                  {discardArm ? 'discard?' : 'cancel'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={beginEdit}
+                  disabled={!note}
+                  title="edit this note"
+                  className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber disabled:cursor-default disabled:opacity-40"
+                >
+                  edit
+                </button>
+                <a
+                  href={`obsidian://open?path=${encodeURIComponent(abs)}`}
+                  title="open in obsidian"
+                  className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                >
+                  obsidian
+                </a>
+                <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
+                  copy path
+                </CopyText>
+                <button
+                  type="button"
+                  onClick={() => requestLeave(null)}
+                  title="close (esc)"
+                  className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+                >
+                  close
+                </button>
+              </>
+            )}
+          </div>
         </header>
 
         {/* changed-on-disk: offer reload (drop my edits) or overwrite (force my save) */}

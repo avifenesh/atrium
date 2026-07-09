@@ -67,16 +67,17 @@ export function useTweenNumber(target: number, durationMs = 600): number {
 
 let scrollLocks = 0;
 
-/** lock body scroll while the calling overlay is mounted. */
-export function useScrollLock(): void {
+/** lock body scroll while the calling overlay is mounted or active. */
+export function useScrollLock(active = true): void {
   useEffect(() => {
+    if (!active) return;
     scrollLocks += 1;
     document.body.style.overflow = 'hidden';
     return () => {
       scrollLocks -= 1;
       if (scrollLocks === 0) document.body.style.overflow = '';
     };
-  }, []);
+  }, [active]);
 }
 
 // ---- system history ring buffers (module-level: survive re-mounts, not reloads) ----
