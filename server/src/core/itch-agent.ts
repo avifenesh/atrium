@@ -11,11 +11,13 @@ export const ITCH_MODELS = [
   { id: 'claude:fable', label: 'Claude Fable (Claude Code)' },
   { id: 'claude:haiku', label: 'Claude Haiku (Claude Code)' },
   { id: 'glm:glm-5.2[1m]', label: 'GLM 5.2 1M (Claude Code - Z.ai)' },
+  { id: 'grok:grok-4.5', label: 'Grok 4.5 (Grok Build CLI)' },
+  { id: 'grok:grok-build-0.1', label: 'Grok Build 0.1 (Grok Build CLI)' },
 ];
 
 export const DEFAULT_ITCH_MODEL = 'claude:sonnet';
 
-type ItchModelBackend = 'codex' | 'claude' | 'glm';
+type ItchModelBackend = 'codex' | 'claude' | 'glm' | 'grok';
 
 export interface ItchAgentCommand {
   backend: ItchModelBackend;
@@ -23,7 +25,7 @@ export interface ItchAgentCommand {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
-  stdout: 'codex-json' | 'claude-stream-json';
+  stdout: 'codex-json' | 'claude-stream-json' | 'grok-streaming-json';
   /** True when the CLI normally emits progress while the model is still running. */
   streamsProgress: boolean;
 }
@@ -44,12 +46,16 @@ export function normalizeItchModel(model: string): string {
   if (/^gpt-/i.test(m)) return `codex:${m}`;
   if (/^claude-/i.test(m) || ['sonnet', 'opus', 'fable', 'haiku'].includes(m)) return `claude:${m}`;
   if (/^glm-/i.test(m)) return `glm:${m}`;
+  // Grok Build CLI — freestanding ids and short aliases.
+  if (m === 'grok-build' || m === 'build') return 'grok:grok-build-0.1';
+  if (m === 'grok-4.5' || m === 'grok4.5') return 'grok:grok-4.5';
+  if (/^grok-build/i.test(m) || /^grok-/i.test(m)) return `grok:${m}`;
   return m;
 }
 
 export function isSupportedItchModel(model: string): boolean {
   const m = normalizeItchModel(model);
-  return ITCH_MODELS.some((spec) => spec.id === m) || /^codex:[^:]+$/.test(m) || /^claude:[^:]+$/.test(m) || /^glm:[^:]+$/.test(m);
+  return ITCH_MODELS.some((spec) => spec.id === m) || /^codex:[^:]+$/.test(m) || /^claude:[^:]+$/.test(m) || /^glm:[^:]+$/.test(m) || /^grok:[^:]+$/.test(m);
 }
 
 function splitItchModel(model: string): { backend: ItchModelBackend; model: string } {
@@ -57,7 +63,7 @@ function splitItchModel(model: string): { backend: ItchModelBackend; model: stri
   const idx = m.indexOf(':');
   const backend = idx > 0 ? m.slice(0, idx) : '';
   const rawModel = idx > 0 ? m.slice(idx + 1) : m;
-  if (backend === 'codex' || backend === 'claude' || backend === 'glm') return { backend, model: rawModel };
+  if (backend === 'codex' || backend === 'claude' || backend === 'glm' || backend === 'grok') return { backend, model: rawModel };
   throw new Error(`unsupported itch model: ${model}`);
 }
 
@@ -137,6 +143,26 @@ export function buildItchAgentCommand(model: string, cwd: string): ItchAgentComm
       streamsProgress: true,
     };
   }
+  if (parsed.backend === 'grok') {
+    // Grok Build CLI (`grok`). Prompt is injected at spawn via --prompt-file
+    // (see runItchAgentOnce) so long itch research prompts don't hit ARG_MAX.
+    return {
+      backend: 'grok',
+      bin: process.env.ITCH_GROK || 'grok',
+      args: [
+        '--no-auto-update',
+        '--always-approve',
+        '--cwd', cwd,
+        '--model', parsed.model,
+        '--output-format', 'streaming-json',
+        '--prompt-file', 'prompt.md',
+      ],
+      cwd,
+      env: process.env,
+      stdout: 'grok-streaming-json',
+      streamsProgress: true,
+    };
+  }
   return {
     backend: 'claude',
     bin: process.env.ITCH_CLAUDE || 'claude',
@@ -189,12 +215,24 @@ export function parseItchAgentStdoutLine(command: ItchAgentCommand, line: string
     if (obj?.type === 'result' && typeof obj.result === 'string') return { final: obj.result };
     return {};
   }
+  if (command.stdout === 'grok-streaming-json') {
+    // NDJSON: {type:"text"|"thought", data:"..."} then {type:"end", ...}
+    // Also accept the one-shot json envelope {text:"..."} if a line looks like it.
+    if (obj?.type === 'text' && typeof obj.data === 'string') return { delta: obj.data };
+    if (typeof obj?.text === 'string' && (obj.stopReason || obj.sessionId)) return { final: obj.text };
+    return {};
+  }
   return {};
 }
 
 export async function runItchAgentOnce(prompt: string, model: string, cwd: string, timeoutMs: number): Promise<string> {
   const command = buildItchAgentCommand(model, cwd);
   try {
+    if (command.backend === 'grok') {
+      const { writeFileSync, mkdirSync } = await import('node:fs');
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(join(cwd, 'prompt.md'), prompt, 'utf8');
+    }
     const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(command.bin, command.args, {
         env: command.env,

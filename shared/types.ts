@@ -402,7 +402,7 @@ export interface RevutoModel {
   role: 'review' | 'curator' | 'distill' | 'embedder';
   enabled: boolean;
   name: string; // provider, e.g. "bedrock-mantle"
-  model: string; // model id, e.g. "codex:gpt-5.5"
+  model: string; // model id, e.g. "codex:gpt-5.5" | "claude:sonnet" | "grok:grok-4.5"
   probe: {
     state: 'ok' | 'failed' | 'disabled' | 'unknown';
     kind?: 'chat' | 'embedding' | 'none';
