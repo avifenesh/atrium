@@ -29,6 +29,8 @@ import cloudCollector from './collectors/cloud.js';
 import backupCollector from './collectors/backup.js';
 import reposCollector from './collectors/repos.js';
 import { proxyItch } from './itch-proxy.js';
+import { proxyStreampile } from './streampile-proxy.js';
+import { serveWikiViewer } from './wiki-viewer.js';
 
 for (const c of [
   githubCollector,
@@ -86,6 +88,10 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 // /api/eigen/dispatch spawns an agent with the user's credentials). Standard
 // localhost-daemon defense: strict Host allowlist on every request, plus
 // same-origin-or-absent Origin on state-changing methods.
+//
+// Tailscale Serve / MagicDNS: traffic stays on the tailnet and arrives with
+// Host: avifenesh / avifenesh.<tailnet>.ts.net (often without :port on 443).
+// Still refuse arbitrary Host headers; only loopback + this node's tailnet names.
 const ALLOWED_HOSTS = new Set(
   [config.host, '127.0.0.1', 'localhost', '[::1]'].map((h) => `${h}:${config.port}`),
 );
@@ -93,14 +99,35 @@ const ALLOWED_HOSTS = new Set(
 // browser still sends its own Origin) — allow its loopback origin too
 const ALLOWED_ORIGIN_HOSTS = new Set([...ALLOWED_HOSTS, '127.0.0.1:5173', 'localhost:5173', '[::1]:5173']);
 
+const TAILNET_HOSTS = new Set([
+  'avifenesh',
+  'avifenesh.tail2582b9.ts.net',
+  '100.80.58.31',
+]);
+
+function hostNameOnly(host: string): string {
+  // strip port; IPv6 bracket form [::1]:5599 → [::1]
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end >= 0 ? host.slice(0, end + 1) : host;
+  }
+  return host.split(':')[0] ?? host;
+}
+
 function hostAllowed(host: string | undefined): boolean {
-  return !!host && ALLOWED_HOSTS.has(host.toLowerCase());
+  if (!host) return false;
+  const h = host.toLowerCase();
+  if (ALLOWED_HOSTS.has(h)) return true;
+  return TAILNET_HOSTS.has(hostNameOnly(h));
 }
 
 function originAllowed(origin: string | undefined): boolean {
   if (!origin) return true; // non-browser clients and some same-origin requests omit it
   try {
-    return ALLOWED_ORIGIN_HOSTS.has(new URL(origin).host.toLowerCase());
+    const u = new URL(origin);
+    const h = u.host.toLowerCase();
+    if (ALLOWED_ORIGIN_HOSTS.has(h)) return true;
+    return TAILNET_HOSTS.has(hostNameOnly(h));
   } catch {
     return false; // includes Origin: null
   }
@@ -291,6 +318,16 @@ const server = createServer(async (req, res) => {
     // itch proxy — Host/Origin guards above already gate mutations, the proxy injects
     // the upstream's own anti-CSRF header and strips browser identity headers
     if (path.startsWith('/api/itch/')) return proxyItch(req, res, url);
+
+    // Streampile keeps its own FastAPI/SurrealDB backend; this is only the
+    // same-origin browser adapter for the unified workspace UI.
+    if (path.startsWith('/api/streampile/')) return proxyStreampile(req, res, url);
+
+    // LLM Wiki owns generation of this artifact. Atrium serves the latest built
+    // viewer under the shared endpoint without copying wiki data into its store.
+    if ((method === 'GET' || method === 'HEAD') && path === '/workspace/wiki') {
+      return serveWikiViewer(res, method === 'HEAD');
+    }
 
     // static web ui (built assets), if present
     if (method === 'GET' && !path.startsWith('/api/')) {

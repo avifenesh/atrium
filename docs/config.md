@@ -94,6 +94,13 @@ Endpoints/paths for the bespoke plugin collectors. Irrelevant unless you run tho
 disable them in `collectors.disabled` otherwise. `surreal.user`/`surreal.pass` default to
 SurrealDB's stock local-dev credentials; real credentials belong here, never in the repo.
 
+### `streampile`, `wiki`
+
+The workspace adapters use `streampile.base` (default `http://127.0.0.1:8077`) and
+`wiki.viewerPath` (default `~/projects/llm-wiki/tools/viewer.html`). They do not move those
+systems into Atrium: Streampile still owns `/feed` and `/event`, and LLM Wiki still owns
+generation of the viewer artifact.
+
 ### `poll`
 
 Per-collector poll intervals in milliseconds. Tune if a collector is too chatty or too

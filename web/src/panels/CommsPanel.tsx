@@ -80,7 +80,7 @@ function EventRow({ ev, highlight, showDate }: { ev: CalendarEvent; highlight?: 
         className={`flex w-full min-w-0 items-baseline gap-3 ${highlight ? '-ml-2 border-l border-amber pl-2' : ''}`}
         title={ev.location ? `${ev.title} — ${ev.location}` : ev.title}
       >
-        <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-mist-dim">
+        <span className="w-20 shrink-0 font-mono text-xs tabular-nums text-mist-dim sm:w-24">
           {ev.allDay ? 'all day' : `${hm(ev.start)}–${hm(ev.end)}`}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-mist">{ev.title}</span>
@@ -177,7 +177,7 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
                   title={t.snippet}
                 >
                   {t.unread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" />}
-                  <span className="w-40 shrink-0 truncate text-sm">{t.from}</span>
+                  <span className="w-28 shrink-0 truncate text-sm sm:w-40">{t.from}</span>
                   <span className="min-w-0 flex-1 truncate text-sm">{t.subject}</span>
                   <RelTime iso={t.date} />
                 </div>

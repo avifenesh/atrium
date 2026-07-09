@@ -141,26 +141,27 @@ function AgentCard({
 
   return (
     <section
-      className="glass rise flex h-full flex-col p-4"
+      className="glass rise flex h-full min-w-0 flex-col p-4"
       style={{ '--rise-i': riseIndex } as CSSProperties}
     >
       <Row onClick={() => setExpanded((o) => !o)}>
-        <div className="flex w-full min-w-0 items-center gap-2">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
           <Dot status={agent.status} />
-          <span className="min-w-0 truncate text-sm font-semibold lowercase text-mist">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold lowercase text-mist">
             {agent.name}
           </span>
           <span className="shrink-0 font-mono text-xs text-mist-faint">{agent.status}</span>
-          <span className="flex-1" />
-          {quietResources > 0 && (
-            <span onClick={(e) => e.stopPropagation()}>
-              <QuietChip count={quietResources} onClick={onOpenQuiet} />
-            </span>
-          )}
-          <MuteButton kind="agent" target={agent.id} enforce />
           <RelTime iso={agent.lastActivity} />
           <span className="shrink-0 font-mono text-[10px] text-mist-faint">
             {expanded ? '▾' : '▸'}
+          </span>
+          <span className="mobile-row-actions flex shrink-0 items-center justify-end gap-1 sm:ml-auto sm:basis-auto">
+            {quietResources > 0 && (
+              <span onClick={(e) => e.stopPropagation()}>
+                <QuietChip count={quietResources} onClick={onOpenQuiet} />
+              </span>
+            )}
+            <MuteButton kind="agent" target={agent.id} enforce />
           </span>
         </div>
       </Row>

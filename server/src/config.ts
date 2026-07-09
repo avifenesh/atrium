@@ -88,6 +88,14 @@ export const defaults = {
     sxcServeConfig: join(HOME, 'projects', 'colbert-2', 'config', 'serve.json'),
   },
 
+  streampile: {
+    base: 'http://127.0.0.1:8077',
+  },
+
+  wiki: {
+    viewerPath: join(HOME, 'projects', 'llm-wiki', 'tools', 'viewer.html'),
+  },
+
   surreal: {
     endpoint: 'http://127.0.0.1:8000',
     // surrealdb's stock local-dev credentials for the loopback memory store —
@@ -109,6 +117,7 @@ export const defaults = {
   knownPorts: {
     5599: 'atrium (this app)',
     5173: 'vite dev',
+    8077: 'streampile',
   } as Record<number, string>,
 
   /** systemd --user units to surface in the system view. Empty by default; list

@@ -381,7 +381,7 @@ export function Feed({
       right={
         runs.length > 0 || stale ? (
           // .group wrapper so the destructive action only surfaces on hover/focus
-          <span className="group flex items-center gap-2">
+          <span className="group flex min-w-0 max-w-full flex-1 items-center gap-2 sm:flex-none">
             {selectedStem && (
               <DeleteRunButton
                 key={selectedStem}
@@ -400,7 +400,7 @@ export function Feed({
               value={selectedStem ?? ''}
               onChange={(e) => onSelect(e.target.value)}
               title="switch runs"
-              className="glass glass-hover max-w-96 cursor-pointer px-2 py-1 font-mono text-[11px] text-mist outline-none [color-scheme:dark]"
+              className="glass glass-hover min-w-0 max-w-full flex-1 cursor-pointer px-2 py-2 font-mono text-[13px] text-mist outline-none [color-scheme:dark] sm:max-w-96 sm:flex-none sm:py-1 sm:text-[11px]"
             >
               {/* a just-saved run can outrun the snapshot — keep it selectable until the refresh lands */}
               {stale && selectedStem && <option value={selectedStem}>{fmtStem(selectedStem)} · new</option>}

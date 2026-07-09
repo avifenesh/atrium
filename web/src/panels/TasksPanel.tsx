@@ -86,12 +86,12 @@ function ItemRow({
   accent?: boolean;
 }) {
   return (
-    <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title}>
+    <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title} className="flex-wrap sm:flex-nowrap">
       {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
-      <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{item.repo}</span>
+      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{item.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
       <RelTime iso={item.updatedAt} />
-      <span className="flex shrink-0 items-center gap-1">
+      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
         <GithubLink href={item.url} />
         <SendToEigen title={item.title} url={item.url} repo={item.repo} sourceId={item.id} dispatches={dispatches} />
         <RepoMutes repo={item.repo} itemId={item.id} />
@@ -111,14 +111,14 @@ function PRRow({
 }) {
   const decision = pr.reviewDecision ? DECISION[pr.reviewDecision] : null;
   return (
-    <Row onClick={() => onOpenItem(pr.repo, pr.number)} title={pr.title}>
+    <Row onClick={() => onOpenItem(pr.repo, pr.number)} title={pr.title} className="flex-wrap sm:flex-nowrap">
       <Dot status={ciStatus(pr.ci)} />
-      <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{pr.repo}</span>
+      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{pr.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{pr.title}</span>
-      {pr.isDraft && <Chip className="text-mist-faint">draft</Chip>}
-      {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
+      {pr.isDraft && <Chip className="hidden text-mist-faint sm:inline-flex">draft</Chip>}
+      {decision && <Chip className={`hidden sm:inline-flex ${decision.cls}`}>{decision.label}</Chip>}
       <RelTime iso={pr.updatedAt} />
-      <span className="flex shrink-0 items-center gap-1">
+      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
         <GithubLink href={pr.url} />
         <SendToEigen title={pr.title} url={pr.url} repo={pr.repo} sourceId={pr.id} dispatches={dispatches} />
         <RepoMutes repo={pr.repo} itemId={pr.id} />
@@ -143,19 +143,19 @@ function OrgRow({
   const decision = isPR && item.reviewDecision ? DECISION[item.reviewDecision] : null;
   const accent = item.lane === 'review';
   return (
-    <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title}>
+    <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title} className="flex-wrap sm:flex-nowrap">
       {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
       {isPR && <Dot status={ciStatus(item.ci)} />}
-      <Chip className="text-mist-faint">{item.scope}</Chip>
-      <span className="w-32 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-40">{item.repo}</span>
+      <Chip className="hidden text-mist-faint sm:inline-flex">{item.scope}</Chip>
+      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-32 xl:w-40">{item.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
-      {isPR && item.isDraft && <Chip className="text-mist-faint">draft</Chip>}
-      {decision && <Chip className={decision.cls}>{decision.label}</Chip>}
+      {isPR && item.isDraft && <Chip className="hidden text-mist-faint sm:inline-flex">draft</Chip>}
+      {decision && <Chip className={`hidden sm:inline-flex ${decision.cls}`}>{decision.label}</Chip>}
       <RelTime iso={item.updatedAt} />
-      <span className="flex shrink-0 items-center gap-1">
+      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
         {/* fixed slot: the cluster reserves space while hidden, so a variable-width
             author would push each row's RelTime left by a different amount */}
-        <span className="hover-cluster w-24 shrink-0 truncate text-right font-mono text-[11px] text-mist-faint">
+        <span className="hover-cluster hidden w-24 shrink-0 truncate text-right font-mono text-[11px] text-mist-faint 2xl:block">
           @{item.author}
         </span>
         <GithubLink href={item.url} />
@@ -182,9 +182,9 @@ function NotificationRow({
   const item = parseItemUrl(n.url);
   const rowProps = item ? { onClick: () => onOpenItem(item.repo, item.number) } : { href: n.url };
   return (
-    <Row {...rowProps} title={n.title}>
-      <Chip className="text-mist-dim">{n.reason}</Chip>
-      <span className="w-32 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-40">{n.repo}</span>
+    <Row {...rowProps} title={n.title} className="flex-wrap sm:flex-nowrap">
+      <Chip className="hidden text-mist-dim sm:inline-flex">{n.reason}</Chip>
+      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-32 xl:w-40">{n.repo}</span>
       <span className={`min-w-0 flex-1 truncate text-sm ${n.unread ? 'text-mist' : 'text-mist-dim'}`}>{n.title}</span>
       {activityLabel(n) && <Chip className={n.noise ? 'text-mist-dim' : 'text-mist-faint'}>{activityLabel(n)}</Chip>}
       {n.latestActivity && (
@@ -196,7 +196,7 @@ function NotificationRow({
         </span>
       )}
       <RelTime iso={n.updatedAt} />
-      <span className="flex shrink-0 items-center gap-1">
+      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
         {item && <GithubLink href={n.url} />}
         <SendToEigen title={n.title} url={n.url} repo={n.repo} sourceId={n.id} dispatches={dispatches} />
         <button
@@ -580,9 +580,9 @@ export default function TasksPanel({
           {ownRepos.length === 0 ? (
             <EmptyState>no repos</EmptyState>
           ) : (
-            <div className="grid grid-cols-2 gap-1.5 lg:grid-cols-3 2xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {ownRepos.map((r) => (
-                <Row key={r.repo} href={`https://github.com/${r.repo}`} title={r.repo} className="border hairline">
+                <Row key={r.repo} href={`https://github.com/${r.repo}`} title={r.repo} className="flex-wrap border hairline sm:flex-nowrap">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist">{r.repo}</span>
                   <span className="shrink-0 font-mono text-xs tabular-nums text-mist-dim">
                     {r.openIssues}
@@ -590,7 +590,7 @@ export default function TasksPanel({
                     {r.openPRs}
                     <span className="text-mist-faint"> pr</span>
                   </span>
-                  <span className="flex shrink-0 items-center">
+                  <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end sm:ml-0 sm:basis-auto">
                     <RepoMutes repo={r.repo} />
                   </span>
                 </Row>

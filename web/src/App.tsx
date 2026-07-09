@@ -11,6 +11,8 @@ import SubsPanel from './panels/SubsPanel';
 import SchedulePanel from './panels/SchedulePanel';
 import NotesPanel from './panels/NotesPanel';
 import ItchPanel from './panels/ItchPanel';
+import StreampilePanel from './panels/StreampilePanel';
+import WikiPanel from './panels/WikiPanel';
 import ExtraPanel, { extraKeys } from './panels/ExtraPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
@@ -33,6 +35,8 @@ const VIEWS = [
   { id: 'schedule', label: 'schedule', collector: 'schedule' },
   { id: 'notes', label: 'notes', collector: 'notes' },
   { id: 'itch', label: 'itch', collector: 'itch' },
+  { id: 'streampile', label: 'streampile' },
+  { id: 'knowledge', label: 'knowledge' },
 ] as const;
 
 // extra (plugin) sections register as dynamic views; ids are not known at compile time
@@ -115,6 +119,8 @@ export default function App() {
   }, []);
   const [mutesOpen, setMutesOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /** mobile overflow sheet for secondary views (bottom nav holds primaries) */
+  const [moreOpen, setMoreOpen] = useState(false);
   // github item slide-over: read + comment without leaving atrium
   const [item, setItem] = useState<{ repo: string; number: number } | null>(null);
   // palette → notes reader: pending open consumed by NotesPanel (itch scrollTarget idiom —
@@ -260,9 +266,19 @@ export default function App() {
   const activeView = isKnownView(view) ? view : 'now';
   const navigate = (v: string) => {
     if (isKnownView(v)) setView(v);
+    setMoreOpen(false);
   };
-  const openQuiet = () => setMutesOpen(true);
+  const openQuiet = () => {
+    setMoreOpen(false);
+    setMutesOpen(true);
+  };
   const openItem = (repo: string, number: number) => setItem({ repo, number });
+
+  // bottom-nav primaries on phone; everything else lives under "more"
+  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'agents', 'itch']);
+  const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
+  const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
+  const primaryActive = MOBILE_PRIMARY.has(activeView);
 
   const badgeFor = (id: ViewId): { n: number; cls: string } | null => {
     const map: Partial<Record<ViewId, { n: number; cls: string }>> = {
@@ -279,29 +295,12 @@ export default function App() {
     return b && b.n > 0 ? b : null;
   };
 
-  const navButton = (v: { id: string; label: string }) => {
-    const b = badgeFor(v.id);
-    return (
-      <button
-        key={v.id}
-        onClick={() => setView(v.id)}
-        className={`cursor-pointer whitespace-nowrap rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
-          activeView === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
-        }`}
-      >
-        {v.label}
-        {b && <span className={`ml-1 font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
-      </button>
-    );
-  };
-
   return (
-    <div className="mx-auto min-h-screen w-full max-w-[1920px] px-5 py-4 lg:px-8 lg:py-5">
-      {/* top bar — below lg the rail folds into a horizontal nav */}
-      <header className="mb-4 flex items-center gap-3 lg:hidden">
+    <div className="mx-auto min-h-dvh w-full max-w-[1920px] px-3 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-5 sm:py-4 lg:px-8 lg:pb-5 lg:pt-5">
+      {/* mobile top — wordmark + quiet; views live in bottom nav */}
+      <header className="mb-3 flex items-center justify-between gap-3 lg:hidden">
         <Wordmark connected={connected} className="shrink-0 text-2xl" />
-        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">{allViews.map(navButton)}</nav>
-        <QuietButton count={activeMutes.length} onClick={openQuiet} className="shrink-0 px-3 py-1.5" />
+        <QuietButton count={activeMutes.length} onClick={openQuiet} className="shrink-0 px-3 py-2" />
       </header>
 
       <div className="flex gap-6 lg:gap-7">
@@ -316,7 +315,7 @@ export default function App() {
               return (
                 <li key={v.id}>
                   <button
-                    onClick={() => setView(v.id)}
+                    onClick={() => navigate(v.id)}
                     className={`flex w-full cursor-pointer items-baseline justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
                       activeView === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
                     }`}
@@ -350,7 +349,7 @@ export default function App() {
           {activeView === 'notes' && (
             <NotesPanel
               snapshot={snapshot}
-              overlayOpen={paletteOpen || !!item || mutesOpen}
+              overlayOpen={paletteOpen || !!item || mutesOpen || moreOpen}
               openTarget={noteTarget}
               onOpenTargetConsumed={() => setNoteTarget(null)}
             />
@@ -362,12 +361,104 @@ export default function App() {
               onOpenTargetConsumed={() => setRunTarget(null)}
             />
           )}
+          {activeView === 'streampile' && <StreampilePanel />}
+          {activeView === 'knowledge' && <WikiPanel />}
           {/* plugin (extra-lane) sections render in the generic panel */}
           {snapshot.extra?.[activeView] && (
             <ExtraPanel section={snapshot.extra[activeView]} sectionKey={activeView} />
           )}
         </main>
       </div>
+
+      {/* mobile bottom nav — primary views; overflow under "more" */}
+      <nav
+        className="mobile-bottom-nav glass-raised fixed inset-x-0 bottom-0 z-30 border-t border-white/10 lg:hidden"
+        aria-label="primary"
+      >
+        <div className="mx-auto flex max-w-[1920px] items-stretch justify-around gap-0.5 px-1 pt-1">
+          {mobilePrimaryViews.map((v) => {
+            const b = badgeFor(v.id);
+            const on = activeView === v.id;
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => navigate(v.id)}
+                className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
+                  on ? 'text-mist' : 'text-mist-faint'
+                }`}
+              >
+                <span className="font-mono text-[13px] leading-none">{v.label}</span>
+                {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
+              moreOpen || !primaryActive ? 'text-mist' : 'text-mist-faint'
+            }`}
+          >
+            <span className="font-mono text-[13px] leading-none">more</span>
+            {!primaryActive && (
+              <span className="max-w-full truncate font-mono text-[10px] text-mist-dim">{activeView}</span>
+            )}
+          </button>
+        </div>
+      </nav>
+
+      {moreOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-ink/60 backdrop-fade lg:hidden" onClick={() => setMoreOpen(false)} />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="more views"
+            className="glass-raised fixed inset-x-0 bottom-0 z-50 max-h-[70dvh] overflow-y-auto rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:hidden"
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">more</h2>
+              <button
+                type="button"
+                onClick={() => setMoreOpen(false)}
+                className="cursor-pointer rounded px-2 py-1 font-mono text-[11px] text-mist-faint"
+              >
+                close
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {mobileMoreViews.map((v) => {
+                const b = badgeFor(v.id);
+                const on = activeView === v.id;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => navigate(v.id)}
+                    className={`flex min-h-12 items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                      on ? 'glass-raised text-mist' : 'glass text-mist-dim'
+                    }`}
+                  >
+                    <span>{v.label}</span>
+                    {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={openQuiet}
+                className="glass col-span-2 flex min-h-12 items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-mist-dim"
+              >
+                <span>quiet / archive</span>
+                {activeMutes.length > 0 && (
+                  <span className="font-mono text-xs tabular-nums text-mist-faint">{activeMutes.length}</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {mutesOpen && <MutesDrawer snapshot={snapshot} onClose={() => setMutesOpen(false)} />}
       {item && (

@@ -402,16 +402,15 @@ export function IdeaCard({
     // card-level group — zero-information rows (finding: rhythm) hover-reveal
     // against the whole card, not a sliver of row
     <section data-idx={idea.idx} className={`group glass p-4${flash ? ' jump-glow' : ''}`}>
-      {/* wrapping title row — the controls travel as ONE ml-auto unit and drop to
-          a second line when tight; min-w-48 keeps the title readable, never a
-          one-word-per-line sliver at half-screen widths */}
+      {/* The title owns the first line on phones. The complete action set wraps
+          below it so touch controls stay reachable without widening the card. */}
       <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
-        <div className="min-w-48 flex-1">
+        <div className="min-w-0 basis-full flex-1 sm:min-w-48 sm:basis-auto">
           <CopyText text={idea.title}>
             <span className="text-sm font-semibold text-mist">{displayTitle(idea.title)}</span>
           </CopyText>
         </div>
-        <span className="ml-auto flex shrink-0 items-center gap-2">
+        <span className="mobile-idea-actions ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:shrink-0">
           {ready && (
             <button
               type="button"
@@ -427,7 +426,7 @@ export function IdeaCard({
           )}
           {/* hover cluster — side oneshots + delete; the in-flight one stays visible,
               label kept beside the ellipsis so minutes-long flights read as something */}
-          <span className="flex shrink-0 items-center gap-1">
+          <span className="flex min-w-0 flex-wrap items-center justify-end gap-1">
             {/* scope only earns a slot at rating 5; an in-flight one stays visible
                 even if the rating changes mid-flight */}
             {ACTIONS.filter((a) => a.kind !== 'scope' || rating === 5 || action === 'scope').map((a) => (

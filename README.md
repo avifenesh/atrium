@@ -71,6 +71,7 @@ the UI. Full key reference: [docs/config.md](docs/config.md).
 - **MCP-native** — an LLM host can read the whole dashboard through `atrium_*` tools; query tools carry `readOnlyHint` so they auto-run in gated mode.
 - **Pluggable collectors** — drop a one-file collector into the `extra` lane and it renders in a generic panel with no React. Disable any collector (core or plugin) with one config line; its data *and* its nav tab disappear.
 - **Phone alerts that respect you** — crit flags ping a backend of your choice, throttled (one ping per flag per window) with a matching clear notice on recovery.
+- **One workspace, independent systems** — the bundled Streampile and LLM Wiki views live in the Atrium shell while their ranking, storage, and artifact generation stay in their own backends. One browser endpoint, no copied domain logic.
 
 ## Core concepts
 
@@ -82,6 +83,8 @@ the UI. Full key reference: [docs/config.md](docs/config.md).
 The web UI is a keyboard-driven set of views: number keys switch, `/` or `cmd+k` open the
 fuzzy command palette, `q` toggles the quiet drawer, `esc` closes the topmost overlay.
 Views deep-link via URL hash (`#system`, `#tasks`) for desktop launchers.
+The workspace views use `#streampile` and `#knowledge`; both are served through the same
+Atrium endpoint. See [docs/workspace.md](docs/workspace.md) for the boundary between repos.
 
 ## Writing your own collector
 
@@ -115,6 +118,8 @@ For scripting or building on atrium, the daemon exposes:
 | notes | `GET /api/notes/read` · `POST /api/notes/write` (optimistic concurrency, 409 on conflict) |
 | google | `GET /api/google/status` · `GET /api/google/auth-url` · `GET /api/google/callback` |
 | spotify | `POST /api/spotify/client` · `GET /api/spotify/auth-url` · `GET /api/spotify/callback` |
+| streampile | `GET /api/streampile/feed` · `GET /api/streampile/health` · `POST /api/streampile/event` |
+| wiki | `GET /workspace/wiki` (latest generated graph artifact) |
 
 Plugin collectors may register their own routes (the bundled itch plugin proxies `/api/itch/*`).
 
@@ -141,7 +146,11 @@ Safety comes from never being reachable, not from a login:
             │
    ┌────────┴─────────┐
    ▼                  ▼
- web UI            mcp (stdio, atrium_* tools)
+ workspace UI      mcp (stdio, atrium_* tools)
+   │
+   ├── native Atrium views
+   ├── Streampile view ── narrow proxy ── FastAPI / SurrealDB
+   └── Knowledge view ── generated viewer ── llm-wiki
 ```
 
 The daemon also serves the built web UI (`index.html` `no-cache`; content-hashed `assets/`
@@ -153,6 +162,7 @@ inside the repo at runtime.
 - Configuration reference — [docs/config.md](docs/config.md)
 - Writing a collector — [docs/collectors.md](docs/collectors.md)
 - Design language — [DESIGN.md](DESIGN.md)
+- Workspace composition — [docs/workspace.md](docs/workspace.md)
 
 ## Contributing
 

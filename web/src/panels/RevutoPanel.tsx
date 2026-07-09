@@ -276,7 +276,7 @@ function JobRow({ j }: { j: RevutoJob }) {
         >
           {j.job}
         </span>
-        <div className="w-32 shrink-0 overflow-hidden xl:w-40">
+        <div className="w-24 shrink-0 overflow-hidden sm:w-32 xl:w-40">
           <CopyText text={j.repo}>
             <span className={`block truncate text-left font-mono text-xs ${repoTone}`} title={j.repo}>
               {j.repo}
@@ -529,7 +529,7 @@ export default function RevutoPanel({
                 </span>
               )}
               {limits && (
-                <span className="whitespace-nowrap">
+                <span className="min-w-0 break-words sm:whitespace-nowrap">
                   {limits.dailyReviews} reviews/day · {limits.dailyLearn} learn/day ·{' '}
                   {(limits.dailyTokens / 1e6).toFixed(1)}M tokens/day · {limits.maxSteps} steps
                 </span>

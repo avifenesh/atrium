@@ -595,7 +595,7 @@ export function ResearchStrip({
             className="glass min-w-0 flex-1 px-2 py-1 text-mist outline-none placeholder:text-mist-faint disabled:opacity-40"
           />
         </label>
-        <span className="ml-auto flex items-center gap-3">
+        <span className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center sm:gap-3">
           <label
             className="flex cursor-pointer items-center gap-1.5 font-mono text-[11px] text-mist-dim transition-colors hover:text-mist"
             title="force itch-intent mining onto bm25 — use while the ColBERT index is stale or rebuilding; off uses ColBERT"
@@ -618,7 +618,7 @@ export function ResearchStrip({
                 // best-effort upstream pref — start passes flags.model explicitly anyway
                 persistModel(id).catch(() => {});
               }}
-              className="glass glass-hover max-w-72 cursor-pointer truncate px-2 py-1 font-mono text-[11px] text-mist outline-none [color-scheme:dark]"
+              className="glass glass-hover w-full max-w-full cursor-pointer truncate px-2 py-2 font-mono text-[13px] text-mist outline-none [color-scheme:dark] sm:max-w-72 sm:py-1 sm:text-[11px]"
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -631,7 +631,7 @@ export function ResearchStrip({
             type="button"
             disabled={busy}
             onClick={() => void start()}
-            className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-mist-dim press glass glass-hover hover:text-mist disabled:opacity-50"
+            className="cursor-pointer rounded-md px-3 py-2 font-mono text-[12px] text-mist-dim press glass glass-hover hover:text-mist disabled:opacity-50 sm:px-2 sm:py-0.5 sm:text-[11px]"
           >
             {busy ? '◌' : 'start research'}
           </button>

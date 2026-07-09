@@ -29,16 +29,16 @@ export function Panel({
   const showChip = quietCount !== undefined && quietCount > 0;
   return (
     <section
-      className={`glass ${rise ? 'rise ' : ''}p-4 xl:p-5 ${className}`}
+      className={`glass min-w-0 ${rise ? 'rise ' : ''}p-4 xl:p-5 ${className}`}
       style={rise ? ({ '--rise-i': riseIndex } as CSSProperties) : undefined}
     >
       {(title || right || showChip) && (
-        <header className="mb-3 flex min-w-0 items-baseline justify-between gap-3">
+        <header className="mb-3 flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
           {title && (
-            <h2 className="truncate font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">{title}</h2>
+            <h2 className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">{title}</h2>
           )}
           {(right || showChip) && (
-            <div className="ml-auto flex shrink-0 items-baseline gap-3 text-xs text-mist-dim">
+            <div className="panel-actions ml-auto flex min-w-0 max-w-full flex-wrap items-baseline justify-end gap-x-3 gap-y-2 text-xs text-mist-dim">
               {right}
               {showChip && <QuietChip count={quietCount} onClick={onQuietClick} />}
             </div>
@@ -155,7 +155,7 @@ export function CopyText({ text, children, className = '' }: { text: string; chi
         }
         setTimeout(() => setState('idle'), 1500);
       }}
-      className={`min-w-0 cursor-pointer text-left transition-colors hover:text-mist ${className}`}
+      className={`min-w-0 max-w-full overflow-hidden cursor-pointer text-left transition-colors hover:text-mist ${className}`}
     >
       {state === 'idle' ? (
         children

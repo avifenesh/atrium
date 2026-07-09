@@ -103,7 +103,7 @@ export default function SchedulePanel({
           <button
             key={s}
             onClick={() => setFilter(s)}
-            className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] transition-colors ${
+            className={`rounded-full px-2.5 py-2 font-mono text-[11px] transition-colors sm:py-0.5 ${
               filter === s ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
             }`}
           >
@@ -117,13 +117,13 @@ export default function SchedulePanel({
       ) : (
         <div>
           <div className={`${COLS} border-b py-1.5 font-mono text-[10px] uppercase tracking-widest text-mist-faint hairline`}>
-            <span className="w-16 shrink-0">src</span>
+            <span className="w-14 shrink-0 sm:w-16">src</span>
             <span className="min-w-0 flex-1">name</span>
             <span className="hidden w-36 shrink-0 lg:block">expr</span>
-            <span className="w-20 shrink-0 text-right">next</span>
-            <span className="w-14 shrink-0 text-right">last</span>
+            <span className="w-16 shrink-0 text-right sm:w-20">next</span>
+            <span className="hidden w-14 shrink-0 text-right sm:block">last</span>
             <span className="w-2 shrink-0" />
-            <span className="w-28 shrink-0" />
+            <span className="hidden w-28 shrink-0 sm:block" />
           </div>
           <div className="max-h-[34rem] overflow-y-auto">
             {sorted.map((e) => {
@@ -137,7 +137,7 @@ export default function SchedulePanel({
                     className="group"
                   >
                     <div className={`${COLS} w-full min-w-0`}>
-                      <span className="w-16 shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-center font-mono text-[10px] text-mist-dim">
+                      <span className="w-14 shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-center font-mono text-[10px] text-mist-dim sm:w-16">
                         {shortSource(e.source)}
                       </span>
                       <div className="min-w-0 flex-1">
@@ -153,21 +153,21 @@ export default function SchedulePanel({
                       <span className="hidden w-36 shrink-0 truncate font-mono text-xs text-mist-dim lg:block" title={e.expr}>
                         {e.expr}
                       </span>
-                      <span className="w-20 shrink-0 text-right">
+                      <span className="w-16 shrink-0 text-right sm:w-20">
                         <NextRun iso={e.nextRun} />
                       </span>
-                      <span className="w-14 shrink-0 text-right">
+                      <span className="hidden w-14 shrink-0 text-right sm:block">
                         <RelTime iso={e.lastRun} />
                       </span>
                       <Dot status={e.lastStatus === 'ok' ? 'running' : e.lastStatus === 'fail' ? 'error' : 'off'} />
-                      <span className="flex w-28 shrink-0 items-center justify-end gap-1">
+                      <span className="hidden w-28 shrink-0 items-center justify-end gap-1 sm:flex">
                         {jobId && <RunNow jobId={jobId} />}
                         {e.muteable && <MuteButton kind="schedule" target={e.id} enforce />}
                       </span>
                     </div>
                   </Row>
                   {expanded && (
-                    <div className="mb-1 ml-19 space-y-1 rounded-lg bg-white/[0.03] px-3 py-2 text-xs">
+                    <div className="mb-1 space-y-1 rounded-lg bg-white/[0.03] px-3 py-2 text-xs sm:ml-19">
                       <div className="flex items-baseline gap-2">
                         <span className="w-12 shrink-0 font-mono text-[10px] uppercase tracking-widest text-mist-faint">id</span>
                         <CopyText text={e.id}>
@@ -192,6 +192,10 @@ export default function SchedulePanel({
                           {e.lastRun ? new Date(e.lastRun).toLocaleString() : '—'}
                           {e.lastStatus ? ` · ${e.lastStatus}` : ''}
                         </span>
+                      </div>
+                      <div className="mobile-actions flex flex-wrap justify-end gap-2 pt-2 sm:hidden">
+                        {jobId && <RunNow jobId={jobId} />}
+                        {e.muteable && <MuteButton kind="schedule" target={e.id} enforce />}
                       </div>
                     </div>
                   )}
