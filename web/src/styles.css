@@ -562,7 +562,10 @@ body {
   }
 }
 .mobile-bottom-nav {
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+  left: max(0.75rem, env(safe-area-inset-left, 0px));
+  right: max(0.75rem, env(safe-area-inset-right, 0px));
+  bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  padding-bottom: 0.25rem;
 }
 @media (max-width: 640px) {
   body::before {
