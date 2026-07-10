@@ -120,7 +120,7 @@ export function ComparePanel({
 
   return (
     <Panel
-      title="collide vs baseline"
+      title="Exploration compared with baseline"
       riseIndex={riseIndex}
       rise={false} // panel remounts on every collide pick — replaying the load stagger mid-session is a 210ms hole
       className="mb-4"

@@ -240,9 +240,9 @@ export function ToolsPanel({
   };
 
   return (
-    <Panel title="tools" riseIndex={riseIndex} className="mt-4">
+    <Panel title="Research tools" riseIndex={riseIndex} className="mt-4">
       {/* validate */}
-      <SectionLabel>validate</SectionLabel>
+      <SectionLabel>Validate an idea</SectionLabel>
       <div className="space-y-2 px-0.5">
         <div className="flex items-center gap-2">
           <input
@@ -267,7 +267,7 @@ export function ToolsPanel({
       </div>
 
       {/* contribute */}
-      <SectionLabel>contribute</SectionLabel>
+      <SectionLabel>Find contributions</SectionLabel>
       <div className="space-y-2 px-0.5">
         <div className="flex items-center gap-2">
           <textarea
@@ -286,7 +286,7 @@ export function ToolsPanel({
       </div>
 
       {/* resources */}
-      <SectionLabel>resources</SectionLabel>
+      <SectionLabel>Research context</SectionLabel>
       <div className="space-y-1 px-0.5">
         {RESOURCE_DEFS.map(({ name, file }) => {
           const ed = editors[name];
@@ -365,7 +365,7 @@ export function ToolsPanel({
       </div>
 
       {/* feed filter */}
-      <SectionLabel>feed filter</SectionLabel>
+      <SectionLabel>Filter the idea feed</SectionLabel>
       <div className="space-y-2 px-0.5">
         <div className="flex items-center gap-2">
           <input
@@ -401,7 +401,7 @@ export function ToolsPanel({
           </div>
         )}
         <div className="text-xs text-mist-faint">
-          also appends a durable rule to rules.md when the instruction implies one
+          Durable preferences are also added to rules.md.
         </div>
       </div>
 

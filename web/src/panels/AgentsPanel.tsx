@@ -366,8 +366,8 @@ export default function AgentsPanel({
       )}
 
       {visible.length === 0 ? (
-        <Panel title="agents" quietCount={quietAgents || undefined} onQuietClick={openQuiet}>
-          <EmptyState>no agents reporting</EmptyState>
+        <Panel title="Agent status" quietCount={quietAgents || undefined} onQuietClick={openQuiet}>
+          <EmptyState>No agents are reporting.</EmptyState>
         </Panel>
       ) : (
         <div className="grid items-stretch gap-4 xl:grid-cols-2 2xl:grid-cols-3">
@@ -385,7 +385,7 @@ export default function AgentsPanel({
       )}
 
       <Panel
-        title="activity"
+        title="Recent activity"
         riseIndex={visible.length}
         className="mt-4"
         right={
@@ -395,7 +395,7 @@ export default function AgentsPanel({
         }
       >
         {activity.length === 0 ? (
-          <EmptyState>nothing happening</EmptyState>
+          <EmptyState>No recent agent activity.</EmptyState>
         ) : (
           <div className="max-h-48 overflow-y-auto font-mono text-xs">
             {/* server builds activity oldest-first (newest last) — show the newest 30, newest first */}

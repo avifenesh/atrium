@@ -18,11 +18,11 @@ import type { ItchResearch, SxcGroundingReviewItem, SxcGroundingState } from '..
 // ---------- research strip (rise 0) ----------
 
 const FLAG_DEFS = [
-  ['no_gh', 'skip github scan'],
-  ['no_local', 'skip local scan'],
-  ['fresh', 'ignore prior runs (fresh)'],
-  ['no_history', 'no history'],
-  ['market', 'market lens'],
+  ['no_gh', 'Skip GitHub'],
+  ['no_local', 'Skip local scan'],
+  ['fresh', 'Ignore prior runs'],
+  ['no_history', 'Ignore history'],
+  ['market', 'Use market lens'],
 ] as const;
 
 type FlagKey = (typeof FLAG_DEFS)[number][0];
@@ -402,12 +402,12 @@ export function ResearchStrip({
 
   if (running) {
     return (
-      <section className="glass rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
+      <section className="panel-surface rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex shrink-0 breathe">
             <Dot status="running" />
           </span>
-          <span className="text-sm lowercase text-mist">research running</span>
+          <span className="text-sm font-semibold text-mist">Research running</span>
           <RelTime iso={startedAt} />
           <span className="flex-1" />
           <button
@@ -418,7 +418,7 @@ export function ResearchStrip({
               armed ? 'glass-raised text-coral hover:text-coral' : 'glass text-mist-faint hover:text-mist'
             }`}
           >
-            {busy ? '◌' : armed ? 'sure?' : 'stop'}
+            {busy ? '◌' : armed ? 'Stop now?' : 'Stop'}
           </button>
         </div>
         {msg && (
@@ -450,7 +450,7 @@ export function ResearchStrip({
           }}
           className="mt-2 max-h-72 overflow-y-auto overscroll-contain font-mono text-xs leading-relaxed"
         >
-          {log.length === 0 && !partial && <div className="fade-in text-mist-faint">waiting for output…</div>}
+          {log.length === 0 && !partial && <div className="fade-in text-mist-faint">Waiting for research output…</div>}
           {log.map((l, i) => (
             <div key={i} className="fade-in whitespace-pre-wrap break-words text-mist-dim">
               {l}
@@ -460,7 +460,7 @@ export function ResearchStrip({
             <div className="stream-cursor whitespace-pre-wrap break-words text-mist-faint">{partial}</div>
           )}
           {pollDown && (
-            <div className="fade-in text-coral">status poll failing — itch server unreachable?</div>
+            <div className="fade-in text-coral">Live status is unavailable. Itch may be offline.</div>
           )}
         </div>
       </section>
@@ -486,7 +486,11 @@ export function ResearchStrip({
   const canResume = exit?.resumable || research.resumable;
 
   return (
-    <section className="glass rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
+    <section className="panel-surface rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-semibold text-mist">Research setup</h2>
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-faint">idea finder</span>
+      </div>
       {exitView && (
         <div className="fade-in mb-2 flex items-center gap-2">
           <span className={`font-mono text-xs ${exitView.tone}`}>{exitView.text}</span>
@@ -498,7 +502,7 @@ export function ResearchStrip({
               title="continue the interrupted run from its partial ideas — no re-research"
               className="cursor-pointer rounded-md px-2 py-0.5 font-mono text-[11px] text-jade press glass glass-hover hover:text-jade disabled:opacity-50"
             >
-              {busy ? '◌' : 'resume'}
+              {busy ? '◌' : 'Resume'}
             </button>
           )}
         </div>
@@ -543,9 +547,7 @@ export function ResearchStrip({
       )}
       {groundingReview && <div className="mb-3">{groundingReview}</div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">
-          new research
-        </span>
+        <span className="sr-only">Research options</span>
         {FLAG_DEFS.map(([key, label]) => (
           <label
             key={key}
@@ -561,7 +563,7 @@ export function ResearchStrip({
           </label>
         ))}
         <label className="flex items-center gap-1.5 font-mono text-[11px] text-mist-dim">
-          <span className="text-mist-faint">collide</span>
+          <span className="text-mist-faint">Explore</span>
           <input
             type="range"
             min={0}
@@ -569,8 +571,8 @@ export function ResearchStrip({
             value={temp}
             disabled={orbitOn}
             onChange={(e) => setTemp(Number(e.target.value))}
-            aria-label="collide temperature"
-            title={orbitOn ? 'disabled while orbit is set (they are opposites)' : 'chaos dial — zero stays baseline'}
+            aria-label="Exploration level"
+            title={orbitOn ? 'Exploration is unavailable while a focus is set.' : 'Increase how far the research moves from familiar ground.'}
             className="range-glass w-24 disabled:opacity-40"
           />
           <span className="w-8 tabular-nums">{(shownTemp / 100).toFixed(2)}</span>
@@ -583,14 +585,14 @@ export function ResearchStrip({
               : 'focus this run around a center you name — a theme, tech, problem, or half-formed idea'
           }
         >
-          <span className="text-mist-faint">orbit</span>
+          <span className="text-mist-faint">Focus</span>
           <input
             type="text"
             value={orbit}
             disabled={collideOn}
             onChange={(e) => setOrbit(e.target.value)}
-            placeholder="focus around… (theme / tech / problem)"
-            aria-label="orbit center"
+            placeholder="Theme, technology, problem, or half-formed idea…"
+            aria-label="Research focus"
             maxLength={4000}
             className="glass min-w-0 flex-1 px-2 py-1 text-mist outline-none placeholder:text-mist-faint disabled:opacity-40"
           />
@@ -606,12 +608,12 @@ export function ResearchStrip({
               onChange={(e) => void toggleFallback(e.target.checked)}
               className="h-3 w-3 cursor-pointer accent-mist-dim"
             />
-            <span className={fallbackBm25 ? 'text-amber' : undefined}>fallback bm25</span>
+            <span className={fallbackBm25 ? 'text-amber' : undefined}>Use BM25 fallback</span>
           </label>
           {models && model !== null && (
             <select
               value={model}
-              title="model for research + side tools"
+              title="Research model"
               onChange={(e) => {
                 const id = e.target.value;
                 setModelId(id);
@@ -633,7 +635,7 @@ export function ResearchStrip({
             onClick={() => void start()}
             className="cursor-pointer rounded-md px-3 py-2 font-mono text-[12px] text-mist-dim press glass glass-hover hover:text-mist disabled:opacity-50 sm:px-2 sm:py-0.5 sm:text-[11px]"
           >
-            {busy ? '◌' : 'start research'}
+            {busy ? '◌' : 'Start research'}
           </button>
         </span>
       </div>

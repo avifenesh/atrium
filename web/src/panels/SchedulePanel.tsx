@@ -81,7 +81,7 @@ export default function SchedulePanel({
 
   return (
     <Panel
-      title="schedule"
+      title="Scheduled work"
       riseIndex={0}
       right={
         <span className="flex items-baseline gap-3">
@@ -113,7 +113,7 @@ export default function SchedulePanel({
       </div>
 
       {sorted.length === 0 ? (
-        <EmptyState>nothing scheduled</EmptyState>
+        <EmptyState>No timers or cron jobs were found.</EmptyState>
       ) : (
         <div>
           <div className={`${COLS} border-b py-1.5 font-mono text-[10px] uppercase tracking-widest text-mist-faint hairline`}>

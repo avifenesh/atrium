@@ -375,7 +375,7 @@ export function Feed({
 
   return (
     <Panel
-      title="ideas"
+      title="Ideas"
       riseIndex={2}
       className="mb-4"
       right={
@@ -418,14 +418,14 @@ export function Feed({
       {error ? (
         <div className="px-2.5 py-2 font-mono text-xs text-coral">{error}</div>
       ) : !selectedStem ? (
-        <EmptyState>no runs yet — start a research above</EmptyState>
+        <EmptyState>Start a research run to generate ideas.</EmptyState>
       ) : loading ? (
         <EmptyState>
-          <span className="animate-pulse">loading run…</span>
+          <span className="animate-pulse">Loading this run…</span>
         </EmptyState>
       ) : detail && detail.ideas.length === 0 ? (
         <div>
-          <EmptyState>run came back empty — add your own below</EmptyState>
+          <EmptyState>This run returned no ideas. You can add one below.</EmptyState>
           <AddIdeaRow key={detail.stem} stem={detail.stem} onAdded={adoptRun} />
         </div>
       ) : detail ? (
@@ -452,7 +452,7 @@ export function Feed({
           {/* order toggle — only runs with a structured sidecar can sort by score */}
           {(detail.structured?.ideas?.length ?? 0) > 0 && (
             <div className="flex items-center gap-1 px-2.5">
-              <span className="font-mono text-[11px] text-mist-faint">order</span>
+              <span className="font-mono text-[11px] text-mist-faint">Order</span>
               {(['written', 'score'] as const).map((o) => (
                 <button
                   key={o}

@@ -349,8 +349,7 @@ export default function TasksPanel({
 
   return (
     <div>
-      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3 px-1">
-        <h1 className="text-sm font-semibold lowercase tracking-wide text-mist">tasks</h1>
+      <header className="mb-4 flex flex-wrap items-baseline justify-end gap-3 px-1">
         <div className="flex min-w-0 items-baseline gap-4 font-mono text-xs text-mist-dim">
           {g.error && (
             <span className="max-w-96 truncate text-coral" title={g.error}>
@@ -368,7 +367,7 @@ export default function TasksPanel({
 
       <div className="grid grid-cols-12 gap-5">
         <Panel
-          title="waiting on you"
+          title="Waiting on you"
           riseIndex={0}
           className="col-span-12"
           quietCount={g.orgQueue.length - orgQueue.length}
@@ -385,7 +384,7 @@ export default function TasksPanel({
           }
         >
           {orgQueue.length === 0 ? (
-            <EmptyState>nobody waiting</EmptyState>
+            <EmptyState>No reviews or triage requests are waiting on you.</EmptyState>
           ) : (
             <div className="max-h-72 space-y-0.5 overflow-y-auto">
               {orgReview.length > 0 && (
@@ -413,7 +412,7 @@ export default function TasksPanel({
         </Panel>
 
         <Panel
-          title="act now"
+          title="Needs action"
           riseIndex={1}
           className="col-span-12"
           quietCount={g.actNow.length - actNow.length}
@@ -425,7 +424,7 @@ export default function TasksPanel({
           }
         >
           {actNow.length === 0 ? (
-            <EmptyState>nothing urgent</EmptyState>
+            <EmptyState>Nothing needs immediate action.</EmptyState>
           ) : (
             <div className="max-h-72 space-y-0.5 overflow-y-auto">
               {actNow.map((it) => (
@@ -436,7 +435,7 @@ export default function TasksPanel({
         </Panel>
 
         <Panel
-          title="my open prs"
+          title="Your open pull requests"
           riseIndex={2}
           className="col-span-12 lg:col-span-7"
           quietCount={g.myPRs.length - myPRs.length}
@@ -448,7 +447,7 @@ export default function TasksPanel({
           }
         >
           {myPRs.length === 0 ? (
-            <EmptyState>no open prs</EmptyState>
+            <EmptyState>You have no open pull requests.</EmptyState>
           ) : (
             <div className="max-h-80 space-y-0.5 overflow-y-auto">
               {myPRs.map((pr) => (
@@ -459,7 +458,7 @@ export default function TasksPanel({
         </Panel>
 
         <Panel
-          title="mentions"
+          title="Mentions"
           riseIndex={3}
           className="col-span-12 lg:col-span-5"
           quietCount={g.mentions.length - mentions.length}
@@ -471,7 +470,7 @@ export default function TasksPanel({
           }
         >
           {mentions.length === 0 ? (
-            <EmptyState>no mentions</EmptyState>
+            <EmptyState>No unread mentions.</EmptyState>
           ) : (
             <div className="max-h-80 space-y-0.5 overflow-y-auto">
               {mentions.map((it) => (
@@ -489,7 +488,7 @@ export default function TasksPanel({
               className="flex min-w-0 cursor-pointer items-baseline gap-2 text-left"
             >
               <span className="font-mono text-[11px] text-mist-faint">{teamOpen ? '▾' : '▸'}</span>
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">team queue</h2>
+              <h2 className="text-[13px] font-semibold text-mist">Team queue</h2>
               <span className="font-mono text-xs tabular-nums text-mist-dim">{teamQueue.length}</span>
             </button>
             {g.teamQueue.length - teamQueue.length > 0 && (
@@ -499,7 +498,7 @@ export default function TasksPanel({
           {teamOpen && (
             <div className="mt-3 max-h-80 space-y-0.5 overflow-y-auto">
               {teamQueue.length === 0 ? (
-                <EmptyState>queue empty</EmptyState>
+                <EmptyState>The team queue is clear.</EmptyState>
               ) : (
                 teamQueue.map((pr) => <PRRow key={pr.id} pr={pr} dispatches={dispatches} onOpenItem={onOpenItem} />)
               )}
@@ -508,7 +507,7 @@ export default function TasksPanel({
         </section>
 
         <Panel
-          title="notifications"
+          title="Notifications"
           riseIndex={5}
           className="col-span-12"
           quietCount={notifAll.length - visibleNotifications.length}
@@ -537,7 +536,7 @@ export default function TasksPanel({
           }
         >
           {visibleNotifications.length === 0 ? (
-            <EmptyState>no notifications</EmptyState>
+            <EmptyState>No unread notifications.</EmptyState>
           ) : (
             <div className="max-h-96 overflow-y-auto">
               {notifications.length > 0 && (
@@ -566,7 +565,7 @@ export default function TasksPanel({
         </Panel>
 
         <Panel
-          title="my repos"
+          title="Your repositories"
           riseIndex={6}
           className="col-span-12"
           quietCount={g.ownRepos.length - ownRepos.length}
@@ -578,7 +577,7 @@ export default function TasksPanel({
           }
         >
           {ownRepos.length === 0 ? (
-            <EmptyState>no repos</EmptyState>
+            <EmptyState>No repositories were returned.</EmptyState>
           ) : (
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {ownRepos.map((r) => (
@@ -601,7 +600,7 @@ export default function TasksPanel({
 
         {local && (
           <Panel
-            title="local"
+            title="Local changes"
             riseIndex={7}
             className="col-span-12"
             right={

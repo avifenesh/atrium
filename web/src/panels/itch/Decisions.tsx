@@ -101,7 +101,7 @@ export function DecisionsPanel({
 
   return (
     <Panel
-      title="decisions"
+      title="Decisions"
       riseIndex={4}
       right={
         ratedCount !== null ? (
@@ -118,7 +118,7 @@ export function DecisionsPanel({
             <span className="animate-pulse">loading…</span>
           </EmptyState>
         ) : groups.length === 0 ? (
-          <EmptyState>no decisions yet — rate some ideas</EmptyState>
+          <EmptyState>Rate ideas to build a decision list.</EmptyState>
         ) : (
           groups.map(({ rating, rows }) => {
             const shown = rows.slice(0, 6);

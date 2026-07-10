@@ -46,7 +46,7 @@ export function ScopesPanel({ riseIndex, version }: { riseIndex: number; version
 
   return (
     <Panel
-      title="scopes"
+      title="Project scopes"
       riseIndex={riseIndex}
       right={
         <button

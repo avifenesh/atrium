@@ -335,7 +335,7 @@ export default function ItemDetail({
                 void send();
               }
             }}
-            placeholder="comment (markdown)…"
+            placeholder="Write a comment in Markdown…"
             rows={3}
             disabled={!detail}
             className="w-full resize-y rounded-lg border hairline bg-white/[0.03] px-3 py-2 text-sm text-mist placeholder:text-mist-faint focus:outline-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-amber disabled:opacity-50"

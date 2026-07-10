@@ -41,14 +41,14 @@ function Stat({
   const digits = String(Math.abs(Math.round(value))).length;
   // zero de-emphasis keys off the real value, not the tween, so it never flickers mid-glide
   return (
-    <button onClick={onClick} className="group flex cursor-pointer flex-col items-start rounded-lg px-2 text-left">
+    <button onClick={onClick} className="group flex min-w-[6.5rem] cursor-pointer flex-col items-start px-2 py-1 text-left">
       <span
         style={{ minWidth: `${digits}ch` }}
-        className={`inline-block font-display text-5xl italic leading-none xl:text-6xl ${accent ? 'text-amber' : value === 0 ? 'text-mist-faint' : 'text-mist'}`}
+        className={`inline-block font-display text-5xl italic leading-none tracking-[-0.04em] xl:text-6xl ${accent ? 'text-amber' : value === 0 ? 'text-mist-faint' : 'text-mist'}`}
       >
         {display}
       </span>
-      <span className="mt-2 font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint transition-colors group-hover:text-mist-dim">
+      <span className="mt-2 text-xs font-medium text-mist-faint transition-colors group-hover:text-mist-dim">
         {label}
       </span>
     </button>
@@ -108,26 +108,26 @@ export default function NowView({
     <div className="grid grid-cols-12 gap-5">
       {/* hero strip — serif numerals, every stat navigates */}
       <section
-        className="glass rise col-span-12 flex flex-wrap items-end gap-x-10 gap-y-4 px-6 py-5 lg:gap-x-14"
+        className="stat-band rise col-span-12 flex flex-wrap items-end gap-x-8 gap-y-4 px-6 py-6 lg:gap-x-12"
         style={{ '--rise-i': 0 } as CSSProperties}
       >
         <Stat
           value={orgReview.length}
-          label="waiting"
+          label="Waiting on me"
           accent={orgReview.length > 0}
           onClick={() => onNavigate('tasks')}
         />
-        <Stat value={actNow.length} label="act now" accent={actNow.length > 0} onClick={() => onNavigate('tasks')} />
-        <Stat value={comms.email.unreadCount} label="unread" onClick={() => onNavigate('comms')} />
-        <Stat value={comms.calendar.today.length} label="today" onClick={() => onNavigate('comms')} />
-        <Stat value={working.length} label="agents" onClick={() => onNavigate('agents')} />
+        <Stat value={actNow.length} label="Needs action" accent={actNow.length > 0} onClick={() => onNavigate('tasks')} />
+        <Stat value={comms.email.unreadCount} label="Unread mail" onClick={() => onNavigate('comms')} />
+        <Stat value={comms.calendar.today.length} label="Events today" onClick={() => onNavigate('comms')} />
+        <Stat value={working.length} label="Agents working" onClick={() => onNavigate('agents')} />
       </section>
 
       {/* left column — act now + activity ticker (the ticker fills the space under a
           short act-now list and stays above the fold, mirroring the right column) */}
       <div className="col-span-12 flex flex-col gap-5 lg:col-span-7 xl:col-span-8">
         <Panel
-          title="act now"
+          title="Needs action"
           riseIndex={1}
           right={<RelTime iso={github.updatedAt} />}
           quietCount={actNowHidden}
@@ -142,8 +142,8 @@ export default function NowView({
             <EmptyState>
               <span className="flex items-center gap-2">
                 <Dot status="running" />
-                <span className="text-jade">clear</span>
-                <span>— nothing needs you</span>
+                <span className="text-jade">All clear.</span>
+                <span>Nothing needs your attention.</span>
               </span>
             </EmptyState>
           ) : (
@@ -182,11 +182,11 @@ export default function NowView({
         </Panel>
 
         {/* activity ticker */}
-        <Panel title="activity" riseIndex={6}>
+        <Panel title="Live activity" riseIndex={6}>
           {ticker.length === 0 ? (
-            <EmptyState>nothing happening</EmptyState>
+            <EmptyState>No recent agent activity.</EmptyState>
           ) : (
-            <div className="px-2.5 font-mono text-xs">
+            <div className="activity-rail px-2.5 font-mono text-xs">
               {ticker.map((a, i) => (
                 <div key={`${a.time}-${i}`} className="flex items-baseline gap-2 py-0.5">
                   {/* dot slot is always rendered so error lines don't shift the columns */}
@@ -210,7 +210,7 @@ export default function NowView({
       {/* right column */}
       <div className="col-span-12 flex flex-col gap-5 lg:col-span-5 xl:col-span-4">
         {orgQueue.length > 0 && (
-          <Panel title="waiting on you" riseIndex={2}>
+          <Panel title="Waiting on you" riseIndex={2}>
             <div className="max-h-64 space-y-0.5 overflow-y-auto">
               {orgReview.slice(0, 5).map((it) => (
                 <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
@@ -230,9 +230,9 @@ export default function NowView({
           </Panel>
         )}
 
-        <Panel title="today" riseIndex={3} right={<NextEventCountdown events={comms.calendar.today} />}>
+        <Panel title="Today" riseIndex={3} right={<NextEventCountdown events={comms.calendar.today} />}>
           {comms.calendar.today.length === 0 ? (
-            <EmptyState>no events today</EmptyState>
+            <EmptyState>Your calendar is clear today.</EmptyState>
           ) : (
             <div className="max-h-44 space-y-0.5 overflow-y-auto">
               {comms.calendar.today.map((ev) => (
@@ -247,9 +247,9 @@ export default function NowView({
           )}
         </Panel>
 
-        <Panel title="agents working" riseIndex={4}>
+        <Panel title="Agents working" riseIndex={4}>
           {working.length === 0 ? (
-            <EmptyState>all quiet</EmptyState>
+            <EmptyState>No agents are working right now.</EmptyState>
           ) : (
             <div className="space-y-0.5">
               {working.map((a) => (
@@ -263,7 +263,7 @@ export default function NowView({
           )}
         </Panel>
 
-        <Panel title="system" riseIndex={5}>
+        <Panel title="Machine load" riseIndex={5}>
           <Row onClick={() => onNavigate('system')} className="justify-between font-mono text-sm tabular-nums">
             <span>
               <span className="text-[11px] text-mist-faint">cpu </span>

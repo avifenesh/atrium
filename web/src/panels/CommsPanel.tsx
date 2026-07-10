@@ -34,8 +34,8 @@ function ConnectGoogleCard({ hint }: { hint: string | null }) {
       className="glass-raised rise mx-auto mt-6 max-w-xl p-8 text-center"
       style={{ '--rise-i': 0 } as CSSProperties}
     >
-      <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">google</div>
-      <div className="mt-2 text-sm font-semibold text-mist">mail and calendar are not connected</div>
+      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">Google</div>
+      <div className="mt-2 text-sm font-semibold text-mist">Mail and calendar are not connected.</div>
       {hint && <div className="mt-2 text-sm text-mist-dim">{hint}</div>}
       <button
         disabled={busy}
@@ -59,7 +59,7 @@ function ConnectGoogleCard({ hint }: { hint: string | null }) {
           {error}
         </div>
       )}
-      <div className="mt-3 text-xs text-mist-faint">opens google consent; lands back in atrium</div>
+      <div className="mt-3 text-xs text-mist-faint">Google will ask for access, then return you here.</div>
     </section>
   );
 }
@@ -126,7 +126,7 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
   }
 
   let rendered: ReactNode;
-  if (byDay.length === 0) rendered = <EmptyState>nothing in the next 7 days</EmptyState>;
+  if (byDay.length === 0) rendered = <EmptyState>Your next seven days are clear.</EmptyState>;
   else
     rendered = byDay.map((g, gi) => (
       <div key={gi}>
@@ -148,7 +148,7 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <Panel
-        title="mail"
+        title="Mail"
         riseIndex={0}
         right={
           <span className="flex items-baseline gap-3">
@@ -167,7 +167,7 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
           <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">unread</span>
         </div>
         {email.threads.length === 0 ? (
-          <EmptyState>inbox clear</EmptyState>
+          <EmptyState>Your inbox is clear.</EmptyState>
         ) : (
           <div className="max-h-[28rem] overflow-y-auto">
             {email.threads.map((t) => (
@@ -187,13 +187,13 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
         )}
       </Panel>
 
-      <Panel title="calendar" riseIndex={1} right={<RelTime iso={snapshot.comms.updatedAt} />}>
+      <Panel title="Calendar" riseIndex={1} right={<RelTime iso={snapshot.comms.updatedAt} />}>
         <StatusBanner box={calendar} />
         <SectionLabel>
           today{today.length > 0 && <span className="tabular-nums"> · {today.length}</span>}
         </SectionLabel>
         {today.length === 0 ? (
-          <EmptyState>no events today</EmptyState>
+          <EmptyState>Your calendar is clear today.</EmptyState>
         ) : (
           <ul>
             {today.map((ev) => (

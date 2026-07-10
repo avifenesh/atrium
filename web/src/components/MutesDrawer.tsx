@@ -202,11 +202,14 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="quiet / archive"
+        aria-label="Quiet archive"
         className="glass-raised slide-in-right fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col overflow-y-auto p-5 outline-none sm:w-96"
       >
         <header className="mb-4 flex items-baseline justify-between border-b pb-3 hairline">
-          <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">quiet / archive</h2>
+          <div>
+            <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-amber">Workspace</div>
+            <h2 className="mt-1 text-lg font-semibold text-mist">Quiet archive</h2>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -218,7 +221,7 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
         </header>
 
         {active.length === 0 ? (
-          <EmptyState>quiet things from any list — they land here</EmptyState>
+          <EmptyState>Items you quiet will stay here until you bring them back.</EmptyState>
         ) : (
           [...groups.entries()]
             .filter(([, list]) => list.length > 0)
@@ -237,7 +240,7 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
         )}
 
         <div className="mt-6">
-          <SectionLabel>quiet something</SectionLabel>
+          <SectionLabel>Quiet something else</SectionLabel>
           <form
             className="space-y-3"
             onSubmit={(e) => {

@@ -25,19 +25,21 @@ import { isSheetOpen } from './panels/itch/Sheet';
 // disabled in config (absent from snapshot.collectors). Views without one (now, comms,
 // subs) are always shown — they don't map to a single toggleable collector.
 const VIEWS = [
-  { id: 'now', label: 'now' },
-  { id: 'tasks', label: 'tasks', collector: 'github' },
-  { id: 'agents', label: 'agents', collector: 'agents' },
-  { id: 'revuto', label: 'revuto', collector: 'revuto' },
-  { id: 'system', label: 'system', collector: 'system' },
-  { id: 'comms', label: 'comms' },
-  { id: 'subs', label: 'subs' },
-  { id: 'schedule', label: 'schedule', collector: 'schedule' },
-  { id: 'notes', label: 'notes', collector: 'notes' },
-  { id: 'itch', label: 'itch', collector: 'itch' },
-  { id: 'streampile', label: 'streampile' },
-  { id: 'knowledge', label: 'knowledge' },
+  { id: 'now', label: 'Now', group: 'Today', description: 'Attention, activity, and the next useful move.' },
+  { id: 'tasks', label: 'Tasks', group: 'Work', description: 'Reviews, pull requests, mentions, and local changes.', collector: 'github' },
+  { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
+  { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
+  { id: 'system', label: 'System', group: 'Machine', description: 'Capacity, listeners, processes, and service health.', collector: 'system' },
+  { id: 'comms', label: 'Comms', group: 'Today', description: 'Unread mail and the calendar ahead.' },
+  { id: 'subs', label: 'Subscriptions', group: 'Machine', description: 'Services, cloud resources, and recurring costs.' },
+  { id: 'schedule', label: 'Schedule', group: 'Machine', description: 'Timers, cron jobs, and their latest runs.', collector: 'schedule' },
+  { id: 'notes', label: 'Notes', group: 'Library', description: 'Find, read, and edit the notes on this machine.', collector: 'notes' },
+  { id: 'itch', label: 'Itch', group: 'Explore', description: 'Research new ideas, compare them, and decide what is worth building.', collector: 'itch' },
+  { id: 'streampile', label: 'Streampile', group: 'Explore', description: 'A taste-ranked reading queue with room for surprise.' },
+  { id: 'knowledge', label: 'Knowledge', group: 'Library', description: 'Projects, techniques, sources, and the links between them.' },
 ] as const;
+
+const NAV_GROUPS = ['Today', 'Work', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
 
 // extra (plugin) sections register as dynamic views; ids are not known at compile time
 type ViewId = string;
@@ -92,10 +94,10 @@ function QuietButton({
   return (
     <button
       onClick={onClick}
-      title="open the quiet drawer (archive)"
-      className={`glass cursor-pointer rounded-lg text-left text-sm text-mist-dim transition-colors hover:text-mist ${className}`}
+      title="Open the quiet archive"
+      className={`quiet-button cursor-pointer text-left text-sm text-mist-dim transition-colors hover:text-mist ${className}`}
     >
-      quiet
+      Quiet archive
       {count > 0 && <span className="ml-2 font-mono text-xs tabular-nums text-mist-faint">{count}</span>}
     </button>
   );
@@ -276,7 +278,12 @@ export default function App() {
   const activeMutes = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
   // coreViews (visible, collector-filtered) is memoized above; plugin (extra) sections
   // become extra nav entries after the core views
-  const extraViews = extraKeys(snapshot).map((k) => ({ id: k, label: snapshot.extra[k]?.title ?? k }));
+  const extraViews = extraKeys(snapshot).map((k) => ({
+    id: k,
+    label: snapshot.extra[k]?.title ?? k,
+    group: 'Plugins' as const,
+    description: 'A collector-provided workspace.',
+  }));
   const allViews = [...coreViews, ...extraViews];
   const isKnownView = (v: string) => allViews.some((x) => x.id === v);
   // resolve an unknown/stale hash (e.g. a plugin disabled since the link was made) to 'now'
@@ -296,6 +303,11 @@ export default function App() {
   const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
   const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
   const primaryActive = MOBILE_PRIMARY.has(activeView);
+  const activeViewMeta = allViews.find((candidate) => candidate.id === activeView) ?? allViews[0];
+  const groupedViews = NAV_GROUPS.map((group) => ({
+    group,
+    views: allViews.filter((candidate) => candidate.group === group),
+  })).filter((section) => section.views.length > 0);
 
   const badgeFor = (id: ViewId): { n: number; cls: string } | null => {
     const map: Partial<Record<ViewId, { n: number; cls: string }>> = {
@@ -313,37 +325,47 @@ export default function App() {
   };
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-[1920px] px-3 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-5 sm:py-4 lg:px-8 lg:pb-5 lg:pt-5">
+    <div className="app-shell mx-auto min-h-dvh w-full max-w-[1920px] px-3 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-5 sm:py-4 lg:px-7 lg:pb-6 lg:pt-6">
       {/* mobile top — wordmark + quiet; views live in bottom nav */}
       <header className="mb-3 flex items-center justify-between gap-3 lg:hidden">
         <Wordmark connected={connected} className="shrink-0 text-2xl" />
         <QuietButton count={activeMutes.length} onClick={openQuiet} className="shrink-0 px-3 py-2" />
       </header>
 
-      <div className="flex gap-6 lg:gap-7">
+      <div className="flex gap-6 lg:gap-10">
         {/* left rail — lg+ */}
-        <nav className="sticky top-5 hidden h-[calc(100vh-2.5rem)] w-36 shrink-0 flex-col self-start lg:flex">
-          <div className="mb-8 px-3">
-            <Wordmark connected={connected} className="text-[1.7rem]" />
+        <nav className="side-rail sticky top-6 hidden h-[calc(100vh-3rem)] w-44 shrink-0 flex-col self-start lg:flex">
+          <div className="mb-8 px-2">
+            <Wordmark connected={connected} className="text-[1.85rem]" />
+            <div className="mt-2 font-mono text-[9px] uppercase tracking-[0.22em] text-mist-faint">local workspace</div>
           </div>
-          <ul className="space-y-0.5">
-            {allViews.map((v) => {
-              const b = badgeFor(v.id);
-              return (
-                <li key={v.id}>
-                  <button
-                    onClick={() => navigate(v.id)}
-                    className={`flex w-full cursor-pointer items-baseline justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
-                      activeView === v.id ? 'glass-raised text-mist' : 'text-mist-dim hover:text-mist'
-                    }`}
-                  >
-                    {v.label}
-                    {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            {groupedViews.map((section) => (
+              <div key={section.group} className="mb-5">
+                <div className="mb-1.5 px-3 font-mono text-[9px] uppercase tracking-[0.18em] text-mist-faint">
+                  {section.group}
+                </div>
+                <ul className="space-y-px">
+                  {section.views.map((v) => {
+                    const b = badgeFor(v.id);
+                    return (
+                      <li key={v.id}>
+                        <button
+                          onClick={() => navigate(v.id)}
+                          className={`rail-nav-button flex w-full cursor-pointer items-baseline justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                            activeView === v.id ? 'is-active text-mist' : 'text-mist-dim hover:text-mist'
+                          }`}
+                        >
+                          {v.label}
+                          {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
           <div className="mt-auto">
             <RailClock />
             <QuietButton count={activeMutes.length} onClick={openQuiet} className="w-full px-3 py-2" />
@@ -352,6 +374,24 @@ export default function App() {
 
         {/* main */}
         <main className="min-w-0 flex-1">
+          <header className="workspace-header mb-5 flex min-w-0 flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-4">
+            <div className="min-w-0">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-amber">{activeViewMeta.group}</div>
+              <h1 className="text-[clamp(1.55rem,2.2vw,2.15rem)] font-semibold leading-none tracking-[-0.035em] text-mist">
+                {activeViewMeta.label}
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-mist-dim">{activeViewMeta.description}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="command-trigger hidden cursor-pointer items-center gap-3 px-3 py-2 text-xs text-mist-dim transition-colors hover:text-mist sm:flex"
+              title="Open command palette"
+            >
+              <span>Find or switch</span>
+              <span className="kbd">⌘K</span>
+            </button>
+          </header>
           <FlagStrip snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} />
           {activeView === 'now' && (
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
@@ -405,7 +445,7 @@ export default function App() {
                   on ? 'text-mist' : 'text-mist-faint'
                 }`}
               >
-                <span className="font-mono text-[13px] leading-none">{v.label}</span>
+                <span className="font-mono text-[12px] leading-none">{v.label}</span>
                 {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
               </button>
             );
@@ -420,7 +460,7 @@ export default function App() {
               moreOpen || !primaryActive ? 'text-mist' : 'text-mist-faint'
             }`}
           >
-            <span className="font-mono text-[13px] leading-none">more</span>
+            <span className="font-mono text-[12px] leading-none">More</span>
             {!primaryActive && (
               <span className="max-w-full truncate font-mono text-[10px] text-mist-dim">{activeView}</span>
             )}
@@ -445,13 +485,13 @@ export default function App() {
             className="glass-raised fixed inset-x-0 bottom-0 z-50 max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] outline-none lg:hidden"
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">more</h2>
+              <h2 className="text-base font-semibold text-mist">More workspaces</h2>
               <button
                 type="button"
                 onClick={() => setMoreOpen(false)}
                 className="min-h-11 cursor-pointer rounded px-3 py-2 font-mono text-[11px] text-mist-faint"
               >
-                close
+                Close
               </button>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -477,7 +517,7 @@ export default function App() {
                 onClick={openQuiet}
                 className="glass col-span-2 flex min-h-12 items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-mist-dim"
               >
-                <span>quiet / archive</span>
+                <span>Quiet archive</span>
                 {activeMutes.length > 0 && (
                   <span className="font-mono text-xs tabular-nums text-mist-faint">{activeMutes.length}</span>
                 )}

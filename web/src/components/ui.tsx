@@ -29,13 +29,13 @@ export function Panel({
   const showChip = quietCount !== undefined && quietCount > 0;
   return (
     <section
-      className={`glass min-w-0 ${rise ? 'rise ' : ''}p-4 xl:p-5 ${className}`}
+      className={`panel-surface min-w-0 ${rise ? 'rise ' : ''}p-4 xl:p-5 ${className}`}
       style={rise ? ({ '--rise-i': riseIndex } as CSSProperties) : undefined}
     >
       {(title || right || showChip) && (
         <header className="mb-3 flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
           {title && (
-            <h2 className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">{title}</h2>
+            <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold tracking-[-0.01em] text-mist">{title}</h2>
           )}
           {(right || showChip) && (
             <div className="panel-actions ml-auto flex min-w-0 max-w-full flex-wrap items-baseline justify-end gap-x-3 gap-y-2 text-xs text-mist-dim">
@@ -56,17 +56,17 @@ export function QuietChip({ count, onClick }: { count: number; onClick?: () => v
     <button
       type="button"
       onClick={onClick}
-      title="quieted items — open the quiet drawer to unquiet"
-      className="shrink-0 cursor-pointer whitespace-nowrap rounded-full border hairline bg-white/[0.03] px-2 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber"
+      title="Open the quiet archive"
+      className="quiet-chip shrink-0 cursor-pointer whitespace-nowrap px-2 py-1 font-mono text-[10px] text-mist-faint transition-colors hover:text-amber"
     >
-      {count} quieted
+      {count} quiet
     </button>
   );
 }
 
 export function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="mb-2 mt-4 font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint first:mt-0">
+    <div className="mb-2 mt-5 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint first:mt-0">
       {children}
     </div>
   );
@@ -108,7 +108,7 @@ export function Row({
   className?: string;
   title?: string;
 }) {
-  const base = `group row-glide flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.04] ${className}`;
+  const base = `surface-row group row-glide flex w-full min-w-0 items-center gap-2 px-2.5 py-2.5 text-left transition-colors ${className}`;
   if (!href && !onClick) {
     return (
       <div className={base} title={title}>
@@ -328,5 +328,5 @@ export function Mutable({
 }
 
 export function EmptyState({ children }: { children: ReactNode }) {
-  return <div className="px-2.5 py-3 text-sm text-mist-faint">{children}</div>;
+  return <div className="empty-state px-2.5 py-5 text-sm text-mist-faint">{children}</div>;
 }

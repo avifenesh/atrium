@@ -133,7 +133,7 @@ function SchedulerCard({
 
   return (
     <Panel
-      title="scheduler"
+      title="Scheduler"
       riseIndex={riseIndex}
       right={
         <span className="flex items-center gap-2">
@@ -444,16 +444,16 @@ export default function RevutoPanel({
       <div className="grid items-start gap-4 xl:grid-cols-2">
         <SchedulerCard scheduler={r.scheduler} dependencies={r.dependencies} riseIndex={1} />
 
-        <Panel title="models" riseIndex={2}>
+        <Panel title="Models" riseIndex={2}>
           {r.models.length === 0 ? (
-            <EmptyState>no models</EmptyState>
+            <EmptyState>No models are configured.</EmptyState>
           ) : (
             r.models.map((m) => <ModelRow key={m.role} m={m} />)
           )}
         </Panel>
 
         <Panel
-          title="reviewers"
+          title="Reviewers"
           riseIndex={3}
           className="xl:col-span-2"
           quietCount={quietReviewers || undefined}
@@ -471,7 +471,7 @@ export default function RevutoPanel({
         </Panel>
 
         <Panel
-          title="jobs"
+          title="Recent jobs"
           riseIndex={4}
           right={
             r.jobs.length > 0 ? (
@@ -491,7 +491,7 @@ export default function RevutoPanel({
         </Panel>
 
         <Panel
-          title="logs"
+          title="Logs"
           riseIndex={5}
           right={
             r.logs.length > 0 ? (
@@ -511,7 +511,7 @@ export default function RevutoPanel({
         </Panel>
 
         {(schedules || limits || store) && (
-          <Panel title="config" riseIndex={6} className="xl:col-span-2">
+          <Panel title="Configuration" riseIndex={6} className="xl:col-span-2">
             <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2 px-2.5 font-mono text-xs tabular-nums text-mist-faint">
               {schedules && (
                 <span className="flex flex-wrap items-baseline gap-x-2">

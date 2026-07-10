@@ -333,11 +333,11 @@ export default function CommandPalette({
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="jump to…"
+          placeholder="Find a workspace, task, note, or run…"
           className="w-full bg-transparent px-4 py-3 font-sans text-sm text-mist placeholder:text-mist-faint focus:outline-none"
         />
         {results.length === 0 ? (
-          <div className="border-t px-4 py-3 text-sm text-mist-faint hairline">nothing matches</div>
+          <div className="border-t px-4 py-3 text-sm text-mist-faint hairline">No matching workspaces or items.</div>
         ) : (
           <ul ref={listRef} className="max-h-[50vh] overflow-y-auto border-t p-1.5 hairline">
             {results.map((c, i) => (

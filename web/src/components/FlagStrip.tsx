@@ -53,7 +53,12 @@ export default function FlagStrip({
   if (flags.length === 0 && hidden === 0) return null;
 
   return (
-    <div className="glass rise mb-5 px-2 py-1.5">
+    <section className="signal-strip rise mb-5 px-3 py-2" aria-label="Active signals">
+      <div className="mb-1 flex items-center gap-2 px-1 font-mono text-[9px] uppercase tracking-[0.18em] text-mist-faint">
+        <span className="signal-pulse h-1.5 w-1.5 rounded-full bg-amber" />
+        Active signals
+        <span className="tabular-nums text-mist-dim">{flags.length}</span>
+      </div>
       <div className="max-h-[8.25rem] space-y-0.5 overflow-y-auto">
         {flags.map((f) => {
           const view = viewFor(f);
@@ -76,7 +81,7 @@ export default function FlagStrip({
                     }
                   : undefined
               }
-              className={`group flex items-center gap-3 rounded-r-lg border-l-2 py-1 pl-3 pr-1 transition-colors hover:bg-white/[0.04] ${view ? 'cursor-pointer' : ''} ${SEV_BORDER[f.severity]}`}
+              className={`group flex items-center gap-3 rounded-r-md border-l py-1.5 pl-3 pr-1 transition-colors hover:bg-white/[0.035] ${view ? 'cursor-pointer' : ''} ${SEV_BORDER[f.severity]}`}
             >
               <span className="min-w-0 truncate font-mono text-xs text-mist" title={f.title}>
                 {f.title}
@@ -96,7 +101,7 @@ export default function FlagStrip({
                     }}
                     className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-slate-glow transition-colors hover:text-mist"
                   >
-                    view
+                    Open
                   </button>
                 )}
                 <MuteButton kind="flag" target={f.id} />
@@ -110,6 +115,6 @@ export default function FlagStrip({
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }

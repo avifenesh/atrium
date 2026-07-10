@@ -22,8 +22,8 @@ function StatTile({
   children: ReactNode;
 }) {
   return (
-    <div className="glass rise min-w-0 p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
-      <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-mist-faint">{label}</div>
+    <div className="panel-surface rise min-w-0 p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
+      <div className="text-xs font-medium text-mist-dim">{label}</div>
       {children}
     </div>
   );
@@ -134,9 +134,9 @@ export default function SystemPanel({
       </div>
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-2">
-        <Panel title="disks" riseIndex={4}>
+        <Panel title="Storage" riseIndex={4}>
           {sys.disks.length === 0 ? (
-            <EmptyState>no disks</EmptyState>
+            <EmptyState>No disks were reported.</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
               {sys.disks.map((d) => (
@@ -160,13 +160,13 @@ export default function SystemPanel({
         </Panel>
 
         <Panel
-          title="ports"
+          title="Listening ports"
           riseIndex={5}
           quietCount={quietPorts || undefined}
           onQuietClick={openQuiet}
         >
           {visiblePorts.length === 0 ? (
-            <EmptyState>no listeners</EmptyState>
+            <EmptyState>No listening ports were reported.</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
               {visiblePorts.map((p) => (
@@ -197,9 +197,9 @@ export default function SystemPanel({
           )}
         </Panel>
 
-        <Panel title="processes" riseIndex={6}>
+        <Panel title="Notable processes" riseIndex={6}>
           {sys.processes.length === 0 ? (
-            <EmptyState>nothing notable</EmptyState>
+            <EmptyState>No notable processes.</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
               <div className="flex items-baseline gap-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-mist-faint">
@@ -240,13 +240,13 @@ export default function SystemPanel({
         </Panel>
 
         <Panel
-          title="services"
+          title="Watched services"
           riseIndex={7}
           quietCount={quietServices || undefined}
           onQuietClick={openQuiet}
         >
           {visibleServices.length === 0 ? (
-            <EmptyState>no services watched</EmptyState>
+            <EmptyState>No services are being watched.</EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
               {visibleServices.map((s) => (

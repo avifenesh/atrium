@@ -12,17 +12,17 @@
   --font-sans: 'Hanken Grotesk', sans-serif;
   --font-mono: 'Spline Sans Mono', monospace;
 
-  /* glass observatory palette */
-  --color-ink: #0a0e14; /* page base */
-  --color-ink-2: #0e141d;
-  --color-mist: #e8edf4; /* primary text */
-  --color-mist-dim: #8b96a5; /* secondary text */
-  --color-mist-faint: #525d6d; /* tertiary */
-  --color-amber: #f0b35e; /* THE accent — act-now, attention */
-  --color-amber-dim: #b9854240;
-  --color-jade: #6fd0a8; /* ok / running */
-  --color-coral: #e8796f; /* error / crit */
-  --color-slate-glow: #7ba3c9; /* info / links */
+  /* nocturne instrument palette */
+  --color-ink: #07090d; /* page base */
+  --color-ink-2: #0d1118;
+  --color-mist: #f3f0e8; /* warm primary text */
+  --color-mist-dim: #aaa69d; /* secondary text */
+  --color-mist-faint: #6a6863; /* tertiary */
+  --color-amber: #e8c76a; /* THE accent — act-now, attention */
+  --color-amber-dim: #e8c76a22;
+  --color-jade: #73c7a3; /* ok / running */
+  --color-coral: #f47b72; /* error / crit */
+  --color-slate-glow: #91aac8; /* info / links */
 }
 
 :root {
@@ -39,11 +39,11 @@ body {
   color: var(--color-mist);
   font-family: var(--font-sans);
   min-height: 100vh;
+  letter-spacing: -0.005em;
 }
 
-/* aurora atmosphere — faint radial washes on a fixed layer behind content,
-   drifting imperceptibly like light moving through a room. the drift starts
-   from a hair of scale so the layer's edges never enter the viewport. */
+/* A single horizon glow and a barely-there instrument grid. The page feels
+   spatial without putting decorative gradients behind routine UI. */
 body::before {
   content: '';
   position: fixed;
@@ -51,15 +51,17 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background-image:
-    radial-gradient(60rem 40rem at 12% -10%, rgba(50, 90, 110, 0.22), transparent 60%),
-    radial-gradient(50rem 36rem at 95% 8%, rgba(70, 60, 110, 0.16), transparent 55%),
-    radial-gradient(40rem 50rem at 50% 110%, rgba(35, 70, 60, 0.14), transparent 60%);
-  animation: aurora-drift 90s ease-in-out alternate infinite;
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.014) 1px, transparent 1px),
+    radial-gradient(70rem 28rem at 44% -8%, rgba(58, 82, 102, 0.18), transparent 68%);
+  background-size: 5rem 5rem, 5rem 5rem, auto;
+  mask-image: linear-gradient(to bottom, black, transparent 72%);
+  animation: horizon-drift 70s ease-in-out alternate infinite;
 }
 
-@keyframes aurora-drift {
-  from { transform: translate3d(-0.4%, -0.3%, 0) scale(1.02); }
-  to { transform: translate3d(0.5%, 0.4%, 0) scale(1.05); }
+@keyframes horizon-drift {
+  from { transform: translate3d(-0.25%, 0, 0); }
+  to { transform: translate3d(0.35%, 0.2%, 0); }
 }
 
 /* film grain overlay — keeps the glass from feeling sterile */
@@ -68,41 +70,179 @@ body::after {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  opacity: 0.035;
+  opacity: 0.022;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   z-index: 50;
 }
 
-/* ---- glass primitives (use these, do not reinvent) ---- */
+/* ---- surface primitives ---- */
 
 .glass {
-  background: rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(18px) saturate(1.15);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 1rem;
+  background: rgba(17, 22, 30, 0.72);
+  backdrop-filter: blur(14px) saturate(1.08);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 0.875rem;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.05) inset,
-    0 12px 40px -18px rgba(0, 0, 0, 0.7);
+    0 1px 0 rgba(255, 255, 255, 0.035) inset,
+    0 18px 50px -34px rgba(0, 0, 0, 0.95);
 }
 
 .glass-raised {
-  background: rgba(255, 255, 255, 0.055);
-  backdrop-filter: blur(22px) saturate(1.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 1rem;
+  background: rgba(21, 27, 36, 0.94);
+  backdrop-filter: blur(18px) saturate(1.1);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 0.875rem;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
-    0 18px 50px -20px rgba(0, 0, 0, 0.8);
+    0 1px 0 rgba(255, 255, 255, 0.055) inset,
+    0 24px 70px -38px rgba(0, 0, 0, 1);
 }
 
 .hairline {
-  border-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.085);
 }
 
-/* keyboard focus — amber hairline, consistent across every interactive element (DESIGN v2) */
+.app-shell {
+  position: relative;
+}
+
+.side-rail {
+  border-right: 1px solid rgba(255, 255, 255, 0.055);
+  padding-right: 1.25rem;
+}
+
+.rail-nav-button {
+  position: relative;
+  border-radius: 0.45rem;
+}
+.rail-nav-button::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 0;
+  border-radius: 999px;
+  background: var(--color-amber);
+  transform: translateY(-50%);
+  transition: height 160ms ease;
+}
+.rail-nav-button:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.rail-nav-button.is-active {
+  background: rgba(255, 255, 255, 0.055);
+}
+.rail-nav-button.is-active::before {
+  height: 1.2rem;
+}
+
+.workspace-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.command-trigger,
+.quiet-button,
+.quiet-chip {
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.025);
+}
+.command-trigger:hover,
+.quiet-button:hover,
+.quiet-chip:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.panel-surface {
+  position: relative;
+  background: rgba(14, 18, 25, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-top-color: rgba(255, 255, 255, 0.12);
+  border-radius: 0.85rem;
+  box-shadow: 0 26px 60px -48px rgba(0, 0, 0, 1);
+}
+.panel-surface::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 1rem;
+  width: 2.75rem;
+  height: 1px;
+  background: linear-gradient(90deg, var(--color-amber), transparent);
+  opacity: 0.55;
+}
+
+.surface-row {
+  position: relative;
+  border-radius: 0.45rem;
+}
+.surface-row::after {
+  content: '';
+  position: absolute;
+  right: 0.625rem;
+  bottom: 0;
+  left: 0.625rem;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.045);
+}
+.surface-row:last-child::after {
+  display: none;
+}
+.surface-row:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.empty-state {
+  border-block: 1px dashed rgba(255, 255, 255, 0.07);
+}
+
+.signal-strip {
+  background: rgba(232, 199, 106, 0.035);
+  border-block: 1px solid rgba(232, 199, 106, 0.13);
+}
+.signal-pulse {
+  box-shadow: 0 0 12px rgba(232, 199, 106, 0.65);
+  animation: signal-pulse 2.4s ease-in-out infinite;
+}
+@keyframes signal-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+.stat-band {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, rgba(255,255,255,.035), rgba(255,255,255,.012));
+  border-block: 1px solid rgba(255, 255, 255, 0.08);
+}
+.stat-band::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: var(--color-amber);
+  box-shadow: 0 0 24px rgba(232, 199, 106, 0.5);
+}
+
+.activity-rail {
+  position: relative;
+}
+.activity-rail::before {
+  content: '';
+  position: absolute;
+  top: 0.4rem;
+  bottom: 0.4rem;
+  left: 0.34rem;
+  width: 1px;
+  background: linear-gradient(var(--color-amber), rgba(255,255,255,.07) 35%, transparent);
+  opacity: 0.42;
+}
+
+/* keyboard focus — visible without adding a thick synthetic ring */
 :focus-visible {
-  outline: 1px solid var(--color-amber);
-  outline-offset: 1px;
+  outline: 2px solid color-mix(in srgb, var(--color-amber) 80%, white);
+  outline-offset: 2px;
 }
 
 /* native <select> popups — Chrome paints the dropdown list with UA-light defaults
@@ -219,7 +359,7 @@ select option {
   transition: transform 160ms ease;
 }
 .row-glide:hover {
-  transform: translateX(2px);
+  transform: translateX(1px);
 }
 
 /* quiet arrival — things that appear mid-session fade in, never pop */
@@ -283,7 +423,8 @@ select option {
   .backdrop-fade,
   .fade-in,
   .unfold,
-  .jump-glow::after {
+  .jump-glow::after,
+  .signal-pulse {
     animation: none;
   }
   .row-glide {

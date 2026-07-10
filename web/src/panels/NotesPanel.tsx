@@ -169,7 +169,7 @@ export default function NotesPanel({
 
   const list = (
     <Panel
-      title="notes"
+      title="Recent notes"
       riseIndex={0}
       right={
         <span className="flex min-w-0 items-baseline gap-3">
@@ -192,7 +192,7 @@ export default function NotesPanel({
         <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">{error}</div>
       )}
       {recent.length === 0 ? (
-        <EmptyState>no recent notes</EmptyState>
+        <EmptyState>No recent notes were found.</EmptyState>
       ) : (
         <div className="max-h-[34rem] overflow-y-auto">
           {recent.map((n) => {
