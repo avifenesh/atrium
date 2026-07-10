@@ -325,7 +325,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell mx-auto min-h-dvh w-full max-w-[1920px] px-3 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-5 sm:py-4 lg:px-7 lg:pb-6 lg:pt-6">
+    <div className="app-shell mx-auto min-h-dvh w-full max-w-[1920px] px-3 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-5 sm:pt-4 lg:px-7 lg:pb-6 lg:pt-6">
       {/* mobile top — wordmark + quiet; views live in bottom nav */}
       <header className="mb-3 flex items-center justify-between gap-3 lg:hidden">
         <Wordmark connected={connected} className="shrink-0 text-2xl" />
