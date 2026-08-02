@@ -126,38 +126,60 @@ function ResetsIn({ iso }: { iso: string | null }) {
   );
 }
 
+/** Recover the typed calendar date as a local midnight. The server round-trips a
+ *  date-only value through UTC, so the ISO's date part IS the calendar date as
+ *  typed; rebuilding it locally makes the countdown whole calendar days — no
+ *  hour-of-day flicker and no off-by-one against how a human counts "in 18 days". */
+function calDate(iso: string): Date | null {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((a.getTime() - b.getTime()) / 86_400_000);
+}
+
+function todayLocal(): Date {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
 function StartsIn({ iso }: { iso: string }) {
-  const s = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
-  const rel =
-    s <= 0 ? 'now' : s < 86400 ? `${Math.max(1, Math.floor(s / 3600))}h` : `${Math.floor(s / 86400)}d`;
+  const t = calDate(iso);
+  if (!t) return null;
+  const days = daysBetween(t, todayLocal());
+  const rel = days <= 0 ? 'today' : `in ${days}d`;
   return (
-    <span className="font-mono text-[10px] tabular-nums text-mist-faint" title={`starts ${new Date(iso).toLocaleString()}`}>
-      {s <= 0 ? rel : `in ${rel}`}
+    <span className="font-mono text-[10px] tabular-nums text-mist-faint" title={`starts ${t.toLocaleDateString()}`}>
+      {rel}
     </span>
   );
 }
 
 function CancelStatus({ iso }: { iso: string }) {
-  const s = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
-  if (s <= 0) {
+  const t = calDate(iso);
+  if (!t) return null;
+  const days = daysBetween(t, todayLocal());
+  if (days < 0) {
     return (
       <span
         className="font-mono text-[10px] tabular-nums text-amber"
-        title={`cancel date ${new Date(iso).toLocaleString()} passed`}
+        title={`cancel date ${t.toLocaleDateString()} passed`}
       >
         cancel date passed — still billing?
       </span>
     );
   }
-  const rel = s < 86400 ? `${Math.max(1, Math.floor(s / 3600))}h` : `${Math.floor(s / 86400)}d`;
+  const rel = days === 0 ? 'today' : `in ${days}d`;
   return (
     <>
       cancels{' '}
       <span
         className="font-mono text-[10px] tabular-nums text-mist-faint"
-        title={`cancels ${new Date(iso).toLocaleString()}`}
+        title={`cancels ${t.toLocaleDateString()}`}
       >
-        in {rel}
+        {rel}
       </span>
     </>
   );
