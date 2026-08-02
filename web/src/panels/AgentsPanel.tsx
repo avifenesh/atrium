@@ -267,7 +267,7 @@ function AgentCard({
         </>
       )}
 
-      {agent.controls.length > 0 && (
+      {expanded && agent.controls.length > 0 && (
         <div className="mt-auto pt-3">
           <div className="flex flex-wrap gap-2">
             {agent.controls.map((c) => {
