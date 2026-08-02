@@ -604,7 +604,8 @@ export type MuteKind =
   | 'agent-resource' // target: "<agentId>:<resourceId>" e.g. "revuto:owner/repo", "hermes:<jobId>"
   | 'schedule' // target: ScheduleEntry.id
   | 'service' // target: systemd unit
-  | 'flag'; // target: Flag.id
+  | 'flag' // target: Flag.id
+  | 'flag-source'; // target: a flag source name (e.g. "system") — mutes every flag from that source
 
 export interface Mute {
   id: string;

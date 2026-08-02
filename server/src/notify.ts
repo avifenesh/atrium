@@ -78,7 +78,11 @@ export function flush(): Promise<void> {
 
 function isMuted(flagId: string, mutes: Mute[], now: number): boolean {
   return mutes.some(
-    (m) => m.kind === 'flag' && m.target === flagId && (m.until === null || new Date(m.until).getTime() > now),
+    (m) =>
+      (m.until === null || new Date(m.until).getTime() > now) &&
+      ((m.kind === 'flag' && m.target === flagId) ||
+        // a source-level quiet (e.g. target "system") mutes every flag whose id is "system:…"
+        (m.kind === 'flag-source' && flagId.startsWith(`${m.target}:`))),
   );
 }
 

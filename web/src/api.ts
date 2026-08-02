@@ -247,6 +247,8 @@ export function isMuted(snapshot: Snapshot, kind: string, target: string): boole
   return snapshot.mutes.some((m) => {
     if (m.until && new Date(m.until).getTime() < now) return false;
     if (m.kind === kind && m.target === target) return true;
+    // a source-level quiet (target e.g. "system") mutes every flag whose id is "system:…"
+    if (kind === 'flag' && m.kind === 'flag-source' && target.startsWith(`${m.target}:`)) return true;
     if (repo !== null) {
       if (m.kind === 'github-repo' && m.target === repo) return true;
       if (m.kind === 'github-org' && repo.startsWith(`${m.target}/`)) return true;

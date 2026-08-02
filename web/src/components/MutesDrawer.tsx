@@ -14,6 +14,7 @@ const KINDS: { kind: MuteKind; placeholder: string }[] = [
   { kind: 'schedule', placeholder: 'hermes:job-id' },
   { kind: 'service', placeholder: 'unit.service' },
   { kind: 'flag', placeholder: 'flag id' },
+  { kind: 'flag-source', placeholder: 'system' },
 ];
 
 const DURATIONS = ['1h', '4h', 'today', '24h', '7d', 'forever'] as const;

@@ -21,6 +21,7 @@ const MUTE_KINDS: ReadonlySet<string> = new Set<MuteKind>([
   'schedule',
   'service',
   'flag',
+  'flag-source',
 ]);
 
 let current: Mute[] = [];

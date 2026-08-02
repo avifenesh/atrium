@@ -125,6 +125,7 @@ export default function FlagStrip({
                   </button>
                 )}
                 <MuteButton kind="flag" target={f.id} />
+                <MuteButton kind="flag-source" target={f.source} label="source" className="opacity-60" />
               </span>
             </div>
           );
