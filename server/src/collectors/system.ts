@@ -140,6 +140,18 @@ function isLoopback(addr: string): boolean {
   return a === '::1' || a.startsWith('127.') || a === 'localhost';
 }
 
+/** A listener whose process name matches a knownPortProcs entry is expected
+ *  regardless of which (often ephemeral) port it grabbed — return the configured
+ *  label so it shows up calm in the system view, or null to treat it as unknown. */
+function knownProcLabel(proc: string): string | null {
+  if (!proc) return null;
+  const p = proc.toLowerCase();
+  for (const [pat, label] of Object.entries(config.knownPortProcs ?? {})) {
+    if (pat && p.includes(pat.toLowerCase())) return label;
+  }
+  return null;
+}
+
 async function collectPorts(): Promise<SystemState['ports']> {
   const out = await shTry('ss', ['-tlnpH'], { timeoutMs: 5_000 });
   if (!out) return [];
@@ -162,10 +174,11 @@ async function collectPorts(): Promise<SystemState['ports']> {
   }
   const ports: SystemState['ports'] = [];
   for (const [port, info] of byPort) {
-    const known = port in config.knownPorts;
+    const procLabel = knownProcLabel(info.proc);
+    const known = port in config.knownPorts || procLabel !== null;
     // surface known infra ports wherever they bind, plus anything exposed beyond loopback
     if (!known && !info.nonLoopback) continue;
-    ports.push({ port, proc: info.proc, known, label: config.knownPorts[port] ?? null });
+    ports.push({ port, proc: info.proc, known, label: config.knownPorts[port] ?? procLabel });
   }
   ports.sort((a, b) => a.port - b.port);
   return ports;
@@ -173,10 +186,12 @@ async function collectPorts(): Promise<SystemState['ports']> {
 
 // ---- noteworthy processes via ps ----
 
-const PROC_KEEP = /claude|eigen|codex|llama-server|hermes_cli|surreal|session-manager-plugin|train|uvicorn|granian|any-mission|itch/;
+const PROC_KEEP = /claude|eigen|codex|llama-server|memra-server|bw24-server|hermes_cli|surreal|session-manager-plugin|train|uvicorn|granian|any-mission|itch/;
 const PROC_DROP = /grep|atrium/;
 
 const PROC_LABELS: [RegExp, string][] = [
+  [/memra-server/, 'memra server'],
+  [/bw24-server/, 'memra server'],
   [/llama-server/, 'llama server'],
   [/hermes_cli/, 'hermes gateway'],
   [/session-manager-plugin/, 'aws ssm session'],
@@ -300,9 +315,16 @@ async function run(): Promise<void> {
     flags.push(flag('system:swap', 'warn', 'swap pressure', `swap at ${state.swap.usedPct}% used`));
   }
   for (const p of state.ports) {
-    if (!p.known) {
-      flags.push(flag(`system:port:${p.port}`, 'warn', `unknown listening port ${p.port}`, `process "${p.proc || '?'}" is listening on port ${p.port} (non-loopback)`));
-    }
+    if (p.known) continue;
+    const who = p.proc || 'an unknown process';
+    flags.push(
+      flag(
+        `system:port:${p.port}`,
+        'info',
+        `${who} is open on :${p.port}`,
+        'listening on every interface — reachable from your network, not just this machine',
+      ),
+    );
   }
   for (const s of state.services) {
     if (s.active !== 'active') {

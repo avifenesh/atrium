@@ -327,9 +327,13 @@ export interface CommsState {
 export interface SubService {
   id: string; // 'claude' | 'codex' | 'grok' | 'zai' | 'copilot' | 'cursor' | 'spotify' | ...
   name: string;
-  status: 'active' | 'off' | 'not-connected' | 'unknown';
+  status: 'active' | 'off' | 'not-connected' | 'upcoming' | 'unknown';
   plan: string | null; // e.g. 'max', 'chatgpt', tier names
   detail: string | null;
+  /** manual subs only: a future start date renders the card as upcoming */
+  startsAt?: string | null;
+  /** manual subs only: a planned cancellation date (countdown while active; nags once past) */
+  endsAt?: string | null;
   /** usage bars where a real API exists (claude oauth usage), else null */
   usage: { label: string; usedPct: number; resetAt: string | null }[] | null;
   source: string; // where we learned this, e.g. '~/.claude/.credentials.json'
@@ -402,7 +406,7 @@ export interface RevutoModel {
   role: 'review' | 'curator' | 'distill' | 'embedder';
   enabled: boolean;
   name: string; // provider, e.g. "bedrock-mantle"
-  model: string; // model id, e.g. "codex:gpt-5.5" | "claude:sonnet" | "grok:grok-4.5"
+  model: string; // model id, e.g. "codex:gpt-5.6-sol" | "claude:opus" | "claude:fable" | "grok:grok-4.5"
   probe: {
     state: 'ok' | 'failed' | 'disabled' | 'unknown';
     kind?: 'chat' | 'embedding' | 'none';

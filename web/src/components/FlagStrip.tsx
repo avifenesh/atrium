@@ -1,4 +1,5 @@
 import { isMuted } from '../api';
+import { useNow, FRESH_WINDOW_MS } from '../hooks';
 import { MuteButton, QuietChip, RelTime } from './ui';
 import type { Flag, Snapshot } from '../../../shared/types';
 
@@ -10,6 +11,12 @@ const SEV_BORDER: Record<Flag['severity'], string> = {
   crit: 'border-l-coral',
   warn: 'border-l-amber',
   info: 'border-l-slate-glow',
+};
+
+const SEV_PULSE: Record<Flag['severity'], string> = {
+  crit: 'bg-coral',
+  warn: 'bg-amber',
+  info: 'bg-slate-glow',
 };
 
 /** Flag ids are "<source>:<key>" — map the prefix (falling back to Flag.source)
@@ -49,15 +56,23 @@ export default function FlagStrip({
         new Date(b.raisedAt).getTime() - new Date(a.raisedAt).getTime(),
     );
   const hidden = snapshot.flags.length - flags.length;
+  const topSev = flags[0]?.severity ?? 'info';
+  // "new since you looked" — server raisedAt within the freshness window. Survives
+  // reload (raisedAt is server-side) and never lies: it's literally recency, not a
+  // guessed "have you seen this". A restart re-baselines raisedAt, so post-restart the
+  // standing signals re-surface as fresh for one window — a useful re-glance cue.
+  const now = useNow(30_000);
+  const newCount = flags.filter((f) => now - new Date(f.raisedAt).getTime() < FRESH_WINDOW_MS).length;
 
   if (flags.length === 0 && hidden === 0) return null;
 
   return (
     <section className="signal-strip rise mb-5 px-3 py-2" aria-label="Active signals">
       <div className="mb-1 flex items-center gap-2 px-1 font-mono text-[9px] uppercase tracking-[0.18em] text-mist-faint">
-        <span className="signal-pulse h-1.5 w-1.5 rounded-full bg-amber" />
+        <span className={`signal-pulse h-1.5 w-1.5 rounded-full ${SEV_PULSE[topSev]}`} />
         Active signals
         <span className="tabular-nums text-mist-dim">{flags.length}</span>
+        {newCount > 0 && <span className="tabular-nums text-amber">{newCount} new</span>}
       </div>
       <div className="max-h-[8.25rem] space-y-0.5 overflow-y-auto">
         {flags.map((f) => {
@@ -83,6 +98,11 @@ export default function FlagStrip({
               }
               className={`group flex items-center gap-3 rounded-r-md border-l py-1.5 pl-3 pr-1 transition-colors hover:bg-white/[0.035] ${view ? 'cursor-pointer' : ''} ${SEV_BORDER[f.severity]}`}
             >
+              <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
+                {now - new Date(f.raisedAt).getTime() < FRESH_WINDOW_MS && (
+                  <span className={`block h-1.5 w-1.5 rounded-full ${SEV_PULSE[f.severity]}`} />
+                )}
+              </span>
               <span className="min-w-0 truncate font-mono text-xs text-mist" title={f.title}>
                 {f.title}
               </span>

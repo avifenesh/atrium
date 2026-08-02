@@ -22,6 +22,8 @@ function dotStatus(s: SubService['status']): string {
       return 'off';
     case 'not-connected':
       return 'active';
+    case 'upcoming':
+      return 'idle';
     default:
       return 'unknown';
   }
@@ -121,6 +123,43 @@ function ResetsIn({ iso }: { iso: string | null }) {
     <span className="font-mono text-[10px] tabular-nums text-mist-faint" title={new Date(iso).toLocaleString()}>
       resets {s <= 0 ? rel : `in ${rel}`}
     </span>
+  );
+}
+
+function StartsIn({ iso }: { iso: string }) {
+  const s = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+  const rel =
+    s <= 0 ? 'now' : s < 86400 ? `${Math.max(1, Math.floor(s / 3600))}h` : `${Math.floor(s / 86400)}d`;
+  return (
+    <span className="font-mono text-[10px] tabular-nums text-mist-faint" title={`starts ${new Date(iso).toLocaleString()}`}>
+      {s <= 0 ? rel : `in ${rel}`}
+    </span>
+  );
+}
+
+function CancelStatus({ iso }: { iso: string }) {
+  const s = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+  if (s <= 0) {
+    return (
+      <span
+        className="font-mono text-[10px] tabular-nums text-amber"
+        title={`cancel date ${new Date(iso).toLocaleString()} passed`}
+      >
+        cancel date passed — still billing?
+      </span>
+    );
+  }
+  const rel = s < 86400 ? `${Math.max(1, Math.floor(s / 3600))}h` : `${Math.floor(s / 86400)}d`;
+  return (
+    <>
+      cancels{' '}
+      <span
+        className="font-mono text-[10px] tabular-nums text-mist-faint"
+        title={`cancels ${new Date(iso).toLocaleString()}`}
+      >
+        in {rel}
+      </span>
+    </>
   );
 }
 
@@ -240,6 +279,16 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
                   </div>
                 </Row>
 
+                {s.status === 'upcoming' && s.startsAt && (
+                  <div className="mt-1 text-xs text-mist-dim">
+                    starts <StartsIn iso={s.startsAt} />
+                  </div>
+                )}
+                {s.status === 'active' && s.endsAt && (
+                  <div className="mt-1 text-xs text-mist-dim">
+                    <CancelStatus iso={s.endsAt} />
+                  </div>
+                )}
                 {s.plan && <div className="mt-1 text-xs text-mist-dim">{s.plan}</div>}
                 {/* detail carries real local stats from the server — render verbatim.
                     spotify not-connected swaps the CTA text for the in-app setup. */}

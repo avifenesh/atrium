@@ -267,6 +267,37 @@ select option {
   visibility: visible;
 }
 
+/* dense-row action cluster that floats over the row's right edge on hover/focus
+   instead of reserving inline width — for rows too narrow to spare the cluster's
+   space (Now's act-now lane). Nothing in flow shifts: the title keeps its full
+   width and the cluster paints above the trailing metadata behind a scrim. On
+   touch widths it collapses to a normal wrapped inline cluster (pair with the
+   .mobile-row-actions class so the existing touch rules apply). */
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+@media (min-width: 641px) {
+  .row-actions {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 10;
+    padding-left: 1.75rem;
+    background: linear-gradient(90deg, transparent, rgba(13, 17, 24, 0.94) 1.4rem);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+  }
+  .group:hover > .row-actions,
+  .group:focus-within > .row-actions {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+}
+
 /* legacy dim treatment — v2 quiet = archive (rows unmount entirely via <Mutable/>);
    kept only for places that intentionally show muted things (e.g. the quiet drawer). */
 .muted-dim {

@@ -2,6 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Snapshot } from '../../shared/types';
 
+/** how long a freshly-raised signal counts as "new since you looked" — shared by the
+ *  strip (server raisedAt) and the attention rows (client first-seen) so the two
+ *  surfaces agree on what "recent" means. */
+export const FRESH_WINDOW_MS = 15 * 60_000;
+
 // shared tickers: dozens of RelTime instances must flip in the same frame, not
 // each on a private setInterval drifting out of phase
 const tickers = new Map<number, { timer: ReturnType<typeof setInterval>; subs: Set<(t: number) => void> }>();

@@ -26,12 +26,14 @@ function pctClass(pct: number): string {
 function Stat({
   value,
   label,
-  accent = false,
+  tone,
   onClick,
 }: {
   value: number;
   label: string;
-  accent?: boolean;
+  /** semantic color when value > 0 (amber = attention, jade = live/healthy);
+   *  omitted = neutral mist. zero always de-emphasizes to faint. */
+  tone?: 'amber' | 'jade';
   onClick: () => void;
 }) {
   const display = useTweenNumber(value);
@@ -44,7 +46,7 @@ function Stat({
     <button onClick={onClick} className="group flex min-w-[6.5rem] cursor-pointer flex-col items-start px-2 py-1 text-left">
       <span
         style={{ minWidth: `${digits}ch` }}
-        className={`inline-block font-display text-5xl italic leading-none tracking-[-0.04em] xl:text-6xl ${accent ? 'text-amber' : value === 0 ? 'text-mist-faint' : 'text-mist'}`}
+        className={`inline-block font-display text-5xl italic leading-none tracking-[-0.04em] xl:text-6xl ${value === 0 ? 'text-mist-faint' : tone === 'amber' ? 'text-amber' : tone === 'jade' ? 'text-jade' : 'text-mist'}`}
       >
         {display}
       </span>
@@ -114,13 +116,23 @@ export default function NowView({
         <Stat
           value={orgReview.length}
           label="Waiting on me"
-          accent={orgReview.length > 0}
+          tone={orgReview.length > 0 ? 'amber' : undefined}
           onClick={() => onNavigate('tasks')}
         />
-        <Stat value={actNow.length} label="Needs action" accent={actNow.length > 0} onClick={() => onNavigate('tasks')} />
+        <Stat
+          value={actNow.length}
+          label="Needs action"
+          tone={actNow.length > 0 ? 'amber' : undefined}
+          onClick={() => onNavigate('tasks')}
+        />
         <Stat value={comms.email.unreadCount} label="Unread mail" onClick={() => onNavigate('comms')} />
         <Stat value={comms.calendar.today.length} label="Events today" onClick={() => onNavigate('comms')} />
-        <Stat value={working.length} label="Agents working" onClick={() => onNavigate('agents')} />
+        <Stat
+          value={working.length}
+          label="Agents working"
+          tone={working.length > 0 ? 'jade' : undefined}
+          onClick={() => onNavigate('agents')}
+        />
       </section>
 
       {/* left column — act now + activity ticker (the ticker fills the space under a
@@ -149,12 +161,17 @@ export default function NowView({
           ) : (
             <div className="max-h-[26rem] space-y-0.5 overflow-y-auto">
               {actNow.slice(0, 12).map((it) => (
-                <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
+                <Row
+                  key={it.id}
+                  onClick={() => onOpenItem(it.repo, it.number)}
+                  title={it.title}
+                  className="flex-wrap sm:flex-nowrap"
+                >
                   <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
-                  <span className="w-36 shrink-0 truncate font-mono text-xs text-mist-faint xl:w-44">{it.repo}</span>
+                  <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{it.repo}</span>
                   <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
                   <RelTime iso={it.updatedAt} />
-                  <span className="flex shrink-0 items-center gap-1">
+                  <span className="row-actions mobile-row-actions">
                     <a
                       href={it.url}
                       target="_blank"

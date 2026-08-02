@@ -862,20 +862,46 @@ async function mergeManual(services: SubService[]): Promise<void> {
   if (!Array.isArray(manual)) return;
   for (const m of manual) {
     if (!m || typeof m.id !== 'string') continue;
+    // optional start date ("from"/"startsAt"): a future date renders the sub as
+    // upcoming ("starts in 29d") instead of a false active
+    const fromRaw = typeof m.from === 'string' ? m.from : typeof m.startsAt === 'string' ? m.startsAt : null;
+    const fromMs = fromRaw ? new Date(fromRaw).getTime() : NaN;
+    const startsAt = Number.isFinite(fromMs) ? new Date(fromMs).toISOString() : null;
+    const upcoming = startsAt !== null && fromMs > Date.now();
+    // optional end date ("cancelsAt"/"endsAt"/"until"): a planned cancellation. The card
+    // stays active and shows a countdown; if the date passes it nags in amber rather than
+    // claiming it ended (a cancel is intent, not a confirmed stop — billing may continue).
+    const endRaw =
+      typeof m.cancelsAt === 'string'
+        ? m.cancelsAt
+        : typeof m.endsAt === 'string'
+          ? m.endsAt
+          : typeof m.until === 'string'
+            ? m.until
+            : null;
+    const endMs = endRaw ? new Date(endRaw).getTime() : NaN;
+    const endsAt = Number.isFinite(endMs) ? new Date(endMs).toISOString() : null;
     const existing = services.find((s) => s.id === m.id);
     if (existing) {
       if (typeof m.name === 'string') existing.name = m.name;
       if (m.plan != null) existing.plan = String(m.plan);
       if (m.detail != null) existing.detail = String(m.detail);
+      if (startsAt !== null) {
+        existing.startsAt = startsAt;
+        if (upcoming) existing.status = 'upcoming';
+      }
+      if (endsAt !== null) existing.endsAt = endsAt;
     } else {
       services.push({
         id: m.id,
         name: typeof m.name === 'string' ? m.name : m.id,
-        status: 'active',
+        status: upcoming ? 'upcoming' : 'active',
         plan: m.plan != null ? String(m.plan) : null,
         detail: m.detail != null ? String(m.detail) : null,
         usage: null,
         source: src,
+        startsAt,
+        endsAt,
       });
     }
   }
@@ -888,17 +914,23 @@ const subs: Collector = {
     let state: SubsState;
     let flags: Flag[] = [];
     try {
-      const [claude, codex, grok, zai, copilot, cursor, spotify] = await Promise.all([
-        safe('claude', claudeService),
-        safe('codex', codexService),
-        safe('grok', grokService),
-        safe('zai', zaiService),
-        safe('copilot', copilotService),
-        safe('cursor', cursorService),
-        safe('spotify', spotifyService),
-      ]);
+      // subs.disabled hides an auto-detected service AND skips its poll (so e.g.
+      // cursor's external usage API is never called once disabled)
+      const disabled = new Set(config.subs?.disabled ?? []);
+      const auto: Array<[string, () => Promise<SubService | null>]> = [
+        ['claude', claudeService],
+        ['codex', codexService],
+        ['grok', grokService],
+        ['zai', zaiService],
+        ['copilot', copilotService],
+        ['cursor', cursorService],
+        ['spotify', spotifyService],
+      ];
+      const settled = await Promise.all(
+        auto.filter(([id]) => !disabled.has(id)).map(([id, fn]) => safe(id, fn)),
+      );
       const services: SubService[] = [];
-      for (const s of [claude, codex, grok, zai, copilot, cursor, spotify]) if (s) services.push(s);
+      for (const s of settled) if (s) services.push(s);
       await mergeManual(services);
       state = { updatedAt: iso(), services, error: null };
 

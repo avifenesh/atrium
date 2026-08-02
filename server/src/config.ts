@@ -104,6 +104,13 @@ export const defaults = {
     pass: 'root',
   },
 
+  subs: {
+    /** auto-detected subscription ids to hide from the panel (e.g. ['cursor']).
+     *  Also skips their poll, so a disabled service makes no external calls.
+     *  Manual entries in ~/.config/atrium/subscriptions.json are unaffected. */
+    disabled: [] as string[],
+  },
+
   /** disk mounts shown in the system view. Defaults to the root filesystem; add
    *  more (e.g. '/data', '/home') in ~/.config/atrium/config.json for your box. */
   system: {
@@ -119,6 +126,13 @@ export const defaults = {
     5173: 'vite dev',
     8077: 'streampile',
   } as Record<number, string>,
+
+  /** Process names (case-insensitive substring → label) whose listeners are
+   *  expected and must never raise a signal. Use this for apps whose port is
+   *  ephemeral and so can't be pinned in knownPorts — Spotify Connect picks a
+   *  random port every launch, so a port-number allowlist can never catch it.
+   *  A matched listener is shown labeled in the system view but never flagged. */
+  knownPortProcs: {} as Record<string, string>,
 
   /** systemd --user units to surface in the system view. Empty by default; list
    *  your own services in ~/.config/atrium/config.json. */
