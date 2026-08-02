@@ -28,6 +28,7 @@ import itchWatchCollector from './collectors/itch-watch.js';
 import cloudCollector from './collectors/cloud.js';
 import backupCollector from './collectors/backup.js';
 import reposCollector from './collectors/repos.js';
+import mentionsCollector from './collectors/mentions.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
 import { serveWikiViewer } from './wiki-viewer.js';
@@ -46,6 +47,7 @@ for (const c of [
   cloudCollector,
   backupCollector,
   reposCollector,
+  mentionsCollector,
 ]) {
   register(c);
 }
