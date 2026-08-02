@@ -95,7 +95,20 @@ export default function NowView({
   const actNowHidden = github.actNow.filter((it) => !orgIds.has(it.id)).length - actNow.length;
   const orgReview = orgQueue.filter((it) => it.lane === 'review');
   const working = agents.agents.filter((a) => a.status === 'active' || a.status === 'running');
-  const ticker = agents.activity.slice(-14).reverse();
+  // Now shows a per-source *summary* of live activity (latest event + volume),
+  // not the raw feed — the full feed lives on the Agents view. Collapses a wall
+  // of identical `eigen · reasoning` lines into one honest "eigen ×N" row.
+  const activityBySource = new Map<string, { last: (typeof agents.activity)[number]; count: number }>();
+  for (const a of agents.activity) {
+    const e = activityBySource.get(a.source);
+    if (e) {
+      e.last = a;
+      e.count += 1;
+    } else activityBySource.set(a.source, { last: a, count: 1 });
+  }
+  const ticker = [...activityBySource.values()]
+    .sort((x, y) => y.last.time.localeCompare(x.last.time))
+    .slice(0, 6);
   const gpuPct = system.gpu ? system.gpu.utilPct : null;
   // same cell set as the percent row above (gpu always present) so the two
   // justify-between rows keep their label columns vertically aligned
@@ -198,25 +211,30 @@ export default function NowView({
           )}
         </Panel>
 
-        {/* activity ticker */}
+        {/* live activity — per-source summary; the raw feed is on the Agents view */}
         <Panel title="Live activity" riseIndex={6}>
-          {ticker.length === 0 ? (
+          {agents.activity.length === 0 ? (
             <EmptyState>No recent agent activity.</EmptyState>
           ) : (
             <div className="activity-rail px-2.5 font-mono text-xs">
-              {ticker.map((a, i) => (
-                <div key={`${a.time}-${i}`} className="flex items-baseline gap-2 py-0.5">
+              {ticker.map(({ last, count }) => (
+                <div key={last.source} className="flex items-baseline gap-2 py-0.5">
                   {/* dot slot is always rendered so error lines don't shift the columns */}
                   <span
-                    className={`h-1 w-1 shrink-0 self-center rounded-full ${a.isError ? 'bg-coral' : 'bg-transparent'}`}
+                    className={`h-1 w-1 shrink-0 self-center rounded-full ${last.isError ? 'bg-coral' : 'bg-transparent'}`}
                   />
-                  <span className="shrink-0 tabular-nums text-mist-faint">{hhmmss(a.time)}</span>
-                  <span className="w-24 shrink-0 truncate text-mist-dim sm:w-32" title={a.source}>
-                    {a.source}
+                  <span className="shrink-0 tabular-nums text-mist-faint">{hhmmss(last.time)}</span>
+                  <span className="w-24 shrink-0 truncate text-mist-dim sm:w-32" title={last.source}>
+                    {last.source}
                   </span>
-                  <span className="min-w-0 truncate text-mist-dim" title={a.text}>
-                    {a.text}
+                  <span className="min-w-0 flex-1 truncate text-mist-dim" title={last.text}>
+                    {last.text}
                   </span>
+                  {count > 1 && (
+                    <span className="shrink-0 tabular-nums text-mist-faint" title={`${count} events`}>
+                      ×{count}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -247,10 +265,10 @@ export default function NowView({
           </Panel>
         )}
 
-        <Panel title="Today" riseIndex={3} right={<NextEventCountdown events={comms.calendar.today} />}>
-          {comms.calendar.today.length === 0 ? (
-            <EmptyState>Your calendar is clear today.</EmptyState>
-          ) : (
+        {/* secondary surface: omit entirely when empty (calm by default) — the
+            primary "Needs action" panel keeps its reassuring empty state */}
+        {comms.calendar.today.length > 0 && (
+          <Panel title="Today" riseIndex={3} right={<NextEventCountdown events={comms.calendar.today} />}>
             <div className="max-h-44 space-y-0.5 overflow-y-auto">
               {comms.calendar.today.map((ev) => (
                 <Row key={ev.id} onClick={() => onNavigate('comms')} title={ev.title}>
@@ -261,8 +279,8 @@ export default function NowView({
                 </Row>
               ))}
             </div>
-          )}
-        </Panel>
+          </Panel>
+        )}
 
         <Panel title="Agents working" riseIndex={4}>
           {working.length === 0 ? (
