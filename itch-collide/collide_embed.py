@@ -2,7 +2,7 @@
 """collide_embed -- vectorize manifest rows into seed vectors, INCREMENTALLY.
 
 Runs in the sxc venv (has torch + sentence-transformers). Embeds on CPU on
-purpose: the GPU is owned by the live llama-server (Qwen), and CPU embedding of
+purpose: the GPU is owned by the live memra-server / inference (Qwen), and CPU embedding of
 bge-small is fast enough (~thousands/sec batched) that GPU contention isn't worth
 it. This is the piece meant to run in the BACKGROUND while you live-test: it
 appends vectors chunk by chunk, checkpoints after each, and is safe to kill and

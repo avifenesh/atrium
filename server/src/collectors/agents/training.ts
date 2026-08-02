@@ -3,7 +3,7 @@ import { baseAgent, type SourceResult } from './common.js';
 
 const DESKTOP_PROC = /gnome|xwayland|xorg|mutter|kwin|plasma|compositor|portal|electron|chrome|firefox/i;
 // inference servers live on GPU around the clock on this rig — they are not training runs
-const INFERENCE_PROC = /llama-server|ollama|vllm|tabby|llama\.cpp/i;
+const INFERENCE_PROC = /memra-server|bw24-server|llama-server|ollama|vllm|tabby|llama\.cpp/i;
 
 export async function collectTraining(): Promise<SourceResult> {
   const agent = baseAgent('training', 'Training');

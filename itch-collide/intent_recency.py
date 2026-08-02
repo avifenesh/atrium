@@ -67,6 +67,13 @@ research late next new using via your you my our it its this that these those
 # employer ecosystem -- never a DRAWN TO topic regardless of recency
 OFF_LIMITS = ("valkey", "valkey-glide", "valkey-io")
 
+# Inference serving is FULL (default engine: memra). The recency engine still
+# clusters paper/project activity so itch can down-weight the orbit; idea
+# generators must NOT treat a high weight on inference-serving as DRAWN TO for
+# new engines. Only "incremental full-bench correctness" is an open inference
+# gap; ML positive signal is model-side (training / capability). See
+# ~/.config/itch/interests.md and rules.md (2026-08).
+
 
 # ----------------------------- weight curve -------------------------------- #
 # The canonical curve. The skill references THESE numbers for transcripts too,

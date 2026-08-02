@@ -126,6 +126,11 @@ Use these signals in priority order:
 - [WORK] tags and OFF-LIMITS WORK ECOSYSTEMS come from work.md/work.txt. Propose nothing in or adjacent to those ecosystems.
 - EXTRA RULES come from rules.md and are standing instructions for this run.
 
+Standing capacity notes (honor even if local projects still look "hot"):
+- Inference is FULL. Default engine is memra (bw24 successor; RTX 50 + H100). Do NOT propose new inference engines, llama.cpp/vLLM contribution side-quests, or local-LLM serving products. New inference work belongs inside memra only. The sole open inference-world gap: keep the full memra bench correct without re-running the whole bench every change.
+- ML positive direction is model-side: training, smarter models, next-gen capabilities current LLMs lack — not serving.
+- Eigen is frozen under re-work and not in daily use. Do not pitch Eigen features/fixes until the builder unfreezes it.
+
 VALIDATE the claims, don't assert them. Before you call an idea novel, first, or "nothing exists for X", actually search for the closest existing tool / paper / competitor and a real date for any timeliness claim — state what you found (with a URL) or the query that came up empty, in a **Validation:** line on each idea. A "no X exists" claim you did not search for is wrong, not bold; drop or narrow an idea whose premise the search kills.
 
 CONVERGE — don't search forever, but DO spend the searches verification needs. Budget a couple of prior-art/competitor checks per idea on top of the finding that sparked it; once each idea's load-bearing claim is checked, STOP and WRITE the full ranked idea list in the required format, then end. Endless "rounding out" with no list is a FAILED run, but so is a list of unchecked "first / novel" claims — a written list of EXACTLY 4 grounded, validated ideas is the goal. Four is a hard cap: more ideas means more searches and the run dies before it writes. Output the '## N.' ideas once their claims are checked, not before and not after more aimless searching.`;
@@ -144,7 +149,7 @@ const COLLISION_DIRECTIVE = `
 You have been handed real domains sampled from a live taxonomy, deliberately drawn OUTSIDE your current orbit at a tuned distance from your demonstrated interests:
 {seeds}
 
-These are REAL published fields, never invented, sampled at a TUNED DISTANCE from the builder's interests (the chaos temperature): the closer the temperature, the nearer these domains sit to their orbit; the higher, the wilder. EVERY idea you return this run must be a collision: take a sampled domain and bridge it with the builder's demonstrated skills and interests above (systems / performance / inference / distributed primitives). Do NOT return any "normal" idea -- there is no main list this run, the whole list is collisions.
+These are REAL published fields, never invented, sampled at a TUNED DISTANCE from the builder's interests (the chaos temperature): the closer the temperature, the nearer these domains sit to their orbit; the higher, the wilder. EVERY idea you return this run must be a collision: take a sampled domain and bridge it with the builder's demonstrated skills and interests above (systems / performance / model-side ML / agentic AI / distributed primitives — NOT new inference engines; inference is full and owned by memra). Do NOT return any "normal" idea -- there is no main list this run, the whole list is collisions.
 
 Pick the 4 strongest domains for collisions (one idea each; EXACTLY 4 ideas total spread across distinct domains). Each bridge must be LOAD-BEARING: the core problem AND the solution must REQUIRE both sides -- the builder's expertise applied to a real bottleneck IN that domain, or a tool/library that authentically lives in both. A cosmetic mention of the domain is a failed bridge.
 

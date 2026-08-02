@@ -5,17 +5,21 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export const ITCH_MODELS = [
-  { id: 'codex:gpt-5.5', label: 'GPT 5.5 (Codex CLI)' },
-  { id: 'claude:sonnet', label: 'Claude Sonnet (Claude Code)' },
-  { id: 'claude:opus', label: 'Claude Opus (Claude Code)' },
-  { id: 'claude:fable', label: 'Claude Fable (Claude Code)' },
+  // Automation preference: GPT-5.6 Sol first (stronger + cheaper than Opus 5).
+  { id: 'codex:gpt-5.6-sol', label: 'GPT 5.6 Sol (Codex CLI)' },
+  { id: 'codex:gpt-5.6-terra', label: 'GPT 5.6 Terra (Codex CLI)' },
+  { id: 'codex:gpt-5.5', label: 'GPT 5.5 (Codex CLI, legacy)' },
+  { id: 'claude:opus', label: 'Claude Opus 5 (Claude Code) — automation fallback' },
+  { id: 'claude:fable', label: 'Claude Fable 5 (Claude Code) — hard work only' },
+  { id: 'claude:sonnet', label: 'Claude Sonnet 5 (Claude Code)' },
   { id: 'claude:haiku', label: 'Claude Haiku (Claude Code)' },
   { id: 'glm:glm-5.2[1m]', label: 'GLM 5.2 1M (Claude Code - Z.ai)' },
   { id: 'grok:grok-4.5', label: 'Grok 4.5 (Grok Build CLI)' },
   { id: 'grok:grok-build-0.1', label: 'Grok Build 0.1 (Grok Build CLI)' },
 ];
 
-export const DEFAULT_ITCH_MODEL = 'claude:sonnet';
+/** Itch is automation: Sol primary. Opus is fallback; Fable is not the default. */
+export const DEFAULT_ITCH_MODEL = 'codex:gpt-5.6-sol';
 
 type ItchModelBackend = 'codex' | 'claude' | 'glm' | 'grok';
 
@@ -36,6 +40,8 @@ export function normalizeItchModel(model: string): string {
 
   // Legacy Atrium/Eigen-era ids. Keep prefs and old UI clients from wedging
   // while Eigen is out of the loop.
+  if (m === 'openai.gpt-5.6-sol' || m === 'gpt-5.6-sol' || m === 'sol') return 'codex:gpt-5.6-sol';
+  if (m === 'openai.gpt-5.6-terra' || m === 'gpt-5.6-terra') return 'codex:gpt-5.6-terra';
   if (m === 'openai.gpt-5.5') return 'codex:gpt-5.5';
   if (m === 'eigen:glm/glm-5.2') return 'glm:glm-5.2[1m]';
   if (/^(us|global|eu|ap)\.anthropic\.claude-sonnet-/i.test(m)) return 'claude:sonnet';
@@ -91,7 +97,7 @@ function glmEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function claudeModelName(model: string): string {
   if (model === 'sonnet') return 'claude-sonnet-5';
-  if (model === 'opus') return 'claude-opus-4-8';
+  if (model === 'opus') return 'claude-opus-5';
   if (model === 'fable') return 'claude-fable-5';
   if (model === 'haiku') return 'claude-haiku-4-5';
   return model;
