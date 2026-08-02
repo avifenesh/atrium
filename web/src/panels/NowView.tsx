@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { isMuted } from '../api';
 import { Dot, EmptyState, MuteButton, Panel, RelTime, Row, SendToEigen } from '../components/ui';
 import Spark from '../components/Spark';
-import { getSeries, pctTone, useNow, useTweenNumber } from '../hooks';
+import { getSeries, pctTone, useFirstSeen, useNow, useTweenNumber } from '../hooks';
 import type { CalendarEvent, Snapshot } from '../../../shared/types';
 
 function hhmm(iso: string): string {
@@ -94,6 +94,7 @@ export default function NowView({
   const actNow = github.actNow.filter((it) => !isMuted(snapshot, 'github-item', it.id) && !orgIds.has(it.id));
   const actNowHidden = github.actNow.filter((it) => !orgIds.has(it.id)).length - actNow.length;
   const orgReview = orgQueue.filter((it) => it.lane === 'review');
+  const freshIds = useFirstSeen([...actNow.map((it) => it.id), ...orgReview.map((it) => it.id)]);
   const working = agents.agents.filter((a) => a.status === 'active' || a.status === 'running');
   // Now shows a per-source *summary* of live activity (latest event + volume),
   // not the raw feed — the full feed lives on the Agents view. Collapses a wall
@@ -180,6 +181,9 @@ export default function NowView({
                   title={it.title}
                   className="flex-wrap sm:flex-nowrap"
                 >
+                  <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
+                    {freshIds.has(it.id) && <span className="block h-1.5 w-1.5 rounded-full bg-amber" />}
+                  </span>
                   <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
                   <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{it.repo}</span>
                   <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
@@ -249,6 +253,9 @@ export default function NowView({
             <div className="max-h-64 space-y-0.5 overflow-y-auto">
               {orgReview.slice(0, 5).map((it) => (
                 <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
+                  <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
+                    {freshIds.has(it.id) && <span className="block h-1.5 w-1.5 rounded-full bg-amber" />}
+                  </span>
                   <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
                   <span className="shrink-0 whitespace-nowrap rounded border hairline px-1.5 py-px font-mono text-[10px] text-mist-faint">
                     {it.scope}

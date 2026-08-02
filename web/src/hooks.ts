@@ -7,6 +7,26 @@ import type { Snapshot } from '../../shared/types';
  *  surfaces agree on what "recent" means. */
 export const FRESH_WINDOW_MS = 15 * 60_000;
 
+// ---- client-side first-seen tracker (module-level: survives re-mounts, not reloads) ----
+
+const firstSeenAt = new Map<string, number>();
+
+/** Returns the subset of `ids` first seen within FRESH_WINDOW_MS of this session.
+ *  Module-level cache — a reload resets it (which IS the "fresh glance" semantic).
+ *  The mutation is idempotent per id and doesn't touch React state. */
+export function useFirstSeen(ids: string[]): Set<string> {
+  const now = useNow(30_000);
+  for (const id of ids) {
+    if (!firstSeenAt.has(id)) firstSeenAt.set(id, Date.now());
+  }
+  const fresh = new Set<string>();
+  for (const id of ids) {
+    const at = firstSeenAt.get(id);
+    if (at !== undefined && now - at < FRESH_WINDOW_MS) fresh.add(id);
+  }
+  return fresh;
+}
+
 // shared tickers: dozens of RelTime instances must flip in the same frame, not
 // each on a private setInterval drifting out of phase
 const tickers = new Map<number, { timer: ReturnType<typeof setInterval>; subs: Set<(t: number) => void> }>();

@@ -156,6 +156,8 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
   const [enforce, setEnforce] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [clearArmed, setClearArmed] = useState<string | null>(null);
+  const [clearing, setClearing] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
 
   // esc is handled centrally in App (topmost overlay first) — no window listener here.
@@ -194,6 +196,21 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
     }
   };
 
+  const clearGroup = async (k: string, ids: string[]) => {
+    if (clearArmed !== k) {
+      setClearArmed(k);
+      setTimeout(() => setClearArmed((a) => (a === k ? null : a)), 4000);
+      return;
+    }
+    setClearArmed(null);
+    setClearing(k);
+    try {
+      for (const id of ids) await removeMute(id);
+    } finally {
+      setClearing(null);
+    }
+  };
+
   return (
     <>
       {/* backdrop — click closes; the aside is a sibling, so panel clicks never reach this */}
@@ -228,9 +245,23 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
             .filter(([, list]) => list.length > 0)
             .map(([k, list]) => (
               <div key={k}>
-                <SectionLabel>
-                  {k} · {list.length}
-                </SectionLabel>
+                <div className="flex items-baseline justify-between">
+                  <SectionLabel>
+                    {k} · {list.length}
+                  </SectionLabel>
+                  {list.length > 1 && (
+                    <button
+                      type="button"
+                      disabled={clearing === k}
+                      onClick={() => void clearGroup(k, list.map((m) => m.id))}
+                      className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                        clearArmed === k ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
+                      }`}
+                    >
+                      {clearing === k ? '…' : clearArmed === k ? 'sure?' : 'clear all'}
+                    </button>
+                  )}
+                </div>
                 <ul>
                   {list.map((m) => (
                     <MuteEntry key={m.id} m={m} />
