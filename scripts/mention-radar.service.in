@@ -1,0 +1,7 @@
+[Unit]
+Description=Mention radar — watch HN/GitHub/web for project mentions
+
+[Service]
+Type=oneshot
+# rendered by install.sh — runs the vendored radar from the repo
+ExecStart=/usr/bin/python3 __ROOT__/scripts/mention-radar.py

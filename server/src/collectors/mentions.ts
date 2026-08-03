@@ -1,7 +1,8 @@
 // Mention radar — surfaces public mentions of the author's projects (HN, GitHub,
-// web/blogs, YouTube, dev.to, reddit) collected hourly by ~/.local/bin/mention-radar.py
-// (systemd user timer mention-radar.timer). Reads the radar's hits.jsonl tail and
-// renders one link row per mention in the generic extra panel.
+// web/blogs, YouTube, dev.to, reddit) collected hourly by scripts/mention-radar.py
+// (systemd user timer mention-radar.timer, installed by scripts/install.sh). Reads
+// the radar's hits.jsonl tail and renders one link row per mention in the generic
+// extra panel.
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
