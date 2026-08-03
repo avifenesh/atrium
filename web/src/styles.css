@@ -17,7 +17,8 @@
   --color-ink-2: #0d1118;
   --color-mist: #f3f0e8; /* warm primary text */
   --color-mist-dim: #aaa69d; /* secondary text */
-  --color-mist-faint: #6a6863; /* tertiary */
+  /* tertiary — lifted for WCAG AA (~4.5:1 on ink); was #6a6863 at ~3.5:1 */
+  --color-mist-faint: #8a8780;
   --color-amber: #e8c76a; /* THE accent — act-now, attention */
   --color-amber-dim: #e8c76a22;
   --color-jade: #73c7a3; /* ok / running */
@@ -595,10 +596,30 @@ body {
 .mobile-bottom-nav {
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
 }
+/* amber position mark on the active dock item — mirrors the desktop rail */
+.mobile-nav-button {
+  position: relative;
+}
+.mobile-nav-button.is-active::before {
+  content: '';
+  position: absolute;
+  top: 0.2rem;
+  left: 50%;
+  width: 1.1rem;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-amber);
+  transform: translateX(-50%);
+  box-shadow: 0 0 10px rgba(232, 199, 106, 0.45);
+}
 @media (max-width: 640px) {
   body::before {
     animation: none;
     opacity: 0.85;
+  }
+  /* grain is decorative; drop on phone for a cleaner instrument field */
+  body::after {
+    display: none;
   }
   .mobile-row-actions {
     flex-basis: 100%;

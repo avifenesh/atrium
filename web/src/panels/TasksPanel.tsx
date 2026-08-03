@@ -88,8 +88,10 @@ function ItemRow({
   return (
     <Row onClick={() => onOpenItem(item.repo, item.number)} title={item.title} className="flex-wrap sm:flex-nowrap">
       {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
-      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{item.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
+      <span className="hidden max-w-[10rem] shrink-0 truncate font-mono text-xs text-mist-faint sm:inline 2xl:max-w-[12rem]" title={item.repo}>
+        {item.repo}
+      </span>
       <RelTime iso={item.updatedAt} />
       <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
         <GithubLink href={item.url} />
@@ -113,8 +115,10 @@ function PRRow({
   return (
     <Row onClick={() => onOpenItem(pr.repo, pr.number)} title={pr.title} className="flex-wrap sm:flex-nowrap">
       <Dot status={ciStatus(pr.ci)} />
-      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{pr.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{pr.title}</span>
+      <span className="hidden max-w-[10rem] shrink-0 truncate font-mono text-xs text-mist-faint sm:inline 2xl:max-w-[12rem]" title={pr.repo}>
+        {pr.repo}
+      </span>
       {pr.isDraft && <Chip className="hidden text-mist-faint sm:inline-flex">draft</Chip>}
       {decision && <Chip className={`hidden sm:inline-flex ${decision.cls}`}>{decision.label}</Chip>}
       <RelTime iso={pr.updatedAt} />
@@ -147,8 +151,10 @@ function OrgRow({
       {accent && <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />}
       {isPR && <Dot status={ciStatus(item.ci)} />}
       <Chip className="hidden text-mist-faint sm:inline-flex">{item.scope}</Chip>
-      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-32 xl:w-40">{item.repo}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
+      <span className="hidden max-w-[9rem] shrink-0 truncate font-mono text-xs text-mist-faint sm:inline xl:max-w-[11rem]" title={item.repo}>
+        {item.repo}
+      </span>
       {isPR && item.isDraft && <Chip className="hidden text-mist-faint sm:inline-flex">draft</Chip>}
       {decision && <Chip className={`hidden sm:inline-flex ${decision.cls}`}>{decision.label}</Chip>}
       <RelTime iso={item.updatedAt} />
@@ -184,8 +190,10 @@ function NotificationRow({
   return (
     <Row {...rowProps} title={n.title} className="flex-wrap sm:flex-nowrap">
       <Chip className="hidden text-mist-dim sm:inline-flex">{n.reason}</Chip>
-      <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-32 xl:w-40">{n.repo}</span>
       <span className={`min-w-0 flex-1 truncate text-sm ${n.unread ? 'text-mist' : 'text-mist-dim'}`}>{n.title}</span>
+      <span className="hidden max-w-[9rem] shrink-0 truncate font-mono text-xs text-mist-faint sm:inline xl:max-w-[11rem]" title={n.repo}>
+        {n.repo}
+      </span>
       {activityLabel(n) && <Chip className={n.noise ? 'text-mist-dim' : 'text-mist-faint'}>{activityLabel(n)}</Chip>}
       {n.latestActivity && (
         <span
@@ -356,11 +364,21 @@ export default function TasksPanel({
               {g.error}
             </span>
           )}
-          {g.rateLimit && (
-            <span className="tabular-nums" title="github rate limit">
-              {g.rateLimit.remaining}/{g.rateLimit.limit}
-            </span>
-          )}
+          {g.rateLimit && (() => {
+            const { remaining, limit } = g.rateLimit;
+            const usedPct = limit > 0 ? ((limit - remaining) / limit) * 100 : 0;
+            const tone =
+              remaining <= 0 || usedPct >= 95
+                ? 'text-coral'
+                : usedPct >= 80
+                  ? 'text-amber'
+                  : 'text-mist-dim';
+            return (
+              <span className={`tabular-nums ${tone}`} title="GitHub API rate limit">
+                {remaining}/{limit}
+              </span>
+            );
+          })()}
           <RelTime iso={g.updatedAt} />
         </div>
       </header>
@@ -480,7 +498,7 @@ export default function TasksPanel({
           )}
         </Panel>
 
-        <section className="glass rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 4 } as CSSProperties}>
+        <section className="panel-surface rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 4 } as CSSProperties}>
           <header className="flex items-baseline justify-between gap-3">
             <button
               type="button"
@@ -620,7 +638,9 @@ export default function TasksPanel({
             {local.repos.length === 0 ? (
               // never claim cleanliness from absence — null updatedAt means the
               // collector hasn't reported yet; non-null + zero means scan found nothing
-              <EmptyState>{local.updatedAt === null ? 'not collected yet' : 'no repos found'}</EmptyState>
+              <EmptyState>
+                {local.updatedAt === null ? 'Local repos have not been collected yet.' : 'No local repos were found.'}
+              </EmptyState>
             ) : (
               <div className="space-y-0.5">
                 {(localOpen ? local.repos : local.repos.slice(0, LOCAL_ROWS)).map((r) => (

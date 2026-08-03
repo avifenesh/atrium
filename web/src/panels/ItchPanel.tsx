@@ -12,6 +12,15 @@ import { ToolsPanel } from './itch/Tools';
 import type { IdeaBucketKey } from './itch/api';
 import type { ItchState, Snapshot } from '../../../shared/types';
 
+type ItchTab = 'ideas' | 'decide' | 'research' | 'tools';
+
+const ITCH_TABS: { id: ItchTab; label: string }[] = [
+  { id: 'ideas', label: 'Ideas' },
+  { id: 'decide', label: 'Decide' },
+  { id: 'research', label: 'Research' },
+  { id: 'tools', label: 'Tools' },
+];
+
 // itch view shell — section ordering plus the state that crosses sections
 // (selected run, jump target, decisions/filters/scopes versions). the pieces
 // live in ./itch/*: api.ts (proxy fetchers + upstream shapes), util.ts (display
@@ -38,6 +47,8 @@ function ItchBody({
   const [scopesVersion, setScopesVersion] = useState(0);
   // open bucket page (a rank 5..1 or 'undecided') — null shows the section stack
   const [openBucket, setOpenBucket] = useState<IdeaBucketKey | null>(null);
+  // workspace tabs keep research/tools chrome off the primary ideas surface
+  const [tab, setTab] = useState<ItchTab>('ideas');
   // a save the snapshot hasn't confirmed yet — see the runs effect below
   const pendingSelect = useRef<string | null>(null);
   // a delete the snapshot hasn't dropped yet — the adopt effect must not resurrect it
@@ -87,6 +98,7 @@ function ItchBody({
   }, [openTarget]);
 
   const jumpTo = useCallback((stem: string, idx?: number, title?: string) => {
+    setTab('ideas');
     setSelectedStem(stem);
     setScrollTarget({ stem, idx, title });
   }, []);
@@ -152,36 +164,80 @@ function ItchBody({
         />
       ) : (
         <>
-      <ResearchStrip research={it.research} grounding={it.sxcGrounding} onSaved={onSaved} />
-      <SearchStrip onJump={(stem, idx) => jumpTo(stem, idx)} />
-      <Feed
-        runs={runs}
-        selectedStem={selectedStem}
-        onSelect={(s) => {
-          setSelectedStem(s);
-          setScrollTarget(null);
-        }}
-        scrollTarget={scrollTarget}
-        onScrollTargetConsumed={onScrollTargetConsumed}
-        onRated={onRated}
-        onScoped={onScoped}
-        onRunDeleted={onRunDeleted}
-        filtersVersion={filtersVersion}
-        onFiltersChanged={onFiltersChanged}
-      />
-      <ComparePanel
-        stem={selectedStem}
-        isCollide={runs.find((r) => r.stem === selectedStem)?.isCollide ?? false}
-        riseIndex={3}
-      />
-      <DecisionsPanel
-        runs={runs}
-        version={decisionsVersion}
-        onJump={(stem, title) => jumpTo(stem, undefined, title)}
-        onOpenBucket={setOpenBucket}
-      />
-      <ScopesPanel riseIndex={5} version={scopesVersion} />
-      <ToolsPanel riseIndex={6} filtersVersion={filtersVersion} onFiltersChanged={onFiltersChanged} />
+          <nav
+            className="mb-4 flex flex-wrap gap-1 border-b border-white/[0.06] pb-2"
+            aria-label="Itch sections"
+          >
+            {ITCH_TABS.map((t) => {
+              const on = tab === t.id;
+              const researchLive = t.id === 'research' && it.research.running;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={`cursor-pointer rounded-md px-3 py-1.5 text-sm transition-colors ${
+                    on
+                      ? 'bg-white/[0.06] text-mist'
+                      : 'text-mist-dim hover:bg-white/[0.03] hover:text-mist'
+                  }`}
+                >
+                  {t.label}
+                  {researchLive && (
+                    <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-jade align-middle" title="research running" />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {tab === 'ideas' && (
+            <>
+              <Feed
+                runs={runs}
+                selectedStem={selectedStem}
+                onSelect={(s) => {
+                  setSelectedStem(s);
+                  setScrollTarget(null);
+                }}
+                scrollTarget={scrollTarget}
+                onScrollTargetConsumed={onScrollTargetConsumed}
+                onRated={onRated}
+                onScoped={onScoped}
+                onRunDeleted={onRunDeleted}
+                filtersVersion={filtersVersion}
+                onFiltersChanged={onFiltersChanged}
+              />
+              <ComparePanel
+                stem={selectedStem}
+                isCollide={runs.find((r) => r.stem === selectedStem)?.isCollide ?? false}
+                riseIndex={3}
+              />
+            </>
+          )}
+
+          {tab === 'decide' && (
+            <>
+              <DecisionsPanel
+                runs={runs}
+                version={decisionsVersion}
+                onJump={(stem, title) => jumpTo(stem, undefined, title)}
+                onOpenBucket={setOpenBucket}
+              />
+              <ScopesPanel riseIndex={5} version={scopesVersion} />
+            </>
+          )}
+
+          {tab === 'research' && (
+            <ResearchStrip research={it.research} grounding={it.sxcGrounding} onSaved={onSaved} />
+          )}
+
+          {tab === 'tools' && (
+            <>
+              <SearchStrip onJump={(stem, idx) => jumpTo(stem, idx)} />
+              <ToolsPanel riseIndex={6} filtersVersion={filtersVersion} onFiltersChanged={onFiltersChanged} />
+            </>
+          )}
         </>
       )}
     </div>
@@ -203,7 +259,7 @@ export default function ItchPanel({
   if (!it) {
     return (
       <Panel title="itch">
-        <EmptyState>server snapshot has no itch section — restart the atrium daemon</EmptyState>
+        <EmptyState>The server snapshot has no itch section. Restart the atrium daemon.</EmptyState>
       </Panel>
     );
   }
@@ -211,7 +267,7 @@ export default function ItchPanel({
   if (!it.up && it.updatedAt === null && it.error === null) {
     return (
       <Panel title="itch">
-        <EmptyState>waiting for first snapshot</EmptyState>
+        <EmptyState>Waiting for the first itch snapshot.</EmptyState>
       </Panel>
     );
   }

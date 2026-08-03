@@ -4,18 +4,22 @@ import { addMute, removeMute } from '../api';
 import { useScrollLock } from '../hooks';
 import { SectionLabel, EmptyState, CopyText, RelTime } from './ui';
 
-const KINDS: { kind: MuteKind; placeholder: string }[] = [
-  { kind: 'github-item', placeholder: 'owner/repo#123' },
-  { kind: 'github-repo', placeholder: 'owner/repo' },
-  { kind: 'github-org', placeholder: 'org' },
-  { kind: 'github-reason', placeholder: 'review_requested' },
-  { kind: 'agent', placeholder: 'revuto' },
-  { kind: 'agent-resource', placeholder: 'revuto:owner/repo' },
-  { kind: 'schedule', placeholder: 'hermes:job-id' },
-  { kind: 'service', placeholder: 'unit.service' },
-  { kind: 'flag', placeholder: 'flag id' },
-  { kind: 'flag-source', placeholder: 'system' },
+const KINDS: { kind: MuteKind; placeholder: string; label: string }[] = [
+  { kind: 'github-item', placeholder: 'owner/repo#123', label: 'GitHub items' },
+  { kind: 'github-repo', placeholder: 'owner/repo', label: 'GitHub repos' },
+  { kind: 'github-org', placeholder: 'org', label: 'GitHub orgs' },
+  { kind: 'github-reason', placeholder: 'review_requested', label: 'GitHub reasons' },
+  { kind: 'agent', placeholder: 'revuto', label: 'Agents' },
+  { kind: 'agent-resource', placeholder: 'revuto:owner/repo', label: 'Agent resources' },
+  { kind: 'schedule', placeholder: 'hermes:job-id', label: 'Schedule' },
+  { kind: 'service', placeholder: 'unit.service', label: 'Services' },
+  { kind: 'flag', placeholder: 'flag id', label: 'Signals' },
+  { kind: 'flag-source', placeholder: 'system', label: 'Signal sources' },
 ];
+
+const KIND_LABEL: Record<string, string> = Object.fromEntries(KINDS.map((k) => [k.kind, k.label]));
+
+const AGED_MS = 30 * 86_400_000;
 
 const DURATIONS = ['1h', '4h', 'today', '24h', '7d', 'forever'] as const;
 type Duration = (typeof DURATIONS)[number];
@@ -111,19 +115,28 @@ function KeepQuietButton({ m }: { m: Mute }) {
 }
 
 function MuteEntry({ m }: { m: Mute }) {
+  const aged = Date.now() - new Date(m.createdAt).getTime() >= AGED_MS;
   return (
     <li className="flex items-center gap-2 rounded border-b px-1 py-2 transition-colors last:border-b-0 hairline hover:bg-white/[0.03]">
       <div className="min-w-0 flex-1">
         <CopyText text={m.target} className="block w-full">
           <span className="block truncate text-sm text-mist">{m.target}</span>
         </CopyText>
-        <div className="flex items-baseline gap-2">
+        <div className="flex flex-wrap items-baseline gap-2">
           {m.enforcedBy && (
             <span className="truncate font-mono text-[10px] text-mist-faint" title={m.enforcedBy}>
               {m.enforcedBy}
             </span>
           )}
           <RelTime iso={m.createdAt} />
+          {aged && (
+            <span
+              className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-amber/90"
+              title="Quieted for 30+ days — consider restoring or keeping forever"
+            >
+              30d+
+            </span>
+          )}
         </div>
       </div>
       {m.untilActivity ? (
@@ -158,6 +171,7 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
   const [error, setError] = useState<string | null>(null);
   const [clearArmed, setClearArmed] = useState<string | null>(null);
   const [clearing, setClearing] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const panelRef = useRef<HTMLElement>(null);
 
   // esc is handled centrally in App (topmost overlay first) — no window listener here.
@@ -168,12 +182,22 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
   }, []);
 
   const active = snapshot.mutes.filter((m) => !m.until || new Date(m.until).getTime() > Date.now());
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? active.filter(
+        (m) =>
+          m.target.toLowerCase().includes(q) ||
+          m.kind.toLowerCase().includes(q) ||
+          (KIND_LABEL[m.kind] ?? '').toLowerCase().includes(q) ||
+          (m.enforcedBy?.toLowerCase().includes(q) ?? false),
+      )
+    : active;
 
   // group by kind, in KINDS order, then anything unexpected at the end
   const knownOrder = KINDS.map((k) => k.kind);
   const groups = new Map<MuteKind, Mute[]>();
   for (const k of knownOrder) groups.set(k, []);
-  for (const m of active) {
+  for (const m of filtered) {
     const list = groups.get(m.kind);
     if (list) list.push(m);
     else groups.set(m.kind, [m]);
@@ -227,6 +251,12 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
           <div>
             <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-amber">Workspace</div>
             <h2 className="mt-1 text-lg font-semibold text-mist">Quiet archive</h2>
+            {active.length > 0 && (
+              <p className="mt-1 font-mono text-[11px] tabular-nums text-mist-faint">
+                {active.length} quieted
+                {q ? ` · ${filtered.length} match` : ''}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -238,8 +268,35 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
           </button>
         </header>
 
+        {active.length > 0 && (
+          <div className="mb-4 flex flex-col gap-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter by target, kind…"
+              className={`${FIELD} font-mono text-xs`}
+              aria-label="Filter quiet archive"
+            />
+            {active.length > 1 && (
+              <button
+                type="button"
+                disabled={clearing === '__all__'}
+                onClick={() => void clearGroup('__all__', active.map((m) => m.id))}
+                className={`self-end cursor-pointer rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                  clearArmed === '__all__' ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
+                }`}
+              >
+                {clearing === '__all__' ? '…' : clearArmed === '__all__' ? 'restore everything?' : 'restore all'}
+              </button>
+            )}
+          </div>
+        )}
+
         {active.length === 0 ? (
           <EmptyState>Items you quiet will stay here until you bring them back.</EmptyState>
+        ) : filtered.length === 0 ? (
+          <EmptyState>No quieted items match that filter.</EmptyState>
         ) : (
           [...groups.entries()]
             .filter(([, list]) => list.length > 0)
@@ -247,7 +304,7 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
               <div key={k}>
                 <div className="flex items-baseline justify-between">
                   <SectionLabel>
-                    {k} · {list.length}
+                    {KIND_LABEL[k] ?? k} · {list.length}
                   </SectionLabel>
                   {list.length > 1 && (
                     <button
@@ -258,7 +315,7 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
                         clearArmed === k ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
                       }`}
                     >
-                      {clearing === k ? '…' : clearArmed === k ? 'sure?' : 'clear all'}
+                      {clearing === k ? '…' : clearArmed === k ? 'sure?' : 'restore all'}
                     </button>
                   )}
                 </div>
@@ -287,7 +344,7 @@ export default function MutesDrawer({ snapshot, onClose }: { snapshot: Snapshot;
               <select id="mute-kind" className={FIELD} value={kind} onChange={(e) => setKind(e.target.value as MuteKind)}>
                 {KINDS.map((k) => (
                   <option key={k.kind} value={k.kind}>
-                    {k.kind}
+                    {k.label} ({k.kind})
                   </option>
                 ))}
               </select>

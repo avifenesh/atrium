@@ -26,13 +26,13 @@ export default function ExtraPanel({ section, sectionKey }: { section: ExtraSect
       </div>
 
       {section.error && (
-        <div className="glass rounded-lg p-4 text-sm text-coral">{section.error}</div>
+        <div className="panel-surface rounded-lg p-4 text-sm text-coral">{section.error}</div>
       )}
 
       {rows.length === 0 && !section.error ? (
-        <div className="glass rounded-lg p-4 text-sm text-mist-faint">no data</div>
+        <div className="panel-surface rounded-lg p-4 text-sm text-mist-faint">No data yet.</div>
       ) : (
-        <div className="glass rounded-lg p-4">
+        <div className="panel-surface rounded-lg p-4">
           <ul className="space-y-1.5">
             {rows.map((r, i) => (
               <li key={i} className="flex items-baseline justify-between gap-3 text-sm">

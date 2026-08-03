@@ -204,7 +204,7 @@ function Uptime({ launched }: { launched: string | null }) {
 function CloudCard({ cloud, riseIndex }: { cloud: CloudState; riseIndex: number }) {
   const { instances, totalMonthlyUsd, updatedAt, error } = cloud;
   return (
-    <article className="glass rise flex min-w-0 flex-col p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
+    <article className="panel-surface rise flex min-w-0 flex-col p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
       <Row href="https://console.aws.amazon.com/ec2/home#Instances:">
         <div className="flex w-full min-w-0 items-center gap-2">
           <h3 className="min-w-0 truncate text-sm font-semibold text-mist">cloud — ec2</h3>
@@ -252,7 +252,7 @@ function CloudCard({ cloud, riseIndex }: { cloud: CloudState; riseIndex: number 
       ) : (
         !error && (
           <div className="mt-2 px-2.5 text-xs text-mist-faint">
-            {updatedAt === null ? 'waiting for first poll' : 'no running instances'}
+            {updatedAt === null ? 'Waiting for the first poll.' : 'No running instances.'}
           </div>
         )
       )}
@@ -274,14 +274,14 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
       {error && (
         <div className="mb-4 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">{error}</div>
       )}
-      {services.length === 0 && <EmptyState>no subscriptions discovered</EmptyState>}
+      {services.length === 0 && <EmptyState>No subscriptions were discovered yet.</EmptyState>}
       <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
         {services.map((s, i) => {
             const consoleUrl = CONSOLE_URL[s.id] ?? null;
             return (
               <article
                 key={s.id}
-                className="glass rise flex min-w-0 flex-col p-4"
+                className="panel-surface rise flex min-w-0 flex-col p-4"
                 style={{ '--rise-i': i } as CSSProperties}
               >
                 <Row href={consoleUrl ?? undefined}>

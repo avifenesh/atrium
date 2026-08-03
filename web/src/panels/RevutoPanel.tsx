@@ -325,7 +325,7 @@ export default function RevutoPanel({
   if (!r) {
     return (
       <Panel title="revuto">
-        <EmptyState>server snapshot has no revuto section — restart the atrium daemon</EmptyState>
+        <EmptyState>The server snapshot has no revuto section. Restart the atrium daemon.</EmptyState>
       </Panel>
     );
   }
@@ -354,7 +354,7 @@ export default function RevutoPanel({
   if (fresh) {
     return (
       <Panel title="revuto">
-        <EmptyState>waiting for first snapshot</EmptyState>
+        <EmptyState>Waiting for the first revuto snapshot.</EmptyState>
       </Panel>
     );
   }
@@ -389,7 +389,7 @@ export default function RevutoPanel({
 
       {counts && (
         <section
-          className="glass rise mb-4 flex flex-wrap items-baseline gap-x-8 gap-y-3 px-4 py-4 xl:px-5"
+          className="panel-surface rise mb-4 flex flex-wrap items-baseline gap-x-8 gap-y-3 px-4 py-4 xl:px-5"
           style={{ '--rise-i': 0 } as CSSProperties}
         >
           <div className="flex items-baseline gap-1.5">
@@ -460,7 +460,9 @@ export default function RevutoPanel({
           onQuietClick={onOpenQuiet}
         >
           {visibleReviewers.length === 0 ? (
-            <EmptyState>{r.reviewers.length > 0 ? 'all reviewers quieted' : 'no reviewers'}</EmptyState>
+            <EmptyState>
+              {r.reviewers.length > 0 ? 'All reviewers are quieted.' : 'No reviewers are configured.'}
+            </EmptyState>
           ) : (
             <div className="grid gap-x-2 sm:grid-cols-2 2xl:grid-cols-3">
               {visibleReviewers.map((rv) => (
@@ -480,7 +482,7 @@ export default function RevutoPanel({
           }
         >
           {jobs.length === 0 ? (
-            <EmptyState>no jobs lately — review runs land here</EmptyState>
+            <EmptyState>No jobs lately. Review runs land here.</EmptyState>
           ) : (
             <div className="max-h-80 overflow-y-auto">
               {jobs.map((j, i) => (
@@ -500,7 +502,7 @@ export default function RevutoPanel({
           }
         >
           {logs.length === 0 ? (
-            <EmptyState>nothing logged lately</EmptyState>
+            <EmptyState>Nothing has been logged lately.</EmptyState>
           ) : (
             <div className="max-h-80 overflow-y-auto font-mono text-xs">
               {logs.map((l, i) => (

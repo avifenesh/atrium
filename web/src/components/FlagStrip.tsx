@@ -30,6 +30,13 @@ const VIEW_FOR: Record<string, string> = {
   comms: 'comms',
   notes: 'notes',
   surreal: 'system',
+  revuto: 'revuto',
+  itch: 'itch',
+  backup: 'system',
+  cloud: 'subs',
+  repos: 'tasks',
+  google: 'comms',
+  spotify: 'subs',
 };
 
 function viewFor(f: Flag): string | null {

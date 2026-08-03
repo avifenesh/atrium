@@ -1,13 +1,11 @@
 import type { CSSProperties } from 'react';
+import { workingAgents } from '../agentWork';
+import { eventTimeLabel, isEffectivelyAllDay } from '../calendarTime';
 import { isMuted } from '../api';
 import { Dot, EmptyState, MuteButton, Panel, RelTime, Row, SendToEigen } from '../components/ui';
 import Spark from '../components/Spark';
 import { getSeries, pctTone, useFirstSeen, useNow, useTweenNumber } from '../hooks';
 import type { CalendarEvent, Snapshot } from '../../../shared/types';
-
-function hhmm(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-}
 
 function hhmmss(iso: string): string {
   return new Date(iso).toLocaleTimeString([], {
@@ -61,7 +59,7 @@ function Stat({
 function NextEventCountdown({ events }: { events: CalendarEvent[] }) {
   const now = useNow(30000);
   const next = events
-    .filter((ev) => !ev.allDay && new Date(ev.start).getTime() > now)
+    .filter((ev) => !isEffectivelyAllDay(ev) && new Date(ev.start).getTime() > now)
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())[0];
   if (!next) return null;
   const mins = Math.max(1, Math.ceil((new Date(next.start).getTime() - now) / 60000));
@@ -95,7 +93,8 @@ export default function NowView({
   const actNowHidden = github.actNow.filter((it) => !orgIds.has(it.id)).length - actNow.length;
   const orgReview = orgQueue.filter((it) => it.lane === 'review');
   const freshIds = useFirstSeen([...actNow.map((it) => it.id), ...orgReview.map((it) => it.id)]);
-  const working = agents.agents.filter((a) => a.status === 'active' || a.status === 'running');
+  // real work only — daemons that are merely up stay out of the hero / panel
+  const working = workingAgents(agents.agents, agents.dispatches ?? []);
   // Now shows a per-source *summary* of live activity (latest event + volume),
   // not the raw feed — the full feed lives on the Agents view. Collapses a wall
   // of identical `eigen · reasoning` lines into one honest "eigen ×N" row.
@@ -185,8 +184,10 @@ export default function NowView({
                     {freshIds.has(it.id) && <span className="block h-1.5 w-1.5 rounded-full bg-amber" />}
                   </span>
                   <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
-                  <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint sm:w-36 2xl:w-44">{it.repo}</span>
                   <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
+                  <span className="hidden max-w-[10rem] shrink-0 truncate font-mono text-xs text-mist-faint sm:inline 2xl:max-w-[12rem]" title={it.repo}>
+                    {it.repo}
+                  </span>
                   <RelTime iso={it.updatedAt} />
                   <span className="row-actions mobile-row-actions">
                     <a
@@ -215,14 +216,19 @@ export default function NowView({
           )}
         </Panel>
 
-        {/* live activity — per-source summary; the raw feed is on the Agents view */}
+        {/* live activity — per-source summary; click through to the Agents feed */}
         <Panel title="Live activity" riseIndex={6}>
           {agents.activity.length === 0 ? (
             <EmptyState>No recent agent activity.</EmptyState>
           ) : (
-            <div className="activity-rail px-2.5 font-mono text-xs">
+            <div className="activity-rail font-mono text-xs">
               {ticker.map(({ last, count }) => (
-                <div key={last.source} className="flex items-baseline gap-2 py-0.5">
+                <Row
+                  key={last.source}
+                  onClick={() => onNavigate('agents')}
+                  title={`${last.source}: ${last.text}`}
+                  className="items-baseline gap-2 py-1.5"
+                >
                   {/* dot slot is always rendered so error lines don't shift the columns */}
                   <span
                     className={`h-1 w-1 shrink-0 self-center rounded-full ${last.isError ? 'bg-coral' : 'bg-transparent'}`}
@@ -239,7 +245,7 @@ export default function NowView({
                       ×{count}
                     </span>
                   )}
-                </div>
+                </Row>
               ))}
             </div>
           )}
@@ -252,20 +258,45 @@ export default function NowView({
           <Panel title="Waiting on you" riseIndex={2}>
             <div className="max-h-64 space-y-0.5 overflow-y-auto">
               {orgReview.slice(0, 5).map((it) => (
-                <Row key={it.id} onClick={() => onOpenItem(it.repo, it.number)} title={it.title}>
+                <Row
+                  key={it.id}
+                  onClick={() => onOpenItem(it.repo, it.number)}
+                  title={it.title}
+                  className="flex-wrap sm:flex-nowrap"
+                >
                   <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
                     {freshIds.has(it.id) && <span className="block h-1.5 w-1.5 rounded-full bg-amber" />}
                   </span>
                   <span className="h-4 w-0.5 shrink-0 rounded-full bg-amber/80" />
-                  <span className="shrink-0 whitespace-nowrap rounded border hairline px-1.5 py-px font-mono text-[10px] text-mist-faint">
-                    {it.scope}
-                  </span>
-                  <span className="w-24 shrink-0 truncate font-mono text-xs text-mist-faint">{it.repo}</span>
                   <span className="min-w-0 flex-1 truncate text-sm text-mist">{it.title}</span>
+                  <span className="hidden max-w-[9rem] shrink-0 truncate font-mono text-xs text-mist-faint sm:inline" title={it.repo}>
+                    {it.repo}
+                  </span>
                   <span className="hidden shrink-0 whitespace-nowrap font-mono text-[11px] text-mist-faint sm:inline">
                     @{it.author}
                   </span>
                   <RelTime iso={it.updatedAt} />
+                  <span className="row-actions mobile-row-actions">
+                    <a
+                      href={it.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title="open on github"
+                      className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                    >
+                      github
+                    </a>
+                    <SendToEigen
+                      title={it.title}
+                      url={it.url}
+                      repo={it.repo}
+                      sourceId={it.id}
+                      dispatches={agents.dispatches ?? []}
+                    />
+                    <MuteButton kind="github-item" target={it.id} untilActivity />
+                    <MuteButton kind="github-repo" target={it.repo} label="repo" className="opacity-60" />
+                  </span>
                 </Row>
               ))}
             </div>
@@ -280,7 +311,7 @@ export default function NowView({
               {comms.calendar.today.map((ev) => (
                 <Row key={ev.id} onClick={() => onNavigate('comms')} title={ev.title}>
                   <span className="w-14 shrink-0 font-mono text-xs tabular-nums text-mist-dim">
-                    {ev.allDay ? 'all day' : hhmm(ev.start)}
+                    {eventTimeLabel(ev)}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm text-mist">{ev.title}</span>
                 </Row>

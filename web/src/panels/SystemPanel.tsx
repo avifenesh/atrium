@@ -246,7 +246,11 @@ export default function SystemPanel({
           onQuietClick={openQuiet}
         >
           {visibleServices.length === 0 ? (
-            <EmptyState>No services are being watched.</EmptyState>
+            <EmptyState>
+              No services are being watched. Add unit names under{' '}
+              <span className="font-mono text-mist-dim">watchedUnits</span> in{' '}
+              <span className="font-mono text-mist-dim">~/.config/atrium/config.json</span>, then restart atrium.
+            </EmptyState>
           ) : (
             <div className="max-h-64 overflow-y-auto">
               {visibleServices.map((s) => (

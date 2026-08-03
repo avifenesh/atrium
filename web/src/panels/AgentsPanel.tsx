@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { isAgentWorking } from '../agentWork';
 import { agentAction, isMuted } from '../api';
 import {
   CopyText,
@@ -141,7 +142,7 @@ function AgentCard({
 
   return (
     <section
-      className="glass rise flex h-full min-w-0 flex-col p-4"
+      className="panel-surface rise flex h-full min-w-0 flex-col p-4"
       style={{ '--rise-i': riseIndex } as CSSProperties}
     >
       <Row onClick={() => setExpanded((o) => !o)}>
@@ -356,6 +357,12 @@ export default function AgentsPanel({
   // muted agents disappear from the grid — quiet chip is the way back (drawer = archive)
   const visible = agents.filter((a) => !isMuted(snapshot, 'agent', a.id));
   const quietAgents = agents.length - visible.length;
+  // working agents first, then errors, then calm daemons
+  const ordered = [...visible].sort((a, b) => {
+    const score = (x: AgentInfo) =>
+      isAgentWorking(x, dispatches) ? 0 : x.status === 'error' ? 1 : x.status === 'running' ? 2 : 3;
+    return score(a) - score(b) || a.name.localeCompare(b.name);
+  });
 
   return (
     <div>
@@ -365,13 +372,13 @@ export default function AgentsPanel({
         </div>
       )}
 
-      {visible.length === 0 ? (
+      {ordered.length === 0 ? (
         <Panel title="Agent status" quietCount={quietAgents || undefined} onQuietClick={openQuiet}>
           <EmptyState>No agents are reporting.</EmptyState>
         </Panel>
       ) : (
         <div className="grid items-stretch gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-          {visible.map((a, i) => (
+          {ordered.map((a, i) => (
             <AgentCard
               key={a.id}
               agent={a}

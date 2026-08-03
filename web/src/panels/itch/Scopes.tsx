@@ -69,7 +69,7 @@ export function ScopesPanel({ riseIndex, version }: { riseIndex: number; version
             <span className="animate-pulse">loading…</span>
           </EmptyState>
         ) : scopes.length === 0 ? (
-          <EmptyState>no scopes yet — rate an idea 5, then scope it</EmptyState>
+          <EmptyState>No scopes yet. Rate an idea 5, then scope it.</EmptyState>
         ) : (
           scopes.map((s) => (
             <Row key={s.file} onClick={() => setSheet({ file: s.file, title: s.title })} title="read this scope">

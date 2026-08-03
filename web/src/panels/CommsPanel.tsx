@@ -1,12 +1,8 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { Snapshot, CalendarEvent, CommsState } from '../../../shared/types';
 import { connectGoogle } from '../api';
+import { eventTimeLabel, isEffectivelyAllDay } from '../calendarTime';
 import { Panel, SectionLabel, RelTime, EmptyState, Row } from '../components/ui';
-
-function hm(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 /** Non-auth trouble (transient fetch error, disabled) when google IS connected. */
 function StatusBanner({ box }: { box: CommsState['email'] | CommsState['calendar'] }) {
@@ -81,7 +77,7 @@ function EventRow({ ev, highlight, showDate }: { ev: CalendarEvent; highlight?: 
         title={ev.location ? `${ev.title} — ${ev.location}` : ev.title}
       >
         <span className="w-20 shrink-0 font-mono text-xs tabular-nums text-mist-dim sm:w-24">
-          {ev.allDay ? 'all day' : `${hm(ev.start)}–${hm(ev.end)}`}
+          {eventTimeLabel(ev, true)}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-mist">{ev.title}</span>
         {showDate && (
@@ -107,10 +103,15 @@ export default function CommsPanel({ snapshot }: { snapshot: Snapshot }) {
   // highlight the event happening now, else the next one to start today
   let highlightId: string | null = null;
   const current = today.find(
-    (e) => !e.allDay && new Date(e.start).getTime() <= now && now < new Date(e.end).getTime(),
+    (e) =>
+      !isEffectivelyAllDay(e) &&
+      new Date(e.start).getTime() <= now &&
+      now < new Date(e.end).getTime(),
   );
   if (current) highlightId = current.id;
-  else highlightId = today.find((e) => new Date(e.start).getTime() > now)?.id ?? null;
+  else
+    highlightId =
+      today.find((e) => !isEffectivelyAllDay(e) && new Date(e.start).getTime() > now)?.id ?? null;
 
   const upcoming = [...calendar.upcoming].sort((a, b) => a.start.localeCompare(b.start));
   const byDay: { label: string; events: CalendarEvent[] }[] = [];

@@ -94,6 +94,8 @@ export function ResearchStrip({
   // forced onto bm25 (use while the ColBERT index is stale/rebuilding); false =
   // the skill's own ColBERT choice applies. Loaded once; flips persist server-side.
   const [fallbackBm25, setFallbackBm25State] = useState(false);
+  // idle setup form — collapsed by default; opens when exit/resume/grounding needs attention
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const linesRef = useRef(0); // absolute log lines we hold (the delta protocol's `since`)
   const pollFailsRef = useRef(0);
@@ -107,6 +109,14 @@ export function ResearchStrip({
   useEffect(() => {
     setGroundingState(grounding ?? EMPTY_GROUNDING);
   }, [grounding]);
+
+  // open the setup form when something actionable lands (exit line, resume, grounding queue)
+  useEffect(() => {
+    if (running) return;
+    if (exit || research.resumable || (groundingState?.pending?.length ?? 0) > 0) {
+      setSetupOpen(true);
+    }
+  }, [running, exit, research.resumable, groundingState?.pending?.length]);
 
   // a run started elsewhere (cli, another tab): snapshot's started changes → follow it again
   const prevStartedProp = useRef(research.started);
@@ -488,9 +498,37 @@ export function ResearchStrip({
   return (
     <section className="panel-surface rise mb-4 px-4 py-3 xl:px-5" style={{ '--rise-i': 0 } as CSSProperties}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[13px] font-semibold text-mist">Research setup</h2>
+        <button
+          type="button"
+          onClick={() => setSetupOpen((o) => !o)}
+          className="flex min-w-0 cursor-pointer items-baseline gap-2 text-left"
+        >
+          <h2 className="text-[13px] font-semibold text-mist">Research setup</h2>
+          <span className="font-mono text-[10px] text-mist-faint">{setupOpen ? '▾' : '▸'}</span>
+        </button>
         <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-faint">idea finder</span>
       </div>
+      {!setupOpen && (
+        <div className="flex flex-wrap items-center gap-3">
+          {exitView && <span className={`font-mono text-xs ${exitView.tone}`}>{exitView.text}</span>}
+          {!exitView && (
+            <span className="text-sm text-mist-dim">Configure flags and start a research run.</span>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setSetupOpen(true);
+              void start();
+            }}
+            className="ml-auto cursor-pointer rounded-md px-3 py-1.5 font-mono text-[12px] text-mist-dim press glass glass-hover hover:text-mist disabled:opacity-50"
+          >
+            {busy ? '◌' : 'Start research'}
+          </button>
+        </div>
+      )}
+      {setupOpen && (
+      <>
       {exitView && (
         <div className="fade-in mb-2 flex items-center gap-2">
           <span className={`font-mono text-xs ${exitView.tone}`}>{exitView.text}</span>
@@ -639,6 +677,8 @@ export function ResearchStrip({
           </button>
         </span>
       </div>
+      </>
+      )}
     </section>
   );
 }

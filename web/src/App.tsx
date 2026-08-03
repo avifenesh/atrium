@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { workingAgents } from './agentWork';
 import { isMuted, useSnapshot } from './api';
 import { recordSystemSample, useNow, useScrollLock } from './hooks';
 import NowView from './panels/NowView';
@@ -51,12 +52,15 @@ function isCoreViewId(v: string): boolean {
 /** Wordmark — the ONLY serif besides hero numerals (DESIGN v2). */
 function Wordmark({ connected, className = '' }: { connected: boolean; className?: string }) {
   return (
-    <span className={`whitespace-nowrap ${className}`}>
+    <span className={`inline-flex items-baseline gap-2 whitespace-nowrap ${className}`}>
       <span className="font-display italic leading-none">atrium</span>
       <span
-        className={`ml-2 inline-block h-1.5 w-1.5 rounded-full align-middle ${connected ? 'breathe bg-jade' : 'bg-coral'}`}
+        className={`inline-block h-1.5 w-1.5 shrink-0 self-center rounded-full ${connected ? 'breathe bg-jade' : 'bg-coral'}`}
         title={connected ? 'live' : 'reconnecting'}
       />
+      {!connected && (
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-coral">Reconnecting…</span>
+      )}
     </span>
   );
 }
@@ -186,7 +190,8 @@ export default function App() {
       tasks: taskIds.size,
       tasksCls: tasksAttention ? 'text-amber' : 'text-mist-faint',
       comms: snapshot.comms.email.unreadCount,
-      agents: snapshot.agents.agents.filter((a) => a.status === 'active' || a.status === 'running').length,
+      // only agents doing real work — daemons that are merely up stay out of the badge
+      agents: workingAgents(snapshot.agents.agents, snapshot.agents.dispatches ?? []).length,
       revuto: revutoFails,
       system: flags.length,
       systemCls,
@@ -326,10 +331,20 @@ export default function App() {
 
   return (
     <div className="app-shell mx-auto min-h-dvh w-full max-w-[1920px] px-3 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-5 sm:pt-4 lg:px-7 lg:pb-6 lg:pt-6">
-      {/* mobile top — wordmark + quiet; views live in bottom nav */}
-      <header className="mb-3 flex items-center justify-between gap-3 lg:hidden">
-        <Wordmark connected={connected} className="shrink-0 text-2xl" />
-        <QuietButton count={activeMutes.length} onClick={openQuiet} className="shrink-0 px-3 py-2" />
+      {/* mobile top — wordmark + find + quiet; views live in bottom nav */}
+      <header className="mb-3 flex items-center justify-between gap-2 lg:hidden">
+        <Wordmark connected={connected} className="min-w-0 shrink text-2xl" />
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="command-trigger cursor-pointer px-3 py-2 font-mono text-[11px] text-mist-dim transition-colors hover:text-mist"
+            title="Find or switch"
+          >
+            Find
+          </button>
+          <QuietButton count={activeMutes.length} onClick={openQuiet} className="px-3 py-2" />
+        </div>
       </header>
 
       <div className="flex gap-6 lg:gap-10">
@@ -392,6 +407,11 @@ export default function App() {
               <span className="kbd">⌘K</span>
             </button>
           </header>
+          {!connected && (
+            <div className="mb-4 rounded-lg border border-coral/30 bg-coral/10 px-3 py-2 font-mono text-xs text-coral">
+              Live connection lost — reconnecting to the local snapshot…
+            </div>
+          )}
           <FlagStrip snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} />
           {activeView === 'now' && (
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
@@ -441,8 +461,9 @@ export default function App() {
                 key={v.id}
                 type="button"
                 onClick={() => navigate(v.id)}
-                className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
-                  on ? 'text-mist' : 'text-mist-faint'
+                aria-current={on ? 'page' : undefined}
+                className={`mobile-nav-button flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
+                  on ? 'is-active text-mist' : 'text-mist-faint'
                 }`}
               >
                 <span className="font-mono text-[12px] leading-none">{v.label}</span>
@@ -456,8 +477,8 @@ export default function App() {
             aria-controls="mobile-more-sheet"
             aria-expanded={moreOpen}
             onClick={() => setMoreOpen((open) => !open)}
-            className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
-              moreOpen || !primaryActive ? 'text-mist' : 'text-mist-faint'
+            className={`mobile-nav-button flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 text-[11px] transition-colors ${
+              moreOpen || !primaryActive ? 'is-active text-mist' : 'text-mist-faint'
             }`}
           >
             <span className="font-mono text-[12px] leading-none">More</span>

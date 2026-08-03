@@ -243,7 +243,7 @@ export default function NotesPanel({
       {/* list narrows to a left column; hidden below lg while reading */}
       <div className="hidden min-w-0 lg:block lg:w-72 lg:shrink-0">{list}</div>
 
-      <section className="glass rise min-w-0 flex-1 p-4 xl:p-5" style={{ '--rise-i': 1 } as CSSProperties}>
+      <section className="panel-surface rise min-w-0 flex-1 p-4 xl:p-5" style={{ '--rise-i': 1 } as CSSProperties}>
         <header className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-baseline sm:gap-3">
           <div className="flex min-w-0 items-baseline gap-3 sm:flex-1">
             <button
