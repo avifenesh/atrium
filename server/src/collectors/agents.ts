@@ -10,12 +10,13 @@ import { collectAnyMission } from './agents/any-mission.js';
 import { collectClaude } from './agents/claude.js';
 import { collectCodex } from './agents/codex.js';
 import { collectEigen } from './agents/eigen.js';
+import { collectGrok } from './agents/grok.js';
 import { collectHermes } from './agents/hermes.js';
 import { collectItch } from './agents/itch.js';
 import { collectRevuto } from './agents/revuto.js';
 import { collectTraining } from './agents/training.js';
 
-/** Stable order — the UI relies on it. claude/codex are universal AI CLIs; the rest
+/** Stable order — the UI relies on it. claude/codex/grok are universal AI CLIs; the rest
  *  integrate the author's bespoke tooling. Disable any with config.collectors.disabled
  *  entry 'agents:<id>' (e.g. 'agents:itch'). */
 const ALL_SOURCES: [AgentId, string, () => Promise<SourceResult>][] = [
@@ -23,10 +24,11 @@ const ALL_SOURCES: [AgentId, string, () => Promise<SourceResult>][] = [
   ['hermes', 'Hermes', collectHermes],
   ['itch', 'Itch', collectItch],
   ['any-mission', 'Any-Mission', collectAnyMission],
-  ['eigen', 'Eigen', collectEigen],
   ['claude', 'Claude Code', collectClaude],
+  ['grok', 'Grok', collectGrok],
   ['codex', 'Codex', collectCodex],
   ['training', 'Training', collectTraining],
+  ['eigen', 'Eigen', collectEigen],
 ];
 
 const SOURCES = ALL_SOURCES.filter(([id]) => !isDisabled(`agents:${id}`));

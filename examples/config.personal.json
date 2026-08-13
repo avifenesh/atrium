@@ -5,6 +5,7 @@
     "login": "avifenesh",
     "ownOrgs": ["agent-sh"],
     "noiseOrgs": ["zelos-social"],
+    "noiseRepos": ["valkey-io/valkey-glide"],
     "reviewBotNoiseLogins": ["gemini-code-assist"]
   },
 
@@ -38,11 +39,12 @@
   },
 
   "watchedUnits": [
+    "atrium.service",
+    "atrium-reentry-agent.timer",
+    "mention-radar.timer",
     "revuto-surreal.service",
-    "revuto-embedder.service",
+    "revuto-dashboard.service",
     "hermes-gateway.service",
-    "bedrock-codex-bridge.service",
-    "voiced.service",
-    "readd.service"
+    "voiced.service"
   ]
 }

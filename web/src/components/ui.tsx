@@ -101,17 +101,19 @@ export function Row({
   children,
   className = '',
   title,
+  id,
 }: {
   onClick?: () => void;
   href?: string;
   children: ReactNode;
   className?: string;
   title?: string;
+  id?: string;
 }) {
   const base = `surface-row group row-glide flex w-full min-w-0 items-center gap-2 px-2.5 py-2.5 text-left transition-colors ${className}`;
   if (!href && !onClick) {
     return (
-      <div className={base} title={title}>
+      <div id={id} className={base} title={title}>
         {children}
       </div>
     );
@@ -119,6 +121,7 @@ export function Row({
   const activate = href ? () => window.open(href, '_blank', 'noopener,noreferrer') : onClick!;
   return (
     <div
+      id={id}
       role={href ? 'link' : 'button'}
       tabIndex={0}
       title={title}
@@ -166,8 +169,8 @@ export function CopyText({ text, children, className = '' }: { text: string; chi
   );
 }
 
-/** Hand a task to eigen from a row's hover cluster. While a dispatch for this
- *  sourceId is running, renders a jade "eigen" status chip instead of the button. */
+/** Open a task in grok from a row's hover cluster. While a dispatch for this
+ *  sourceId is running, renders a jade "grok" status chip instead of the button. */
 export function SendToEigen({
   title,
   url,
@@ -182,22 +185,33 @@ export function SendToEigen({
   dispatches: EigenDispatch[];
 }) {
   const [state, setState] = useState<'idle' | 'busy' | 'sent' | 'failed'>('idle');
+  const [sentId, setSentId] = useState<string | null>(null);
   const running =
     sourceId !== undefined && dispatches.some((d) => d.status === 'running' && d.sourceId === sourceId);
-  if (running) {
+  const runningId = sourceId
+    ? dispatches.find((d) => d.status === 'running' && d.sourceId === sourceId)?.id
+    : undefined;
+  const logId = runningId ?? sentId;
+  if (running || logId) {
     return (
-      <span
-        className="shrink-0 whitespace-nowrap rounded-full bg-jade/10 px-2 py-0.5 font-mono text-[10px] text-jade"
-        title="eigen is working on this"
+      <button
+        type="button"
+        title="open grok dispatch log"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (logId) location.hash = `agents/dispatch-${logId}`;
+        }}
+        className="shrink-0 cursor-pointer whitespace-nowrap rounded-full bg-jade/10 px-2 py-0.5 font-mono text-[10px] text-jade"
       >
-        eigen
-      </span>
+        {running ? 'grok' : 'log'}
+      </button>
     );
   }
   return (
     <button
       type="button"
-      title="hand this task to eigen"
+      title="open this in grok"
       disabled={state === 'busy'}
       onClick={async (e) => {
         e.preventDefault();
@@ -207,6 +221,7 @@ export function SendToEigen({
         try {
           const res = await dispatchToEigen({ title, url, repo, sourceId });
           if ('error' in res) throw new Error(res.error);
+          if ('id' in res && typeof res.id === 'string') setSentId(res.id);
           setState('sent');
         } catch {
           setState('failed');
@@ -217,7 +232,7 @@ export function SendToEigen({
         state === 'sent' ? 'text-jade' : state === 'failed' ? 'text-coral' : 'text-mist-faint hover:text-amber'
       }`}
     >
-      {state === 'busy' ? '…' : state === 'sent' ? 'sent' : state === 'failed' ? 'failed' : '→ eigen'}
+      {state === 'busy' ? '…' : state === 'sent' ? 'sent' : state === 'failed' ? 'failed' : 'open in grok'}
     </button>
   );
 }

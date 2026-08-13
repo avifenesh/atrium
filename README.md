@@ -30,11 +30,11 @@ git clone https://github.com/avifenesh/atrium && cd atrium
 `install.sh` renders `scripts/atrium.service.in` with the current `node` path and repo
 location, so an nvm upgrade just needs a re-run.
 
-Optional — register the MCP server with your MCP host (the bundled script writes an
-`mcp.json` entry; it targets `~/.eigen` by default, adapt the path for Claude Code / Cursor / etc.):
+Optional — register the MCP server with your MCP host:
 
 ```sh
-node scripts/register-eigen.mjs
+node scripts/register-eigen.mjs   # ~/.eigen/mcp.json
+node scripts/register-grok.mjs    # ~/.grok/config.toml [mcp_servers.atrium]
 ```
 
 ## Quick start: make it yours
@@ -48,7 +48,8 @@ over the defaults. A minimal config:
   "github": {
     "login": "your-gh-username",
     "ownOrgs": ["your-org"],       // repos here count as "your repos"
-    "noiseOrgs": []                // orgs excluded from authored-issue noise
+    "noiseOrgs": [],               // orgs excluded from authored-issue noise
+    "noiseRepos": []               // repos dropped from every GitHub lane
   },
   "watchedUnits": ["my-service.service"],  // systemd --user units in the system view
   "notify": {
@@ -113,7 +114,7 @@ For scripting or building on atrium, the daemon exposes:
 | --- | --- |
 | snapshot | `GET /api/health` · `GET /api/snapshot` · `GET /api/stream` (SSE) · `POST /api/refresh/:collector` |
 | mutes | `POST /api/mutes` · `DELETE /api/mutes/:id` |
-| agents | `POST /api/agents/:id/:action` · `POST /api/eigen/dispatch` |
+| agents | `POST /api/agents/:id/:action` · `POST /api/grok/dispatch` |
 | github | `GET /api/github/item` · `POST /api/github/comment` · `POST /api/notifications/read` |
 | notes | `GET /api/notes/read` · `POST /api/notes/write` (optimistic concurrency, 409 on conflict) |
 | google | `GET /api/google/status` · `GET /api/google/auth-url` · `GET /api/google/callback` |
@@ -127,7 +128,7 @@ Plugin collectors may register their own routes (the bundled itch plugin proxies
 
 Safety comes from never being reachable, not from a login:
 
-- binds `127.0.0.1` only and refuses any non-loopback host — the eigen dispatch route spawns an agent with your credentials, so LAN exposure is never acceptable
+- binds `127.0.0.1` only and refuses any non-loopback host — the grok dispatch route spawns an agent with your credentials, so LAN exposure is never acceptable
 - strict `Host` allowlist (DNS-rebinding defense) and same-origin-or-absent `Origin` on every state-changing method (CSRF defense)
 - secrets never enter the snapshot, SSE stream, logs, or error responses; token files are written `0600` with atomic renames; process command lines are redacted before entering the snapshot
 - all subprocess calls are argv-array `execFile`/`spawn` (no shell), validated on every user-reachable argument

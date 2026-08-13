@@ -1,23 +1,21 @@
-// "send to eigen" — hand a task (usually a github item) to the eigen agent.
-// Prefers the eigen daemon socket; falls back to a detached headless run whose
-// output lands in ~/.config/atrium/eigen-runs/<id>.log. Runs are persisted to
-// runs.json so the agents collector can render them across restarts.
+// "open in grok" — hand a task (usually a github item) to a detached grok
+// headless run. Output lands in ~/.config/atrium/eigen-runs/<id>.log (legacy
+// dir name; the record is the same dispatch log the agents panel renders).
+// Runs persist in runs.json so they survive atrium restarts.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rename, stat, writeFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { EigenDispatch } from '../../shared/types.js';
 import { config } from './config.js';
 import { iso, readJson, tailLines } from './util.js';
 
-const EIGEN_BIN = join(homedir(), '.local', 'bin', 'eigen');
+const GROK_BIN = config.paths.grokBin;
 const RUNS_DIR = join(config.configDir, 'eigen-runs');
 const RUNS_FILE = join(RUNS_DIR, 'runs.json');
 const MAX_RUNS = 50;
-const DAEMON_TIMEOUT_MS = 1000;
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
 /** On-disk superset of EigenDispatch — pid/sessionId stay in runs.json, never in the snapshot. */
@@ -166,7 +164,7 @@ export async function dispatchToEigen(body: any): Promise<EigenDispatch> {
       title: req.title,
       prompt,
       dir,
-      mode: (await daemonSockExists()) ? 'daemon' : 'headless',
+      mode: 'headless',
       status: 'done',
       startedAt: now,
       endedAt: now,
@@ -178,33 +176,14 @@ export async function dispatchToEigen(body: any): Promise<EigenDispatch> {
   const id = randomUUID();
   const startedAt = iso();
 
-  const sessionId = await tryDaemon(dir, prompt);
-  if (sessionId) {
-    const d: StoredDispatch = {
-      id,
-      title: req.title,
-      prompt,
-      dir,
-      mode: 'daemon',
-      status: 'running',
-      startedAt,
-      endedAt: null,
-      logPath: null,
-      sourceId: req.sourceId,
-      sessionId,
-    };
-    await record(d);
-    return publicView(d);
-  }
-
-  // headless fallback: detached eigen -p, output to a per-run log
+  // detached grok -p: unattended headless run, never attach to the user's TUI
   await mkdir(RUNS_DIR, { recursive: true });
   const logPath = join(RUNS_DIR, `${id}.log`);
   // 0600: captures an autonomous agent's full output while it holds the user's credentials
   const log = await open(logPath, 'w', 0o600);
   let child: ChildProcess;
   try {
-    child = spawn(EIGEN_BIN, ['-p', prompt], {
+    child = spawn(GROK_BIN, ['-p', prompt, '--always-approve'], {
       cwd: dir,
       detached: true,
       stdio: ['ignore', log.fd, log.fd],
@@ -233,65 +212,6 @@ export async function dispatchToEigen(body: any): Promise<EigenDispatch> {
   child.on('error', () => closeRun(id, 'error')); // spawn failure (e.g. binary missing)
   await record(d);
   return publicView(d);
-}
-
-// ---------- daemon ----------
-
-async function daemonSockExists(): Promise<boolean> {
-  try {
-    await stat(config.paths.eigenDaemonSock);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** {"op":"new","dir"} → session id, then {"op":"input","id","text"}. Null on any failure within 1s. */
-function tryDaemon(dir: string, prompt: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const sock = createConnection(config.paths.eigenDaemonSock);
-    let settled = false;
-    let inputSent = false;
-    let buf = '';
-    const finish = (v: string | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      sock.destroy();
-      resolve(v);
-    };
-    const timer = setTimeout(() => finish(null), DAEMON_TIMEOUT_MS);
-    timer.unref();
-    sock.on('connect', () => {
-      sock.write(`${JSON.stringify({ op: 'new', dir })}\n`);
-    });
-    sock.on('data', (d) => {
-      if (settled || inputSent) return;
-      buf += d.toString('utf8');
-      const nl = buf.indexOf('\n');
-      if (nl < 0) return;
-      let resp: any;
-      try {
-        resp = JSON.parse(buf.slice(0, nl));
-      } catch {
-        return finish(null);
-      }
-      const sid = sessionIdFrom(resp);
-      if (!sid) return finish(null);
-      inputSent = true;
-      sock.write(`${JSON.stringify({ op: 'input', id: sid, text: prompt })}\n`, (err) => finish(err ? null : sid));
-    });
-    sock.on('error', () => finish(null));
-    sock.on('close', () => finish(null));
-  });
-}
-
-function sessionIdFrom(resp: any): string | null {
-  for (const v of [resp?.id, resp?.session_id, resp?.sessionId, resp?.session?.id]) {
-    if (typeof v === 'string' && v) return v;
-    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
-  }
-  return null;
 }
 
 // ---------- persistence ----------

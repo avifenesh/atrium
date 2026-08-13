@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { agentAction, clearAllNotifications, refreshSection, scanReentry } from '../api';
+import {
+  agentAction,
+  clearAllNotifications,
+  refreshSection,
+  resumeReentry,
+  scanReentry,
+  stopPort,
+  teachPort,
+} from '../api';
 import { useScrollLock } from '../hooks';
 import { runLabel } from '../panels/itch/util';
 import type { SectionName, Snapshot } from '../../../shared/types';
@@ -75,7 +83,7 @@ export default function CommandPalette({
   snapshot: Snapshot;
   views: readonly { id: string; label: string }[];
   onClose: () => void;
-  onNavigate: (view: string) => void;
+  onNavigate: (view: string, focus?: string | null) => void;
   onOpenQuiet: () => void;
   onOpenItem: (repo: string, number: number) => void;
   onOpenNote: (path: string) => void;
@@ -160,7 +168,60 @@ export default function CommandPalette({
         label: `${context.title} — ${context.path}`,
         tag: 're-entry',
         run: () => {
-          onNavigate('reentry');
+          onNavigate('reentry', `reentry-context-${context.id}`);
+          onClose();
+        },
+      });
+      cmds.push({
+        key: `reentry-resume:${context.id}`,
+        label: `resume this re-entry — ${context.title}`,
+        tag: 'action',
+        run: () => {
+          void resumeReentry(context.id).catch(() => {});
+          onNavigate('reentry', `reentry-context-${context.id}`);
+          onClose();
+        },
+      });
+    }
+    const last = snapshot.reentry?.lastLaunch;
+    const lastContext = last
+      ? (snapshot.reentry?.contexts ?? []).find((item) => item.id === last.contextId && item.state !== 'done')
+      : null;
+    if (lastContext) {
+      cmds.push({
+        key: 'verb:reentry-continue',
+        label: `continue last re-entry — ${lastContext.title}`,
+        tag: 'action',
+        run: () => {
+          void resumeReentry(lastContext.id).catch(() => {});
+          onNavigate('reentry', `reentry-context-${lastContext.id}`);
+          onClose();
+        },
+      });
+    }
+    for (const p of snapshot.system.ports.filter((port) => !port.known).slice(0, 20)) {
+      cmds.push({
+        key: `teach-port:${p.port}`,
+        label: `teach port ${p.port} — ${p.proc || 'unknown'}`,
+        tag: 'action',
+        run: () => {
+          void teachPort(p.port, p.label ?? (p.proc || undefined))
+            .then(() => refreshSection('system'))
+            .catch(() => {});
+          onNavigate('system', `port-${p.port}`);
+          onClose();
+        },
+      });
+      cmds.push({
+        key: `stop-port:${p.port}`,
+        label: `stop listener :${p.port} — ${p.proc || 'unknown'}`,
+        tag: 'action',
+        arm: true,
+        run: () => {
+          void stopPort(p.port)
+            .then(() => refreshSection('system'))
+            .catch(() => {});
+          onNavigate('system', `port-${p.port}`);
           onClose();
         },
       });

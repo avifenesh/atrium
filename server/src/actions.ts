@@ -44,6 +44,7 @@ export async function runAgentAction(agentId: string, action: string, target?: s
         return await itchAction(action, target);
       case 'claude':
       case 'codex':
+      case 'grok':
       case 'eigen':
       case 'training':
         return fail('not controllable');

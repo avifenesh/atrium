@@ -1,11 +1,20 @@
 import type { CSSProperties } from 'react';
 import { workingAgents } from '../agentWork';
 import { eventTimeLabel, isEffectivelyAllDay } from '../calendarTime';
-import { isMuted } from '../api';
+import { isMuted, resumeReentry } from '../api';
 import { Dot, EmptyState, MuteButton, Panel, RelTime, Row, SendToEigen } from '../components/ui';
 import Spark from '../components/Spark';
 import { getSeries, pctTone, useFirstSeen, useNow, useTweenNumber } from '../hooks';
 import type { CalendarEvent, Snapshot } from '../../../shared/types';
+
+function itchAgeDays(stem: string | null): number | null {
+  if (!stem) return null;
+  const m = stem.match(/^(\d{4})(\d{2})(\d{2})/);
+  if (!m) return null;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+}
 
 function hhmmss(iso: string): string {
   return new Date(iso).toLocaleTimeString([], {
@@ -78,7 +87,7 @@ export default function NowView({
   onOpenItem,
 }: {
   snapshot: Snapshot;
-  onNavigate: (viewId: string) => void;
+  onNavigate: (viewId: string, focus?: string | null) => void;
   onOpenQuiet?: () => void;
   onOpenItem: (repo: string, number: number) => void;
 }) {
@@ -112,41 +121,55 @@ export default function NowView({
   const gpuPct = system.gpu ? system.gpu.utilPct : null;
   // same cell set as the percent row above (gpu always present) so the two
   // justify-between rows keep their label columns vertically aligned
+  const parked = (snapshot.reentry?.contexts ?? []).filter((c) => c.state !== 'done');
+  const pickup =
+    snapshot.reentry?.briefing?.focus.find((item) => item.contextId && parked.some((c) => c.id === item.contextId)) ??
+    (parked[0]
+      ? {
+          contextId: parked[0].id,
+          title: parked[0].title,
+          whyNow: parked[0].capsule?.blocker ?? parked[0].note,
+          nextAction: parked[0].capsule?.nextAction ?? 'Resume this parked thread.',
+        }
+      : null);
+  const mentionRows = (snapshot.extra?.mentions?.rows ?? []).filter((row) => row.href).slice(0, 3);
+  const itchRun = snapshot.itch?.runs?.[0] ?? null;
+  const itchDays = itchAgeDays(itchRun?.stem ?? null);
+
   const sparkCells: Array<{ key: 'cpu' | 'mem' | 'swap' | 'gpu'; pct: number | null }> = [
     { key: 'cpu', pct: system.cpu.pct },
     { key: 'mem', pct: system.mem.usedPct },
     { key: 'swap', pct: system.swap.usedPct },
     { key: 'gpu', pct: gpuPct },
   ];
+  const pickupCtx = pickup?.contextId ? parked.find((c) => c.id === pickup.contextId) : parked[0];
+  const pickupGoal = pickupCtx?.capsule?.goal ?? pickup?.title ?? null;
+  const hero = [
+    { value: orgReview.length, label: 'Waiting on me', tone: 'amber' as const, go: 'tasks' },
+    { value: actNow.length, label: 'Needs action', tone: 'amber' as const, go: 'tasks' },
+    { value: comms.email.unreadCount, label: 'Unread mail', tone: undefined, go: 'comms' },
+    { value: comms.calendar.today.length, label: 'Events today', tone: undefined, go: 'comms' },
+    { value: working.length, label: 'Agents working', tone: 'jade' as const, go: 'agents' },
+  ].filter((s) => s.value > 0);
 
   return (
     <div className="grid grid-cols-12 gap-5">
-      {/* hero strip — serif numerals, every stat navigates */}
-      <section
-        className="stat-band rise col-span-12 flex flex-wrap items-end gap-x-8 gap-y-4 px-6 py-6 lg:gap-x-12"
-        style={{ '--rise-i': 0 } as CSSProperties}
-      >
-        <Stat
-          value={orgReview.length}
-          label="Waiting on me"
-          tone={orgReview.length > 0 ? 'amber' : undefined}
-          onClick={() => onNavigate('tasks')}
-        />
-        <Stat
-          value={actNow.length}
-          label="Needs action"
-          tone={actNow.length > 0 ? 'amber' : undefined}
-          onClick={() => onNavigate('tasks')}
-        />
-        <Stat value={comms.email.unreadCount} label="Unread mail" onClick={() => onNavigate('comms')} />
-        <Stat value={comms.calendar.today.length} label="Events today" onClick={() => onNavigate('comms')} />
-        <Stat
-          value={working.length}
-          label="Agents working"
-          tone={working.length > 0 ? 'jade' : undefined}
-          onClick={() => onNavigate('agents')}
-        />
-      </section>
+      {hero.length > 0 && (
+        <section
+          className="stat-band rise col-span-12 flex flex-wrap items-end gap-x-8 gap-y-4 px-6 py-6 lg:gap-x-12"
+          style={{ '--rise-i': 0 } as CSSProperties}
+        >
+          {hero.map((s) => (
+            <Stat
+              key={s.label}
+              value={s.value}
+              label={s.label}
+              tone={s.tone}
+              onClick={() => onNavigate(s.go)}
+            />
+          ))}
+        </section>
+      )}
 
       {/* left column — act now + activity ticker (the ticker fills the space under a
           short act-now list and stays above the fold, mirroring the right column) */}
@@ -216,11 +239,8 @@ export default function NowView({
           )}
         </Panel>
 
-        {/* live activity — per-source summary; click through to the Agents feed */}
-        <Panel title="Live activity" riseIndex={6}>
-          {agents.activity.length === 0 ? (
-            <EmptyState>No recent agent activity.</EmptyState>
-          ) : (
+        {ticker.length > 0 && (
+          <Panel title="Live activity" riseIndex={6}>
             <div className="activity-rail font-mono text-xs">
               {ticker.map(({ last, count }) => (
                 <Row
@@ -229,7 +249,6 @@ export default function NowView({
                   title={`${last.source}: ${last.text}`}
                   className="items-baseline gap-2 py-1.5"
                 >
-                  {/* dot slot is always rendered so error lines don't shift the columns */}
                   <span
                     className={`h-1 w-1 shrink-0 self-center rounded-full ${last.isError ? 'bg-coral' : 'bg-transparent'}`}
                   />
@@ -248,12 +267,84 @@ export default function NowView({
                 </Row>
               ))}
             </div>
-          )}
-        </Panel>
+          </Panel>
+        )}
       </div>
 
       {/* right column */}
       <div className="col-span-12 flex flex-col gap-5 lg:col-span-5 xl:col-span-4">
+        {pickup && (
+          <Panel title="Pick this up" riseIndex={2}>
+            <div className="text-sm font-semibold text-mist">{pickup.title}</div>
+            <div className="reentry-thread mt-3 space-y-3">
+              <div className="reentry-step">
+                <div className="font-mono text-[10px] uppercase tracking-[0.17em] text-mist-faint">Goal</div>
+                <div className="mt-1 text-sm leading-relaxed text-mist-dim">{pickupGoal}</div>
+              </div>
+              <div className="reentry-step is-next">
+                <div className="font-mono text-[10px] uppercase tracking-[0.17em] text-amber">Next</div>
+                <div className="mt-1 text-sm font-medium leading-relaxed text-mist">{pickup.nextAction}</div>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => onNavigate('reentry', pickup.contextId ? `reentry-context-${pickup.contextId}` : null)}
+                className="cursor-pointer rounded px-2 py-1 font-mono text-[11px] text-mist-faint hover:text-mist"
+              >
+                Open thread
+              </button>
+              {pickup.contextId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void resumeReentry(pickup.contextId!).catch(() => {});
+                  }}
+                  className="cursor-pointer rounded-md bg-amber px-3 py-1.5 text-sm font-semibold text-ink hover:opacity-90"
+                >
+                  Resume in Claude
+                </button>
+              )}
+            </div>
+          </Panel>
+        )}
+
+        {mentionRows.length > 0 && (
+          <Panel
+            title="Mentions"
+            riseIndex={2}
+            right={
+              <button
+                type="button"
+                onClick={() => onNavigate('mentions')}
+                className="cursor-pointer font-mono text-[11px] text-mist-faint hover:text-mist"
+              >
+                all
+              </button>
+            }
+          >
+            <div className="space-y-0.5">
+              {mentionRows.map((row) => (
+                <Row key={row.href} href={row.href} title={row.value}>
+                  <span className="shrink-0 font-mono text-[11px] text-mist-faint">{row.label}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-mist">{row.value}</span>
+                </Row>
+              ))}
+            </div>
+          </Panel>
+        )}
+
+        {itchDays !== null && itchDays >= 7 && (
+          <Panel title="Itch" riseIndex={3}>
+            <Row onClick={() => onNavigate('itch')} title="Itch last run is stale">
+              <span className="text-sm text-amber">Last run {itchDays}d ago</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-mist-faint">
+                {itchRun ? `${itchRun.nIdeas} ideas` : 'no recent scout'}
+              </span>
+            </Row>
+          </Panel>
+        )}
+
         {orgQueue.length > 0 && (
           <Panel title="Waiting on you" riseIndex={2}>
             <div className="max-h-64 space-y-0.5 overflow-y-auto">

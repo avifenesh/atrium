@@ -164,6 +164,7 @@ export type AgentId =
   | 'any-mission'
   | 'eigen'
   | 'claude'
+  | 'grok'
   | 'codex'
   | 'training';
 
@@ -205,11 +206,11 @@ export interface AgentsState {
   agents: AgentInfo[];
   /** rolling ticker from eigen observe/events.jsonl and friends */
   activity: { time: string; source: string; text: string; isError: boolean }[];
-  /** tasks handed to eigen via /api/eigen/dispatch */
+  /** tasks opened in grok via /api/eigen/dispatch (legacy path) */
   dispatches: EigenDispatch[];
 }
 
-/** A task handed off to eigen ("send to eigen"). */
+/** A task opened in grok ("open in grok"). */
 export interface EigenDispatch {
   id: string;
   title: string;
@@ -241,7 +242,15 @@ export interface SystemState {
     procs: { pid: number; name: string; memMiB: number }[];
   } | null;
   disks: { mount: string; sizeB: number; usedB: number; usedPct: number }[];
-  ports: { port: number; proc: string; known: boolean; label: string | null }[];
+  ports: {
+    port: number;
+    proc: string;
+    known: boolean;
+    label: string | null;
+    /** Widest bind of this port: loopback < wg-trace < tailnet < lan. */
+    scope: PortScope;
+    pid: number | null;
+  }[];
   /** non-obvious user processes worth knowing about */
   processes: { pid: number; cmd: string; cpuPct: number; memPct: number; label: string | null }[];
   services: { unit: string; active: string; sub: string; description: string }[];
@@ -250,6 +259,8 @@ export interface SystemState {
   history: SystemHistory;
   error: string | null;
 }
+
+export type PortScope = 'loopback' | 'tailnet' | 'wg' | 'lan';
 
 export interface SystemHistory {
   cpu: number[];
@@ -631,11 +642,19 @@ export interface ReentryAgentStatus {
   nextRunAt: string | null;
 }
 
+export interface ReentryLastLaunch {
+  contextId: string;
+  via: string;
+  launchedAt: string;
+}
+
 export interface ReentryState {
   updatedAt: string | null;
   contexts: ReentryContext[];
   briefing: ReentryBriefing | null;
   agent: ReentryAgentStatus;
+  /** Most recently launched Resume — Continue re-attaches that Claude session. */
+  lastLaunch: ReentryLastLaunch | null;
   error: string | null;
 }
 
@@ -731,8 +750,11 @@ export interface Flag {
 // POST /api/mutes              -> body MuteRequest, returns Mute
 // DELETE /api/mutes/:id        -> { ok: true }
 // POST /api/agents/:id/:action -> body { target? }, returns { ok, output? }
+// POST /api/system/ports/teach -> body { port, label? } -> { ok, port, label }
+// POST /api/system/ports/stop  -> body { port } -> { ok, port, pid }  (unknown listeners only)
 // POST /api/refresh/:section   -> force collector run, returns { ok }
-// POST /api/eigen/dispatch     -> body { title, prompt?, url?, repo?, sourceId?, dry? } -> EigenDispatch (dry: returns plan, runs nothing)
+// POST /api/eigen/dispatch     -> body { title, prompt?, url?, repo?, sourceId?, dry? } -> EigenDispatch (opens grok; dry: returns plan, runs nothing)
+// POST /api/grok/dispatch      -> same handler as /api/eigen/dispatch
 // POST /api/notifications/read -> body { id } (thread id) or { all: true } -> { ok }
 // GET  /api/github/item?repo=owner/repo&number=N -> GithubItemDetail
 // POST /api/github/comment     -> body { repo, number, body } -> { ok, comment: GithubComment }

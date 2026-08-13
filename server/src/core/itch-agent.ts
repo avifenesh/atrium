@@ -95,7 +95,40 @@ function glmEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
-function claudeModelName(model: string): string {
+function claudeSettingsEnv(): Record<string, string> {
+  try {
+    const raw = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8'));
+    const env = raw?.env && typeof raw.env === 'object' ? raw.env : {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v === 'string' && v) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function claudeRuntimeEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  // Claude Code on Bedrock keeps the provider flags in ~/.claude/settings.json.
+  // systemd/atrium does not import that env, and --safe-mode will not invent it.
+  return { ...base, ...claudeSettingsEnv() };
+}
+
+function envFlagOn(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function claudeModelName(model: string, env: NodeJS.ProcessEnv): string {
+  const bedrock = envFlagOn(env.CLAUDE_CODE_USE_BEDROCK);
+  if (bedrock) {
+    if (model === 'opus' && env.CLAUDE_CODE_DEFAULT_OPUS_MODEL) return env.CLAUDE_CODE_DEFAULT_OPUS_MODEL;
+    if (model === 'fable' && env.CLAUDE_CODE_DEFAULT_FABLE_MODEL) return env.CLAUDE_CODE_DEFAULT_FABLE_MODEL;
+    if (model === 'sonnet' && env.CLAUDE_CODE_DEFAULT_SONNET_MODEL) return env.CLAUDE_CODE_DEFAULT_SONNET_MODEL;
+    if (env.CLAUDE_CODE_DEFAULT_MODEL && (model === 'sonnet' || model === 'opus' || model === 'fable')) {
+      return env.CLAUDE_CODE_DEFAULT_MODEL;
+    }
+  }
   if (model === 'sonnet') return 'claude-sonnet-5';
   if (model === 'opus') return 'claude-opus-5';
   if (model === 'fable') return 'claude-fable-5';
@@ -169,13 +202,14 @@ export function buildItchAgentCommand(model: string, cwd: string): ItchAgentComm
       streamsProgress: true,
     };
   }
+  const env = claudeRuntimeEnv(process.env);
   return {
     backend: 'claude',
     bin: process.env.ITCH_CLAUDE || 'claude',
     args: [
       '--safe-mode',
       '-p',
-      '--model', claudeModelName(parsed.model),
+      '--model', claudeModelName(parsed.model, env),
       '--permission-mode', 'bypassPermissions',
       '--no-session-persistence',
       '--output-format', 'stream-json',
@@ -183,7 +217,7 @@ export function buildItchAgentCommand(model: string, cwd: string): ItchAgentComm
       '--include-partial-messages',
     ],
     cwd,
-    env: process.env,
+    env,
     stdout: 'claude-stream-json',
     streamsProgress: true,
   };

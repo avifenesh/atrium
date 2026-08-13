@@ -1,6 +1,7 @@
 import { cpus } from 'node:os';
 import { config } from '../config.js';
 import { store } from '../state.js';
+import { collectPorts, scopeDetail } from '../system-ports.js';
 import { readText, redactSecrets, shTry, iso } from '../util.js';
 import { getMetricHistory, recordMetrics } from '../metric-history.js';
 import type { Collector } from './registry.js';
@@ -133,60 +134,9 @@ async function collectDisks(): Promise<SystemState['disks']> {
   return disks;
 }
 
-// ---- listening ports via ss ----
-
-function isLoopback(addr: string): boolean {
-  const a = addr.replace(/^\[|\]$/g, '').split('%')[0];
-  return a === '::1' || a.startsWith('127.') || a === 'localhost';
-}
-
-/** A listener whose process name matches a knownPortProcs entry is expected
- *  regardless of which (often ephemeral) port it grabbed — return the configured
- *  label so it shows up calm in the system view, or null to treat it as unknown. */
-function knownProcLabel(proc: string): string | null {
-  if (!proc) return null;
-  const p = proc.toLowerCase();
-  for (const [pat, label] of Object.entries(config.knownPortProcs ?? {})) {
-    if (pat && p.includes(pat.toLowerCase())) return label;
-  }
-  return null;
-}
-
-async function collectPorts(): Promise<SystemState['ports']> {
-  const out = await shTry('ss', ['-tlnpH'], { timeoutMs: 5_000 });
-  if (!out) return [];
-  const byPort = new Map<number, { proc: string; nonLoopback: boolean }>();
-  for (const line of out.split('\n')) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 4 || fields[0] !== 'LISTEN') continue;
-    const local = fields[3];
-    const sep = local.lastIndexOf(':');
-    if (sep < 0) continue;
-    const port = Number(local.slice(sep + 1));
-    if (!Number.isInteger(port)) continue;
-    const addr = local.slice(0, sep);
-    const proc = line.match(/users:\(\("([^"]+)"/)?.[1] ?? '';
-    const prev = byPort.get(port);
-    byPort.set(port, {
-      proc: prev?.proc || proc,
-      nonLoopback: (prev?.nonLoopback ?? false) || !isLoopback(addr),
-    });
-  }
-  const ports: SystemState['ports'] = [];
-  for (const [port, info] of byPort) {
-    const procLabel = knownProcLabel(info.proc);
-    const known = port in config.knownPorts || procLabel !== null;
-    // surface known infra ports wherever they bind, plus anything exposed beyond loopback
-    if (!known && !info.nonLoopback) continue;
-    ports.push({ port, proc: info.proc, known, label: config.knownPorts[port] ?? procLabel });
-  }
-  ports.sort((a, b) => a.port - b.port);
-  return ports;
-}
-
 // ---- noteworthy processes via ps ----
 
-const PROC_KEEP = /claude|eigen|codex|llama-server|memra-server|bw24-server|hermes_cli|surreal|session-manager-plugin|train|uvicorn|granian|any-mission|itch/;
+const PROC_KEEP = /claude|eigen|codex|\bgrok\b|llama-server|memra-server|bw24-server|hermes_cli|surreal|session-manager-plugin|train|uvicorn|granian|any-mission|itch/;
 const PROC_DROP = /grep|atrium/;
 
 const PROC_LABELS: [RegExp, string][] = [
@@ -198,6 +148,7 @@ const PROC_LABELS: [RegExp, string][] = [
   [/any-mission/, 'any-mission'],
   [/eigen/, 'eigen agent'],
   [/claude/, 'claude code'],
+  [/\bgrok\b/, 'grok'],
   [/codex/, 'codex'],
   [/surreal/, 'surrealdb'],
   [/uvicorn/, 'uvicorn service'],
@@ -315,14 +266,14 @@ async function run(): Promise<void> {
     flags.push(flag('system:swap', 'warn', 'swap pressure', `swap at ${state.swap.usedPct}% used`));
   }
   for (const p of state.ports) {
-    if (p.known) continue;
+    if (p.known || p.scope === 'loopback') continue;
     const who = p.proc || 'an unknown process';
     flags.push(
       flag(
         `system:port:${p.port}`,
         'info',
-        `${who} is open on :${p.port}`,
-        'listening on every interface — reachable from your network, not just this machine',
+        `${who} is open on :${p.port} (${p.scope})`,
+        scopeDetail(p.scope),
       ),
     );
   }

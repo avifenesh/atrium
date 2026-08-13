@@ -96,9 +96,9 @@ function ContextCard({
             <GitLine context={context} />
             <span
               className="max-w-full truncate font-mono text-[10px] text-mist-faint"
-              title={context.resumeTarget.id ?? context.resumeTarget.kind}
+              title="Resume opens Claude in this directory with the parked brief"
             >
-              resumes: {context.resumeTarget.kind}{context.resumeTarget.id ? ` · ${context.resumeTarget.id.slice(0, 12)}` : ''}
+              resumes: claude{context.resumeTarget.kind === 'claude' && context.resumeTarget.id ? ' · session' : ''}
             </span>
           </div>
         </div>
@@ -159,7 +159,7 @@ function ContextCard({
             onClick={onResume}
             className="min-h-9 cursor-pointer rounded-md bg-amber px-3 py-1.5 text-sm font-semibold text-ink transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
           >
-            {busy === `resume:${context.id}` ? 'Opening…' : 'Resume'}
+            {busy === `resume:${context.id}` ? 'Opening…' : 'Resume in Claude'}
           </button>
         </div>
       </article>
@@ -173,6 +173,7 @@ function emptyReentry(): ReentryState {
     contexts: [],
     briefing: null,
     agent: { status: 'idle', model: '', lastCheckedAt: null, lastPreparedAt: null, lastError: null, nextRunAt: null },
+    lastLaunch: null,
     error: null,
   };
 }
@@ -181,6 +182,9 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
   const state = snapshot.reentry ?? emptyReentry();
   const active = state.contexts.filter((context) => context.state !== 'done');
   const done = state.contexts.filter((context) => context.state === 'done');
+  const last = state.lastLaunch
+    ? active.find((context) => context.id === state.lastLaunch?.contextId) ?? null
+    : null;
   const repoOptions = useMemo(
     () => [...snapshot.repos.repos].sort((a, b) => a.name.localeCompare(b.name)),
     [snapshot.repos.repos],
@@ -219,7 +223,7 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
     setBusy(`resume:${context.id}`);
     try {
       const result = await resumeReentry(context.id);
-      showFeedback(result.launched ? `Opened ${context.title} via ${result.via}.` : `Could not open a terminal: ${result.via}`, !result.launched);
+      showFeedback(result.launched ? `Opened ${context.title} in ${result.via}.` : `Could not open a terminal: ${result.via}`, !result.launched);
     } catch (err) {
       showFeedback(err instanceof Error ? err.message : String(err), true);
     } finally {
@@ -287,9 +291,21 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
               {state.briefing?.summary ?? 'Atrium captures the worktree and your note; the background agent turns only observed facts into a compact next-step capsule.'}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] text-mist-faint">
-            <span className="text-2xl tabular-nums text-mist">{active.length}</span>
-            <span>open thread{active.length === 1 ? '' : 's'}</span>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <div className="flex items-center gap-2 font-mono text-[11px] text-mist-faint">
+              <span className="text-2xl tabular-nums text-mist">{active.length}</span>
+              <span>open thread{active.length === 1 ? '' : 's'}</span>
+            </div>
+            {last && (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void resume(last)}
+                className="min-h-9 cursor-pointer rounded-md bg-amber px-3 py-1.5 text-sm font-semibold text-ink transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-50"
+              >
+                {busy === `resume:${last.id}` ? 'Opening…' : 'Continue last Claude session'}
+              </button>
+            )}
           </div>
         </div>
         {state.briefing?.focus.length ? (
@@ -425,8 +441,8 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
           >
             <div className="space-y-3 text-sm">
               <div>
-                <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-faint">OpenCode model</div>
-                <div className="mt-1 break-all font-mono text-xs text-mist">{state.agent.model || 'nvidia/z-ai/glm-5.2'}</div>
+                <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-mist-faint">Grok model</div>
+                <div className="mt-1 break-all font-mono text-xs text-mist">{state.agent.model || 'grok-4.6'}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 border-y border-white/[0.055] py-3">
                 <div>

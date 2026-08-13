@@ -46,6 +46,32 @@ export async function refreshSection(section: string): Promise<void> {
   await fetch(`${BASE}/api/refresh/${section}`, { method: 'POST' });
 }
 
+async function systemPortRequest<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `port request failed ${res.status}`);
+  return data as T;
+}
+
+export function teachPort(port: number, label?: string): Promise<{ ok: boolean; port: number; label: string }> {
+  return systemPortRequest('/api/system/ports/teach', { port, label });
+}
+
+export function stopPort(port: number): Promise<{ ok: boolean; port: number; pid: number }> {
+  return systemPortRequest('/api/system/ports/stop', { port });
+}
+
+export async function fetchDispatchLog(id: string): Promise<string> {
+  const res = await fetch(`${BASE}/api/grok/dispatch/${encodeURIComponent(id)}/log`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `dispatch log failed ${res.status}`);
+  return typeof data?.log === 'string' ? data.log : '';
+}
+
 async function reentryRequest<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
@@ -78,7 +104,7 @@ export function scanReentry(): Promise<{ ok: boolean; scheduled: boolean }> {
   return reentryRequest('/api/reentry/scan');
 }
 
-/** Hand a task to eigen. Pass url/repo when dispatching a github item. */
+/** Open a task in grok. Pass url/repo when dispatching a github item. */
 export async function dispatchToEigen(req: {
   title: string;
   prompt?: string;
@@ -86,7 +112,7 @@ export async function dispatchToEigen(req: {
   repo?: string;
   sourceId?: string;
 }): Promise<{ id: string; mode: string } | { error: string }> {
-  const res = await fetch(`${BASE}/api/eigen/dispatch`, {
+  const res = await fetch(`${BASE}/api/grok/dispatch`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(req),

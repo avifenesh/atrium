@@ -99,6 +99,7 @@ export function emptySnapshot(): Snapshot {
       agent: {
         status: 'idle', model: '', lastCheckedAt: null, lastPreparedAt: null, lastError: null, nextRunAt: null,
       },
+      lastLaunch: null,
       error: null,
     },
     repos: { updatedAt: null, repos: [], error: null },

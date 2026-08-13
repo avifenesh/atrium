@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { access, mkdir, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type {
   ReentryAgentStatus,
@@ -9,6 +9,7 @@ import type {
   ReentryContext,
   ReentryEnergy,
   ReentryGitState,
+  ReentryLastLaunch,
   ReentryResumeTarget,
 } from '../../shared/types.js';
 import { config } from './config.js';
@@ -25,6 +26,7 @@ interface PersistedState {
   version: 1;
   contexts: ReentryContext[];
   briefing: ReentryBriefing | null;
+  lastLaunch: ReentryLastLaunch | null;
 }
 
 export interface ReentryEvidence {
@@ -80,6 +82,7 @@ export interface ReentryEvidence {
 
 let contexts: ReentryContext[] = [];
 let briefing: ReentryBriefing | null = null;
+let lastLaunch: ReentryLastLaunch | null = null;
 let workerStatus: ReentryAgentStatus = emptyAgentStatus();
 let lastError: string | null = null;
 let writeChain: Promise<void> = Promise.resolve();
@@ -175,6 +178,16 @@ function normalizeContext(value: unknown): ReentryContext | null {
   };
 }
 
+function normalizeLastLaunch(value: unknown): ReentryLastLaunch | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const contextId = cleanText(raw.contextId, 80);
+  const via = cleanText(raw.via, 40);
+  const launchedAt = typeof raw.launchedAt === 'string' && !Number.isNaN(Date.parse(raw.launchedAt)) ? raw.launchedAt : '';
+  if (!contextId || !via || !launchedAt) return null;
+  return { contextId, via, launchedAt };
+}
+
 function normalizeBriefing(value: unknown): ReentryBriefing | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
@@ -224,7 +237,7 @@ async function atomicWrite(path: string, data: string): Promise<void> {
 }
 
 function persist(): Promise<void> {
-  const payload: PersistedState = { version: 1, contexts, briefing };
+  const payload: PersistedState = { version: 1, contexts, briefing, lastLaunch };
   // A transient failed write must not poison every future mutation in the chain.
   writeChain = writeChain.catch(() => undefined).then(() => atomicWrite(STATE_FILE, `${JSON.stringify(payload, null, 2)}\n`));
   return writeChain;
@@ -236,6 +249,7 @@ function publish(): void {
     contexts: [...contexts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     briefing,
     agent: workerStatus,
+    lastLaunch,
     error: lastError,
   });
 }
@@ -281,36 +295,50 @@ async function captureGit(path: string): Promise<ReentryGitState | null> {
   };
 }
 
-async function matchingTmux(path: string): Promise<string | null> {
-  const out = await shTry('tmux', ['list-panes', '-a', '-F', '#{session_name}\t#{pane_current_path}'], { timeoutMs: 3_000 });
-  if (!out) return null;
-  for (const line of out.split('\n')) {
-    const [session, panePath] = line.split('\t');
-    if (session && panePath === path) return session;
-  }
-  return null;
+export function claudeProjectSlug(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').replace(/\//g, '-');
 }
 
-function matchingAgent(path: string): { kind: 'codex' | 'claude'; id: string } | null {
+export function bashQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+async function matchingClaudeOnDisk(path: string): Promise<string | null> {
+  const dir = join(config.paths.claudeProjects, claudeProjectSlug(path));
+  try {
+    const files = await readdir(dir);
+    const sessions = await Promise.all(
+      files
+        .filter((name) => name.endsWith('.jsonl') && /^[A-Za-z0-9_.-]{1,200}\.jsonl$/.test(name))
+        .map(async (name) => {
+          const stamp = await stat(join(dir, name)).catch(() => null);
+          return { id: name.slice(0, -'.jsonl'.length), mtime: stamp?.mtimeMs ?? 0 };
+        }),
+    );
+    sessions.sort((a, b) => b.mtime - a.mtime);
+    return sessions[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function matchingClaudeFromSnapshot(path: string): string | null {
   const candidates = store.get().agents.agents
-    .filter((agent) => agent.id === 'codex' || agent.id === 'claude')
-    .flatMap((agent) => agent.sessions.map((session) => ({ kind: agent.id, session })))
-    .filter(({ session }) => session.dir === path && /^[A-Za-z0-9_.-]{1,200}$/.test(session.id))
-    .sort((a, b) => Number(b.session.live) - Number(a.session.live) || b.session.updatedAt.localeCompare(a.session.updatedAt));
-  const match = candidates[0];
-  return match ? { kind: match.kind as 'codex' | 'claude', id: match.session.id } : null;
+    .filter((agent) => agent.id === 'claude')
+    .flatMap((agent) => agent.sessions)
+    .filter((session) => session.dir === path && /^[A-Za-z0-9_.-]{1,200}$/.test(session.id))
+    .sort((a, b) => Number(b.live) - Number(a.live) || b.updatedAt.localeCompare(a.updatedAt));
+  return candidates[0]?.id ?? null;
+}
+
+async function matchingClaude(path: string): Promise<string | null> {
+  return (await matchingClaudeOnDisk(path)) ?? matchingClaudeFromSnapshot(path);
 }
 
 async function captureResumeTarget(path: string): Promise<ReentryResumeTarget> {
   const capturedAt = iso();
-  const tmux = await matchingTmux(path);
-  if (tmux && /^[A-Za-z0-9_.-]{1,200}$/.test(tmux)) return { kind: 'tmux', id: tmux, capturedAt };
-  const agent = matchingAgent(path);
-  return agent ? { ...agent, capturedAt } : { kind: 'shell', id: null, capturedAt };
-}
-
-async function tmuxExists(session: string): Promise<boolean> {
-  return (await shTry('tmux', ['has-session', '-t', session], { timeoutMs: 3_000 })) !== null;
+  const id = await matchingClaude(path);
+  return id ? { kind: 'claude', id, capturedAt } : { kind: 'shell', id: null, capturedAt };
 }
 
 async function terminalBinary(): Promise<string | null> {
@@ -325,53 +353,109 @@ async function terminalBinary(): Promise<string | null> {
   return null;
 }
 
+async function claudeBinary(): Promise<string | null> {
+  try {
+    await access(config.paths.claudeBin);
+    return config.paths.claudeBin;
+  } catch {
+    const which = await shTry('which', ['claude'], { timeoutMs: 2_000 });
+    return which?.trim() || null;
+  }
+}
+
+export function resolveClaudeLaunch(
+  context: ReentryContext,
+  sessionId: string | null,
+): { args: string[]; via: string } {
+  const prompt = composeResumePrompt(context);
+  // Only --resume when we have a session that actually belongs to this path.
+  // Never --continue from a previous shell/grok resume — that attaches the
+  // newest session in whatever cwd ptyxis happened to open.
+  if (sessionId) return { args: ['--resume', sessionId, prompt], via: 'claude' };
+  return { args: [prompt], via: 'claude' };
+}
+
+export function composeResumePrompt(context: ReentryContext): string {
+  const capsule = context.capsule;
+  const lines = [
+    `Resume this parked Atrium Re-entry context in ${context.path}.`,
+    `Title: ${context.title}`,
+    `Energy: ${context.energy}`,
+  ];
+  if (context.note) lines.push(`Owner note: ${context.note}`);
+  if (capsule) {
+    lines.push(`Goal: ${capsule.goal}`);
+    lines.push(`Next action: ${capsule.nextAction}`);
+    if (capsule.blocker) lines.push(`Blocker: ${capsule.blocker}`);
+    if (capsule.verifiedFacts.length) {
+      lines.push('Verified facts:');
+      for (const fact of capsule.verifiedFacts.slice(0, 8)) lines.push(`- ${fact}`);
+    }
+    if (capsule.rejectedPaths.length) {
+      lines.push('Do not reopen:');
+      for (const path of capsule.rejectedPaths.slice(0, 8)) lines.push(`- ${path}`);
+    }
+  } else {
+    lines.push('No status capsule is ready yet. Inspect the directory and continue the owner note if one exists.');
+  }
+  lines.push('Continue from the next action. Do not re-litigate rejected paths. Treat owner notes as intent.');
+  return lines.join('\n').slice(0, 4_000);
+}
+
 function launchDetached(command: string, args: string[]): void {
   const child = spawn(command, args, { detached: true, stdio: 'ignore', env: process.env });
   child.on('error', (err) => console.error('[reentry] terminal launch failed:', err.message));
   child.unref();
 }
 
-async function launchContext(context: ReentryContext): Promise<{ launched: boolean; via: string }> {
-  const terminal = await terminalBinary();
-  if (!terminal) return { launched: false, via: 'no supported terminal found' };
+async function writeLaunchScript(context: ReentryContext, claude: string, args: string[]): Promise<string> {
+  const dir = join(config.configDir, 'reentry-launches');
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const script = join(dir, `${context.id}.sh`);
+  const quoted = [claude, ...args].map(bashQuote).join(' ');
+  const body = [
+    '#!/bin/bash',
+    `cd ${bashQuote(context.path)} || exit 1`,
+    `${quoted}`,
+    'status=$?',
+    'if [ "$status" -ne 0 ]; then',
+    '  echo',
+    '  echo "claude exited $status — leaving a shell so the error stays visible"',
+    '  exec bash',
+    'fi',
+    '',
+  ].join('\n');
+  await writeFile(script, body, { encoding: 'utf8', mode: 0o700 });
+  return script;
+}
 
-  const captured = context.resumeTarget;
-  const capturedTmux = captured.kind === 'tmux' && captured.id && (await tmuxExists(captured.id)) ? captured.id : null;
-  const tmuxSession = capturedTmux ?? (await matchingTmux(context.path));
-  let command: string | null = null;
-  let commandArgs: string[] = [];
-  let via = 'shell';
-  if (tmuxSession) {
-    command = 'tmux';
-    commandArgs = ['attach-session', '-t', tmuxSession];
-    via = `tmux:${tmuxSession}`;
-  } else {
-    const current = matchingAgent(context.path);
-    const target = captured.id && (captured.kind === 'codex' || captured.kind === 'claude')
-      ? { kind: captured.kind, id: captured.id }
-      : current;
-    if (target) {
-      command = target.kind;
-      commandArgs = target.kind === 'codex' ? ['resume', target.id] : ['--resume', target.id];
-      via = `${target.kind}:${target.id}`;
-    }
-  }
+async function launchContext(
+  context: ReentryContext,
+): Promise<{ launched: boolean; via: string; sessionId: string | null }> {
+  const terminal = await terminalBinary();
+  if (!terminal) return { launched: false, via: 'no supported terminal found', sessionId: null };
+
+  const claude = await claudeBinary();
+  const storedId = context.resumeTarget.kind === 'claude' ? context.resumeTarget.id : null;
+  const sessionId = (await matchingClaude(context.path)) ?? storedId;
+  const plan = claude
+    ? resolveClaudeLaunch(context, sessionId)
+    : { args: [] as string[], via: 'shell' };
+  const via = claude ? plan.via : 'shell';
+  const runner = claude ? await writeLaunchScript(context, claude, plan.args) : null;
 
   const name = basename(terminal);
   if (name === 'ptyxis') {
-    const args = ['--new-window', '--working-directory', context.path, '--title', context.title];
-    if (command) args.push('--', command, ...commandArgs);
-    launchDetached(terminal, args);
-  } else if (name === 'kgx') {
-    const args = ['--working-directory', context.path];
-    if (command) args.push('--', command, ...commandArgs);
+    const args = ['--standalone', '--new-window', '-d', context.path, '-T', context.title];
+    if (runner) args.push('-x', runner);
     launchDetached(terminal, args);
   } else {
     const args = ['--working-directory', context.path];
-    if (command) args.push('--', command, ...commandArgs);
+    if (runner) args.push('--', runner);
     launchDetached(terminal, args);
   }
-  return { launched: true, via };
+  console.log(`[reentry] launch via=${via} cwd=${context.path} session=${sessionId ?? 'new'} runner=${runner ?? 'shell'}`);
+  return { launched: true, via, sessionId };
 }
 
 function contextProject(path: string): string {
@@ -387,10 +471,12 @@ export const reentry = {
         ? saved.contexts.map(normalizeContext).filter((item): item is ReentryContext => item !== null)
         : [];
       briefing = normalizeBriefing(saved?.briefing);
+      lastLaunch = normalizeLastLaunch(saved?.lastLaunch);
       lastError = null;
     } catch (err) {
       contexts = [];
       briefing = null;
+      lastLaunch = null;
       lastError = err instanceof Error ? err.message : String(err);
     }
     publish();
@@ -444,11 +530,21 @@ export const reentry = {
     const context = contexts.find((item) => item.id === id && item.state !== 'done');
     if (!context) throw new Error('unknown active re-entry context');
     const now = iso();
-    const next: ReentryContext = { ...context, state: 'active', resumedAt: now, updatedAt: now };
+    const launched = await launchContext(context);
+    const next: ReentryContext = {
+      ...context,
+      state: 'active',
+      resumedAt: now,
+      updatedAt: now,
+      resumeTarget: launched.launched
+        ? { kind: 'claude', id: launched.sessionId, capturedAt: now }
+        : context.resumeTarget,
+    };
+    if (launched.launched) lastLaunch = { contextId: next.id, via: launched.via, launchedAt: now };
     contexts = contexts.map((item) => (item.id === id ? next : item));
     await persist();
     publish();
-    return { context: next, ...(await launchContext(next)) };
+    return { context: next, launched: launched.launched, via: launched.via };
   },
 
   async requestScan(): Promise<{ ok: boolean; scheduled: boolean; error?: string }> {

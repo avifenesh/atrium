@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { ReentryEvidence } from './reentry.js';
+import { bashQuote, claudeProjectSlug, composeResumePrompt, resolveClaudeLaunch, type ReentryEvidence } from './reentry.js';
 import {
   evidenceHash,
   groundAgentResult,
   parseAgentJson,
-  parseOpenCodeOutput,
+  parseGrokOutput,
   pendingEvidenceSources,
 } from './reentry-worker-lib.js';
 
@@ -71,15 +71,44 @@ test('evidence hash ignores agent heartbeat timestamps but retains status change
   assert.notEqual(evidenceHash(first), evidenceHash(second));
 });
 
-test('OpenCode event parser joins text and retains session ids', () => {
-  const output = [
-    JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { type: 'text', text: '{"headline":"Ready",' } }),
-    'diagnostic line',
-    JSON.stringify({ type: 'text', part: { type: 'text', sessionID: 'ses_1', text: '"summary":"Now","focus":[],"looseEnds":[],"contexts":[]}' } }),
-  ].join('\n');
-  const parsed = parseOpenCodeOutput(output);
-  assert.deepEqual(parsed.sessionIds, ['ses_1']);
+test('Grok JSON parser prefers structuredOutput', () => {
+  const output = JSON.stringify({
+    text: 'ignore this',
+    sessionId: 'ses_3',
+    structuredOutput: {
+      headline: 'Ready',
+      summary: 'Now',
+      focus: [],
+      looseEnds: [],
+      contexts: [],
+    },
+  });
+  const parsed = parseGrokOutput(output);
   assert.equal(parseAgentJson(parsed.text).headline, 'Ready');
+  assert.deepEqual(parsed.sessionIds, ['ses_3']);
+});
+
+test('Grok JSON parser extracts text and session id', () => {
+  const output = JSON.stringify({
+    text: '{"headline":"Ready","summary":"Now","focus":[],"looseEnds":[],"contexts":[]}',
+    sessionId: 'ses_1',
+    stopReason: 'end_turn',
+  });
+  const parsed = parseGrokOutput(output);
+  assert.deepEqual(parsed.sessionIds, ['ses_1']);
+  assert.equal(parsed.error, null);
+  assert.equal(parseAgentJson(parsed.text).headline, 'Ready');
+});
+
+test('Grok JSON parser surfaces API errors', () => {
+  const output = JSON.stringify({
+    text: '',
+    sessionId: 'ses_2',
+    error: { message: 'Too Many Requests' },
+  });
+  const parsed = parseGrokOutput(output);
+  assert.equal(parsed.error, 'Too Many Requests');
+  assert.deepEqual(parsed.sessionIds, ['ses_2']);
 });
 
 test('agent parser rejects prose without the required schema', () => {
@@ -101,4 +130,32 @@ test('grounded result cannot claim a non-empty act-now queue is empty', () => {
     result.summary,
     '1 open Re-entry context; 0 people explicitly waiting; 1 act-now item. One parked context remains.',
   );
+});
+
+test('resume prompt tasks Claude with the capsule next action', () => {
+  const context = evidence().contexts[0];
+  context.capsule = {
+    goal: 'Ship Re-entry',
+    verifiedFacts: ['Builds pass'],
+    rejectedPaths: ['Rewrite the dashboard'],
+    blocker: 'Need a browser check',
+    nextAction: 'Inspect desktop and phone widths',
+  };
+  const ready = { ...context, scanStatus: 'ready' as const, scanError: null };
+  const prompt = composeResumePrompt(ready);
+  assert.match(prompt, /Next action: Inspect desktop and phone widths/);
+  assert.match(prompt, /Do not reopen:/);
+  assert.match(prompt, /Ship Re-entry/);
+  const resume = resolveClaudeLaunch(ready, 'abc-123');
+  assert.deepEqual(resume.args.slice(0, 2), ['--resume', 'abc-123']);
+  // a previous resume timestamp must not imply --continue (that attached the wrong cwd)
+  const afterPriorResume = resolveClaudeLaunch({ ...ready, resumedAt: ready.parkedAt }, null);
+  assert.equal(afterPriorResume.args[0], prompt);
+  const fresh = resolveClaudeLaunch(ready, null);
+  assert.equal(fresh.args[0], prompt);
+});
+
+test('claude project slug matches Claude Code on-disk encoding', () => {
+  assert.equal(claudeProjectSlug('/home/avifenesh/projects/atrium'), '-home-avifenesh-projects-atrium');
+  assert.equal(bashQuote("it's"), String.raw`'it'\''s'`);
 });

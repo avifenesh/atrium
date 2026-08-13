@@ -6,6 +6,7 @@ import { mutes } from './mutes.js';
 import { loadMetricHistory } from './metric-history.js';
 import { runAgentAction } from './actions.js';
 import { dispatchToEigen, getDispatchLog } from './eigen-dispatch.js';
+import { stopPort, teachPort } from './system-ports.js';
 import { init as initNotify } from './notify.js';
 import { markNotificationRead } from './github-actions.js';
 import { githubItemDetail, githubComment, githubReview } from './github-detail.js';
@@ -90,7 +91,7 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 
 // Loopback binding alone does not stop DNS rebinding (attacker.com → 127.0.0.1) or
 // CSRF via CORS-"simple" requests (text/plain POST needs no preflight, and
-// /api/eigen/dispatch spawns an agent with the user's credentials). Standard
+// /api/grok/dispatch spawns an agent with the user's credentials). Standard
 // localhost-daemon defense: strict Host allowlist on every request, plus
 // same-origin-or-absent Origin on state-changing methods.
 //
@@ -241,14 +242,36 @@ const server = createServer(async (req, res) => {
       return json(res, ok ? 200 : 404, { ok, collectors: list() });
     }
 
-    const dispatchLog = path.match(/^\/api\/eigen\/dispatch\/([^/]+)\/log$/);
+    const dispatchLog = path.match(/^\/api\/(?:eigen|grok)\/dispatch\/([^/]+)\/log$/);
     if (method === 'GET' && dispatchLog) {
       // id is uuid-charset validated inside getDispatchLog; null = unknown id
       const out = await getDispatchLog(dispatchLog[1]);
       return out ? json(res, 200, out) : json(res, 404, { error: 'unknown dispatch id' });
     }
 
-    if (method === 'POST' && path === '/api/eigen/dispatch') {
+    if (method === 'POST' && path === '/api/system/ports/teach') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        const taught = await teachPort(body);
+        void runOnce('system');
+        return json(res, 200, { ok: true, ...taught });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/system/ports/stop') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        const stopped = await stopPort(body);
+        void runOnce('system');
+        return json(res, 200, { ok: true, ...stopped });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && (path === '/api/eigen/dispatch' || path === '/api/grok/dispatch')) {
       const body = await readBody(req).catch(() => ({}));
       try {
         const dispatch = await dispatchToEigen(body);
@@ -437,7 +460,7 @@ await mutes.load();
 await loadMetricHistory();
 
 // Loopback is a hard invariant, not a default: there is no auth layer, and
-// /api/eigen/dispatch spawns an agent with the user's credentials. A config.json
+// /api/grok/dispatch spawns an agent with the user's credentials. A config.json
 // host override to a LAN address would expose all of that to the network.
 if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host)) {
   console.error(`atrium refuses to bind non-loopback host ${config.host} — no auth layer exists`);

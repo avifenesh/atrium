@@ -26,6 +26,8 @@ export const defaults = {
     ownOrgs: [] as string[],
     /** orgs excluded from authored-issue noise */
     noiseOrgs: [] as string[],
+    /** repos excluded from every GitHub attention lane, e.g. ['valkey-io/valkey-glide'] */
+    noiseRepos: [] as string[],
     /** PR review bots collapsed into a digest in notifications; human activity on the same PR stays visible.
      *  e.g. ['gemini-code-assist', 'coderabbitai'] */
     reviewBotNoiseLogins: [] as string[],
@@ -52,11 +54,15 @@ export const defaults = {
     eigenDaemonSock: join(HOME, '.eigen', 'daemon.sock'),
     claudeProjects: join(HOME, '.claude', 'projects'),
     claudeCredentials: join(HOME, '.claude', '.credentials.json'),
+    claudeSettings: join(HOME, '.claude', 'settings.json'),
     claudeStatsCache: join(HOME, '.claude', 'stats-cache.json'),
     codexHome: join(HOME, '.codex'),
     codexSessionIndex: join(HOME, '.codex', 'session_index.jsonl'),
     grokAuth: join(HOME, '.grok', 'auth.json'),
     grokBin: join(HOME, '.grok', 'bin', 'grok'),
+    grokSessions: join(HOME, '.grok', 'sessions'),
+    grokActiveSessions: join(HOME, '.grok', 'active_sessions.json'),
+    claudeBin: join(HOME, '.local', 'bin', 'claude'),
     cursorAgent: join(HOME, '.local', 'share', 'cursor-agent'),
     itchConfig: join(HOME, '.config', 'itch'),
     itchRuns: join(HOME, '.config', 'itch', 'runs'),
@@ -97,9 +103,8 @@ export const defaults = {
   },
 
   reentry: {
-    /** OpenCode model order. The exact NVIDIA-hosted GLM-5.2 route is first so
-     *  status preparation keeps working when the direct Z.AI account has no credits. */
-    models: ['nvidia/z-ai/glm-5.2', 'nvidia/qwen/qwen3.5-122b-a10b'] as string[],
+    /** Grok CLI model order. Headless `grok -m` ids, not OpenCode provider routes. */
+    models: ['grok-4.6'] as string[],
     runtimeDir: join(HOME, '.config', 'atrium', 'reentry-agent'),
     maxContexts: 32,
   },

@@ -292,7 +292,7 @@ select option {
   color: var(--color-mist);
 }
 
-/* hover-revealed action cluster (quiet / → eigen / clear / view).
+/* hover-revealed action cluster (quiet / open in grok / clear / view).
    Hidden but space-reserving (visibility, not display — no layout shift on reveal);
    appears on row hover OR when keyboard focus lands anywhere inside the .group row. */
 .hover-cluster {
@@ -806,8 +806,85 @@ body {
   .wiki-frame-wrap { height: calc(100dvh - 12.5rem); min-height: 34rem; }
 }
 
+.dispatch-log {
+  position: relative;
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0 0.5rem 0.5rem;
+  padding: 0.7rem 0.85rem 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.45rem;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.03), transparent 18%),
+    rgba(4, 6, 10, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color: var(--color-mist-dim);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dispatch-log::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 100%;
+  background: linear-gradient(var(--color-amber), transparent 55%);
+  opacity: 0.45;
+}
+
+.scope-pip {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  box-shadow: 0 0 8px currentColor;
+}
+.scope-pip-lan { color: var(--color-amber); background: var(--color-amber); }
+.scope-pip-tailnet { color: var(--color-slate-glow); background: var(--color-slate-glow); }
+.scope-pip-wg { color: var(--color-jade); background: var(--color-jade); }
+.scope-pip-loopback { color: var(--color-mist-faint); background: var(--color-mist-faint); box-shadow: none; }
+
+.usage-meter {
+  position: relative;
+  height: 0.5rem;
+}
+.usage-meter-track {
+  position: absolute;
+  right: 0;
+  bottom: 0.2rem;
+  left: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.usage-meter-fill {
+  position: absolute;
+  bottom: 0.2rem;
+  left: 0;
+  height: 1px;
+}
+.usage-meter-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 0.5rem;
+  transform: translateX(-0.5px);
+}
+
+.row-flash {
+  animation: row-flash 1.6s ease-out;
+  border-radius: 0.5rem;
+}
+@keyframes row-flash {
+  0% { background-color: rgba(232, 199, 106, 0.18); }
+  100% { background-color: transparent; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pile-card,.pile-card-image,.pile-card-why { transition: none; }
   .pile-card:hover,.pile-card:focus-visible { transform: none; }
   .pile-card:hover .pile-card-image { transform: none; }
+  .row-flash { animation: none; }
 }

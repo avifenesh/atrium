@@ -44,6 +44,20 @@ const VIEWS = [
 
 const NAV_GROUPS = ['Today', 'Work', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
 
+function parseHash(raw: string): { view: string; focus: string | null } {
+  const h = raw.startsWith('#') ? raw.slice(1) : raw;
+  const i = h.indexOf('/');
+  if (i < 0) return { view: h || 'now', focus: null };
+  const view = h.slice(0, i) || 'now';
+  const rest = h.slice(i + 1);
+  if (!rest) return { view, focus: null };
+  try {
+    return { view, focus: decodeURIComponent(rest) };
+  } catch {
+    return { view, focus: rest };
+  }
+}
+
 // extra (plugin) sections register as dynamic views; ids are not known at compile time
 type ViewId = string;
 
@@ -114,13 +128,15 @@ export default function App() {
   // initial view from the url hash — desktop entries deep-link e.g. #revuto or a plugin key.
   // plugin keys aren't known until the snapshot lands, so accept any non-empty hash here
   // and let the render fall back to 'now' if it never resolves to a real view.
-  const [view, setView] = useState<ViewId>(() => location.hash.slice(1) || 'now');
+  const [view, setView] = useState<ViewId>(() => parseHash(location.hash).view);
+  const [focus, setFocus] = useState<string | null>(() => parseHash(location.hash).focus);
   // in-page hash changes (a deep-link landing on an already-open app) must also
   // switch the view — the lazy init above only runs at boot
   useEffect(() => {
     const onHash = () => {
-      const h = location.hash.slice(1);
-      setView(h || 'now');
+      const parsed = parseHash(location.hash);
+      setView(parsed.view || 'now');
+      setFocus(parsed.focus);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -229,8 +245,24 @@ export default function App() {
 
   // keep the hash in sync — replaceState so view switches never pollute back-button history
   useEffect(() => {
-    history.replaceState(null, '', view === 'now' ? location.pathname : '#' + view);
-  }, [view]);
+    const next =
+      view === 'now' && !focus
+        ? location.pathname
+        : '#' + view + (focus ? '/' + encodeURIComponent(focus) : '');
+    history.replaceState(null, '', next);
+  }, [view, focus]);
+
+  useEffect(() => {
+    if (!focus) return;
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(focus);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('row-flash');
+      window.setTimeout(() => el.classList.remove('row-flash'), 1800);
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [focus, view]);
 
   // keyboard layer — esc is centralized here so one press closes ONE overlay,
   // topmost first (per-overlay window listeners all fire on a single esc)
@@ -297,8 +329,9 @@ export default function App() {
   const isKnownView = (v: string) => allViews.some((x) => x.id === v);
   // resolve an unknown/stale hash (e.g. a plugin disabled since the link was made) to 'now'
   const activeView = isKnownView(view) ? view : 'now';
-  const navigate = (v: string) => {
+  const navigate = (v: string, nextFocus?: string | null) => {
     if (isKnownView(v)) setView(v);
+    setFocus(nextFocus ?? null);
     setMoreOpen(false);
   };
   const openQuiet = () => {

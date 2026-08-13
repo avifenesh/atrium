@@ -96,7 +96,43 @@ async function last7dTokens(): Promise<string | null> {
   return total > 0 ? `${fmtTokens(total)} tokens last 7d` : null;
 }
 
+function envFlagOn(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+async function claudeBedrock(): Promise<{ settingsPath: string; model: string | null } | null> {
+  const settingsPath = config.paths.claudeSettings;
+  const settings = await readJson<any>(settingsPath);
+  const env = settings?.env && typeof settings.env === 'object' ? settings.env : {};
+  if (!envFlagOn(env.CLAUDE_CODE_USE_BEDROCK) && !envFlagOn(process.env.CLAUDE_CODE_USE_BEDROCK)) {
+    return null;
+  }
+  const model =
+    (typeof env.CLAUDE_CODE_DEFAULT_MODEL === 'string' && env.CLAUDE_CODE_DEFAULT_MODEL) ||
+    (typeof settings?.model === 'string' && settings.model) ||
+    null;
+  return { settingsPath, model };
+}
+
 async function claudeService(): Promise<SubService> {
+  const tokens7d = await last7dTokens();
+  const bedrock = await claudeBedrock();
+  if (bedrock) {
+    // Claude Code is on Bedrock. Leftover claude.ai oauth (expired Max) is not a subscription.
+    const parts = ['Amazon Bedrock'];
+    if (bedrock.model) parts.push(bedrock.model);
+    if (tokens7d) parts.push(tokens7d);
+    return {
+      id: 'claude',
+      name: 'Claude',
+      status: 'active',
+      plan: 'bedrock',
+      detail: parts.join('; '),
+      usage: null,
+      source: bedrock.settingsPath,
+    };
+  }
+
   const src = config.paths.claudeCredentials;
   const creds = await readJson<any>(src);
   const oauth = creds?.claudeAiOauth;
@@ -144,7 +180,6 @@ async function claudeService(): Promise<SubService> {
   if (oauth.rateLimitTier != null) parts.push(String(oauth.rateLimitTier));
   if (usageFailed && usage !== null) parts.push('(usage cached)');
   if (usage === null) parts.push('(usage unavailable)');
-  const tokens7d = await last7dTokens();
   if (tokens7d) parts.push(tokens7d);
 
   return {

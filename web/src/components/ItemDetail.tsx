@@ -127,6 +127,10 @@ export default function ItemDetail({
   // approve is a one-shot write that can satisfy branch protection — two-step arm
   // (same pattern as MuteButton); request-changes is already gated on composer text
   const [approveArmed, setApproveArmed] = useState(false);
+  const [grok, setGrok] = useState<{ state: 'idle' | 'busy' | 'sent' | 'failed'; id: string | null }>({
+    state: 'idle',
+    id: null,
+  });
   const panelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   // esc handler reads the draft through a ref so the listener never re-binds per keystroke
@@ -218,10 +222,22 @@ export default function ItemDetail({
     }
   };
 
-  const handToEigen = async () => {
-    if (!detail) return;
+  const openInGrok = async () => {
+    if (!detail || grok.state === 'busy') return;
+    if (grok.id) {
+      location.hash = `agents/dispatch-${grok.id}`;
+      return;
+    }
     const sourceId = `${repo}#${number}`;
-    await dispatchToEigen({ title: detail.title, url: githubUrl, repo, sourceId }).catch(() => undefined);
+    setGrok({ state: 'busy', id: null });
+    try {
+      const res = await dispatchToEigen({ title: detail.title, url: githubUrl, repo, sourceId });
+      if ('error' in res) throw new Error(res.error);
+      setGrok({ state: 'sent', id: 'id' in res && typeof res.id === 'string' ? res.id : null });
+    } catch {
+      setGrok({ state: 'failed', id: null });
+      window.setTimeout(() => setGrok((s) => (s.state === 'failed' ? { state: 'idle', id: null } : s)), 4000);
+    }
   };
 
   return (
@@ -343,12 +359,18 @@ export default function ItemDetail({
           <div className="mt-2 flex items-center gap-3">
             <button
               type="button"
-              onClick={handToEigen}
-              disabled={!detail}
-              title="hand this whole item to eigen"
-              className="cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber disabled:opacity-50"
+              onClick={() => void openInGrok()}
+              disabled={!detail || grok.state === 'busy'}
+              title={grok.id ? 'open grok dispatch log' : 'open this whole item in grok'}
+              className={`cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors disabled:opacity-50 ${
+                grok.state === 'sent' || grok.id
+                  ? 'text-jade'
+                  : grok.state === 'failed'
+                    ? 'text-coral'
+                    : 'text-mist-faint hover:text-amber'
+              }`}
             >
-              → eigen
+              {grok.state === 'busy' ? '…' : grok.id ? 'grok log' : grok.state === 'failed' ? 'failed' : 'open in grok'}
             </button>
             {/* review lane — PRs only; merged is past reviewing (github 422s anyway) */}
             {detail?.pr && !detail.pr.merged && (

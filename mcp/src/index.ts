@@ -797,7 +797,7 @@ server.registerTool(
     description:
       'Run a control action on an agent (pause/resume/stop/start/restart/trigger/review/learn/decay/doctor/kill). Check atrium_agents controls first; target picks a sub-resource (repo for revuto, owner/repo#PR for revuto review, job id for hermes).',
     inputSchema: {
-      agent: z.enum(['revuto', 'hermes', 'itch', 'any-mission', 'eigen', 'claude', 'codex', 'training']),
+      agent: z.enum(['revuto', 'hermes', 'itch', 'any-mission', 'eigen', 'claude', 'grok', 'codex', 'training']),
       action: z.string().describe("one of the agent's controls, e.g. pause, resume, stop, start, restart, trigger, review, learn, decay, doctor, kill"),
       target: z.string().optional().describe('sub-resource, e.g. repo, owner/repo#PR, or job id'),
     },

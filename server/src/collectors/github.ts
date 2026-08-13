@@ -16,11 +16,20 @@ import type {
 // config arrays are user-editable in config.json — coerce to arrays so a malformed
 // value (null, string, missing) degrades to empty instead of crashing at module load
 const noiseOrgs = Array.isArray(config.github.noiseOrgs) ? config.github.noiseOrgs : [];
+const noiseRepos = Array.isArray(config.github.noiseRepos) ? config.github.noiseRepos : [];
 const ownOrgs = Array.isArray(config.github.ownOrgs) ? config.github.ownOrgs : [];
 const reviewBotLogins = Array.isArray(config.github.reviewBotNoiseLogins) ? config.github.reviewBotNoiseLogins : [];
 
-// noise orgs are excluded from the attention lanes (actNow/mentions/teamQueue), not from your own PRs
+// noise orgs/repos are excluded from the attention lanes (actNow/mentions/teamQueue)
 const NOISE_ORGS = noiseOrgs.map((o) => ` -org:${o}`).join('');
+const NOISE_REPO_SET = new Set(
+  noiseRepos.filter((r) => /^[\w.-]+\/[\w.-]+$/.test(r)).map((r) => r.toLowerCase()),
+);
+const NOISE_REPOS = [...NOISE_REPO_SET].map((r) => ` -repo:${r}`).join('');
+
+function isNoiseRepo(repo: string): boolean {
+  return NOISE_REPO_SET.has(repo.toLowerCase());
+}
 
 // org queue scope: each watched org plus your own personal repos. GitHub search ORs
 // same-qualifier terms, so `org:<org> user:<login>` returns items in EITHER
@@ -36,7 +45,7 @@ const NOTIFICATION_ENRICH_LIMIT = 30;
 
 // Single aliased GraphQL search (cost: 1 point). Never use `gh search` here —
 // the REST search pool is only 30 req/min and shared with everything else.
-const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } ... on PullRequest { number title url updatedAt repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } orgExt: search(query: "is:open -author:${config.github.login}${BOT_AUTHOR_FILTER} archived:false ${ORG_FILTER}", type: ISSUE, first: 50){ issueCount nodes { __typename ... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } ... on Issue { number title url createdAt updatedAt author { login __typename } repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
+const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } ... on PullRequest { number title url updatedAt repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } orgExt: search(query: "is:open -author:${config.github.login}${BOT_AUTHOR_FILTER} archived:false ${ORG_FILTER}${NOISE_REPOS}", type: ISSUE, first: 50){ issueCount nodes { __typename ... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } ... on Issue { number title url createdAt updatedAt author { login __typename } repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
 
 const REPO_FIELDS =
   'nodes { nameWithOwner isPrivate isArchived pushedAt issues(states: OPEN){ totalCount } pullRequests(states: OPEN){ totalCount } }';
@@ -100,7 +109,7 @@ function toOrgItem(n: any): OrgItem | null {
   // your own authored items live in myPRs/actNow, not the org queue; bots are noise
   if (!login || login === config.github.login || isBotAuthor(author)) return null;
   const repo = String(n?.repository?.nameWithOwner ?? '');
-  if (!repo) return null;
+  if (!repo || isNoiseRepo(repo)) return null;
   const kind: 'issue' | 'pr' = n?.__typename === 'PullRequest' ? 'pr' : 'issue';
   const owner = repo.split('/')[0] ?? '';
   const decision =
@@ -349,6 +358,8 @@ async function fetchNotifications(): Promise<GithubNotification[] | null> {
     if (!Array.isArray(threads)) return null;
     const notifications: GithubNotification[] = [];
     for (const [i, t] of threads.entries()) {
+      const repo = String(t?.repository?.full_name ?? '');
+      if (isNoiseRepo(repo)) continue;
       notifications.push(await githubNotificationFromThread(t, i < NOTIFICATION_ENRICH_LIMIT));
     }
     return notifications;
@@ -409,18 +420,18 @@ const collector: Collector = {
       const actNow: GithubItem[] = [
         ...nodesOf(data.reviewReq).map(toPR),
         ...nodesOf(data.assigned).map((n) => toItem(n, 'issue')),
-      ];
+      ].filter((it) => !isNoiseRepo(it.repo));
       const actNowIds = new Set(actNow.map((i) => i.id));
 
       const teamQueue: GithubPR[] = nodesOf(data.teamQueue)
         .map(toPR)
-        .filter((pr) => !actNowIds.has(pr.id) && !NOISE_TITLE.test(pr.title));
+        .filter((pr) => !actNowIds.has(pr.id) && !NOISE_TITLE.test(pr.title) && !isNoiseRepo(pr.repo));
 
-      const mentions: GithubItem[] = nodesOf(data.mentions).map((n) =>
-        toItem(n, n.url?.includes('/pull/') ? 'pr' : 'issue'),
-      );
+      const mentions: GithubItem[] = nodesOf(data.mentions)
+        .map((n) => toItem(n, n.url?.includes('/pull/') ? 'pr' : 'issue'))
+        .filter((it) => !isNoiseRepo(it.repo));
 
-      const myPRs: GithubPR[] = nodesOf(data.myPRs).map(toPR);
+      const myPRs: GithubPR[] = nodesOf(data.myPRs).map(toPR).filter((pr) => !isNoiseRepo(pr.repo));
 
       // external PRs/issues on repos you own/admin, authored by others (not you, not bots).
       // ranked above myPRs: a person blocked on you beats a status update.

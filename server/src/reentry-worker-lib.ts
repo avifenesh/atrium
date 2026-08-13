@@ -35,23 +35,60 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function parseOpenCodeOutput(output: string): { text: string; sessionIds: string[] } {
-  const parts: string[] = [];
-  const sessions = new Set<string>();
-  for (const line of output.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as Record<string, unknown>;
-      const sessionId = typeof event.sessionID === 'string' ? event.sessionID : null;
-      if (sessionId) sessions.add(sessionId);
-      const part = event.part && typeof event.part === 'object' ? (event.part as Record<string, unknown>) : null;
-      if (part && typeof part.sessionID === 'string') sessions.add(part.sessionID);
-      if (event.type === 'text' && part?.type === 'text' && typeof part.text === 'string') parts.push(part.text);
-    } catch {
-      // OpenCode may print a one-line diagnostic around the JSON event stream.
+export function providerOf(model: string): string {
+  return model.split('/')[0] || model;
+}
+
+export function isRateLimitError(message: string): boolean {
+  return /too many requests|\b429\b|rate.?limit/i.test(message);
+}
+
+function stringifyError(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const text = value.replace(/[\r\n]+/g, ' ').trim();
+    return text ? text.slice(0, 400) : null;
+  }
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    for (const key of ['message', 'error', 'data']) {
+      const inner = stringifyError(object[key]);
+      if (inner) return inner;
     }
   }
-  return { text: parts.join('').trim(), sessionIds: [...sessions] };
+  return null;
+}
+
+export function parseGrokOutput(output: string): { text: string; sessionIds: string[]; error: string | null } {
+  const trimmed = output.trim();
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const object = JSON.parse(trimmed.slice(start, end + 1)) as Record<string, unknown>;
+      const sessionId = typeof object.sessionId === 'string' ? object.sessionId : null;
+      const error = stringifyError(object.error);
+      if (object.structuredOutput && typeof object.structuredOutput === 'object') {
+        return {
+          text: JSON.stringify(object.structuredOutput),
+          sessionIds: sessionId ? [sessionId] : [],
+          error,
+        };
+      }
+      if (typeof object.text === 'string') {
+        return { text: object.text.trim(), sessionIds: sessionId ? [sessionId] : [], error };
+      }
+      if (typeof object.headline === 'string') {
+        return { text: JSON.stringify(object), sessionIds: sessionId ? [sessionId] : [], error };
+      }
+      if (error) return { text: '', sessionIds: sessionId ? [sessionId] : [], error };
+    } catch {
+      /* fall through to raw text */
+    }
+  }
+  if (isRateLimitError(trimmed) || /unauthorized|forbidden|AI_APICallError/i.test(trimmed)) {
+    return { text: '', sessionIds: [], error: trimmed.replace(/[\r\n]+/g, ' ').slice(0, 400) };
+  }
+  return { text: trimmed, sessionIds: [], error: null };
 }
 
 export function parseAgentJson(text: string): Record<string, unknown> {

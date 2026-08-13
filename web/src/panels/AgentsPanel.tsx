@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { isAgentWorking } from '../agentWork';
-import { agentAction, isMuted } from '../api';
+import { agentAction, fetchDispatchLog, isMuted } from '../api';
 import {
   CopyText,
   Dot,
@@ -36,30 +36,44 @@ function dispatchDot(status: EigenDispatch['status']): string {
 }
 
 function DispatchRow({ d }: { d: EigenDispatch }) {
+  const [open, setOpen] = useState(false);
+  const [log, setLog] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = async () => {
+    const next = !open;
+    setOpen(next);
+    if (!next || log !== null) return;
+    try {
+      setLog(await fetchDispatchLog(d.id));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
-    <Row className="group">
-      <div className="flex w-full min-w-0 items-center gap-2">
-        <Dot status={dispatchDot(d.status)} />
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <CopyText text={d.title}>
-            <span className="block truncate text-sm text-mist" title={d.title}>
-              {d.title}
-            </span>
-          </CopyText>
+    <div id={`dispatch-${d.id}`}>
+      <Row className="group" onClick={() => void load()}>
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <Dot status={dispatchDot(d.status)} />
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <CopyText text={d.title}>
+              <span className="block truncate text-sm text-mist" title={d.title}>
+                {d.title}
+              </span>
+            </CopyText>
+          </div>
+          <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim">
+            {d.mode}
+          </span>
+          <RelTime iso={d.startedAt} />
+          <span className="hover-cluster shrink-0 font-mono text-[10px] text-mist-faint">
+            {open ? 'hide' : 'log'}
+          </span>
         </div>
-        <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-mist-dim">
-          {d.mode}
-        </span>
-        <RelTime iso={d.startedAt} />
-        {d.logPath && (
-          <CopyText text={d.logPath} className="hover-cluster shrink-0">
-            <span className="shrink-0 font-mono text-[10px] text-mist-faint" title={d.logPath}>
-              log
-            </span>
-          </CopyText>
-        )}
-      </div>
-    </Row>
+      </Row>
+      {open && (
+        <pre className="dispatch-log">{err ?? (log === null ? 'loading…' : log || '(empty log)')}</pre>
+      )}
+    </div>
   );
 }
 
@@ -67,13 +81,11 @@ function AgentCard({
   agent,
   snapshot,
   riseIndex,
-  dispatches,
   onOpenQuiet,
 }: {
   agent: AgentInfo;
   snapshot: Snapshot;
   riseIndex: number;
-  dispatches: EigenDispatch[];
   onOpenQuiet: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -135,10 +147,6 @@ function AgentCard({
 
   const sessions = agent.sessions.slice(0, 5);
   const moreSessions = agent.sessions.length - sessions.length;
-  const recentDispatches =
-    agent.id === 'eigen'
-      ? [...dispatches].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 8)
-      : [];
 
   return (
     <section
@@ -174,19 +182,6 @@ function AgentCard({
       <div className="mt-1 truncate text-sm text-mist-dim" title={agent.detail}>
         {agent.detail}
       </div>
-
-      {recentDispatches.length > 0 && (
-        <>
-          <SectionLabel>
-            dispatches <span className="tabular-nums">· {recentDispatches.length}</span>
-          </SectionLabel>
-          <div className="max-h-48 overflow-y-auto">
-            {recentDispatches.map((d) => (
-              <DispatchRow key={d.id} d={d} />
-            ))}
-          </div>
-        </>
-      )}
 
       {expanded && (
         <>
@@ -353,10 +348,16 @@ export default function AgentsPanel({
 }) {
   const { agents, activity } = snapshot.agents;
   const dispatches = snapshot.agents.dispatches ?? [];
+  const recentDispatches = [...dispatches].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 8);
 
   // muted agents disappear from the grid — quiet chip is the way back (drawer = archive)
-  const visible = agents.filter((a) => !isMuted(snapshot, 'agent', a.id));
-  const quietAgents = agents.length - visible.length;
+  const visible = agents.filter((a) => {
+    if (isMuted(snapshot, 'agent', a.id)) return false;
+    // Eigen is parked — hide the idle card unless it is actually working or in error.
+    if (a.id === 'eigen' && !isAgentWorking(a, dispatches) && a.status !== 'error') return false;
+    return true;
+  });
+  const quietAgents = agents.filter((a) => isMuted(snapshot, 'agent', a.id)).length;
   // working agents first, then errors, then calm daemons
   const ordered = [...visible].sort((a, b) => {
     const score = (x: AgentInfo) =>
@@ -372,6 +373,16 @@ export default function AgentsPanel({
         </div>
       )}
 
+      {recentDispatches.length > 0 && (
+        <Panel title="Grok dispatches" riseIndex={0} className="mb-4">
+          <div className="max-h-48 overflow-y-auto">
+            {recentDispatches.map((d) => (
+              <DispatchRow key={d.id} d={d} />
+            ))}
+          </div>
+        </Panel>
+      )}
+
       {ordered.length === 0 ? (
         <Panel title="Agent status" quietCount={quietAgents || undefined} onQuietClick={openQuiet}>
           <EmptyState>No agents are reporting.</EmptyState>
@@ -383,8 +394,7 @@ export default function AgentsPanel({
               key={a.id}
               agent={a}
               snapshot={snapshot}
-              riseIndex={i}
-              dispatches={dispatches}
+              riseIndex={i + (recentDispatches.length > 0 ? 1 : 0)}
               onOpenQuiet={openQuiet}
             />
           ))}

@@ -47,6 +47,7 @@ collector stays idle (it can't search without a login).
 | `login` | `''` | your GitHub username — required to enable the collector |
 | `ownOrgs` | `[]` | orgs whose repos count as "your repos" (org queue + own-repos counts) |
 | `noiseOrgs` | `[]` | orgs excluded from the attention lanes |
+| `noiseRepos` | `[]` | repos excluded from every GitHub lane (`owner/name`) |
 | `reviewBotNoiseLogins` | `[]` | PR review bots collapsed into a notification digest |
 | `pollMs` | `60000` | poll cadence |
 | `ownReposPollMs` | `600000` | slower cadence for own-repo counts |
@@ -74,12 +75,14 @@ argument — see [examples/notify/](../examples/notify/).
 Disable-able collector names: `github`, `agents`, `system`, `schedule`, `comms`, `subs`,
 `notes`, `surreal`, `revuto`, `itch`, `cloud`, `backup`, `repos`, plus any plugin you add.
 Agent sub-sources: `agents:revuto`, `agents:hermes`, `agents:itch`, `agents:any-mission`,
-`agents:eigen`, `agents:claude`, `agents:codex`, `agents:training`.
+`agents:eigen`, `agents:claude`, `agents:grok`, `agents:codex`, `agents:training`.
 
 ### `watchedUnits` and `knownPorts`
 
 `watchedUnits` is a list of systemd `--user` unit names surfaced in the system view.
-`knownPorts` maps expected listening ports to labels; anything else listening gets flagged.
+`knownPorts` maps expected listening ports to labels; anything else listening beyond
+loopback gets flagged, with a bind scope (`loopback` / `tailnet` / `wg` / `lan`).
+The system view can teach a port into this map or stop an unexpected listener.
 Both default to the author's machine — override them for yours.
 
 ### `paths`

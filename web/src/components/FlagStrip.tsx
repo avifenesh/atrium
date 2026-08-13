@@ -1,4 +1,4 @@
-import { isMuted } from '../api';
+import { isMuted, refreshSection, teachPort } from '../api';
 import { useNow, FRESH_WINDOW_MS } from '../hooks';
 import { MuteButton, QuietChip, RelTime } from './ui';
 import type { Flag, Snapshot } from '../../../shared/types';
@@ -44,6 +44,21 @@ function viewFor(f: Flag): string | null {
   return VIEW_FOR[prefix] ?? VIEW_FOR[f.source] ?? null;
 }
 
+export function focusForFlag(f: Flag): string | null {
+  const port = f.id.match(/^system:port:(\d+)$/);
+  if (port) return `port-${port[1]}`;
+  const unit = f.id.match(/^system:unit:(.+)$/);
+  if (unit) return `unit-${unit[1]}`;
+  const disk = f.id.match(/^system:disk:(.+)$/);
+  if (disk) return `disk-${disk[1]}`;
+  return null;
+}
+
+function portFromFlag(f: Flag): number | null {
+  const m = f.id.match(/^system:port:(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
 /** Anomaly strip above the active view. Quiet = archive: muted flags are GONE;
  *  a "<n> quieted" chip at the strip end opens the drawer where they live. */
 export default function FlagStrip({
@@ -52,38 +67,82 @@ export default function FlagStrip({
   onOpenQuiet,
 }: {
   snapshot: Snapshot;
-  onNavigate: (viewId: string) => void;
+  onNavigate: (viewId: string, focus?: string | null) => void;
   onOpenQuiet?: () => void;
 }) {
-  const flags = snapshot.flags
+  const raw = snapshot.flags
     .filter((f) => !isMuted(snapshot, 'flag', f.id))
     .sort(
       (a, b) =>
         SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
         new Date(b.raisedAt).getTime() - new Date(a.raisedAt).getTime(),
     );
-  const hidden = snapshot.flags.length - flags.length;
-  const topSev = flags[0]?.severity ?? 'info';
+  const portFlags = raw.filter((f) => f.id.startsWith('system:port:'));
+  const flags = raw.filter((f) => !f.id.startsWith('system:port:') || portFlags.length < 2);
+  const hidden = snapshot.flags.length - raw.length;
+  const topSev = raw[0]?.severity ?? 'info';
+  const collapsedListeners = portFlags.length >= 2;
   // "new since you looked" — server raisedAt within the freshness window. Survives
   // reload (raisedAt is server-side) and never lies: it's literally recency, not a
   // guessed "have you seen this". A restart re-baselines raisedAt, so post-restart the
   // standing signals re-surface as fresh for one window — a useful re-glance cue.
   const now = useNow(30_000);
-  const newCount = flags.filter((f) => now - new Date(f.raisedAt).getTime() < FRESH_WINDOW_MS).length;
+  const newCount = raw.filter((f) => now - new Date(f.raisedAt).getTime() < FRESH_WINDOW_MS).length;
 
-  if (flags.length === 0 && hidden === 0) return null;
+  if (raw.length === 0 && hidden === 0) return null;
 
   return (
     <section className="signal-strip rise mb-5 px-3 py-2" aria-label="Active signals">
       <div className="mb-1 flex items-center gap-2 px-1 font-mono text-[9px] uppercase tracking-[0.18em] text-mist-faint">
         <span className={`signal-pulse h-1.5 w-1.5 rounded-full ${SEV_PULSE[topSev]}`} />
         Active signals
-        <span className="tabular-nums text-mist-dim">{flags.length}</span>
+        <span className="tabular-nums text-mist-dim">{raw.length}</span>
         {newCount > 0 && <span className="tabular-nums text-amber">{newCount} new</span>}
       </div>
       <div className="max-h-[8.25rem] space-y-0.5 overflow-y-auto">
+        {collapsedListeners && (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigate('system')}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onNavigate('system');
+              }
+            }}
+            title={portFlags.map((f) => f.title).join(' · ')}
+            className="group flex cursor-pointer items-center gap-3 rounded-r-md border-l border-l-slate-glow py-1.5 pl-3 pr-1 transition-colors hover:bg-white/[0.035]"
+          >
+            <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
+              {portFlags.some((f) => now - new Date(f.raisedAt).getTime() < FRESH_WINDOW_MS) && (
+                <span className="block h-1.5 w-1.5 rounded-full bg-slate-glow" />
+              )}
+            </span>
+            <span className="min-w-0 truncate font-mono text-xs text-mist">
+              {portFlags.length} unexpected listener{portFlags.length === 1 ? '' : 's'}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-dim hidden sm:block">
+              {portFlags.map((f) => `:${f.id.split(':').pop()}`).join(' ')}
+            </span>
+            <button
+              type="button"
+              title="open system"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate('system');
+              }}
+              className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-slate-glow transition-colors hover:text-mist"
+            >
+              Open
+            </button>
+          </div>
+        )}
         {flags.map((f) => {
           const view = viewFor(f);
+          const focus = focusForFlag(f);
+          const port = portFromFlag(f);
           // whole row navigates (DESIGN v2: whole row clickable, not just the title);
           // "view" + quiet stay in the hover cluster as secondary affordances
           return (
@@ -91,14 +150,14 @@ export default function FlagStrip({
               key={f.id}
               role={view ? 'button' : undefined}
               tabIndex={view ? 0 : undefined}
-              onClick={view ? () => onNavigate(view) : undefined}
+              onClick={view ? () => onNavigate(view, focus) : undefined}
               onKeyDown={
                 view
                   ? (e) => {
                       if (e.target !== e.currentTarget) return;
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onNavigate(view);
+                        onNavigate(view, focus);
                       }
                     }
                   : undefined
@@ -125,11 +184,26 @@ export default function FlagStrip({
                     title={`open ${view}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onNavigate(view);
+                      onNavigate(view, focus);
                     }}
                     className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-slate-glow transition-colors hover:text-mist"
                   >
                     Open
+                  </button>
+                )}
+                {port !== null && (
+                  <button
+                    type="button"
+                    title="teach this port — stop flagging it"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void teachPort(port)
+                        .then(() => refreshSection('system'))
+                        .catch(() => {});
+                    }}
+                    className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-jade"
+                  >
+                    Teach
                   </button>
                 )}
                 <MuteButton kind="flag" target={f.id} />

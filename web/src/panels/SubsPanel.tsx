@@ -5,7 +5,7 @@ import { CopyText, Dot, EmptyState, RelTime, Row } from '../components/ui';
 
 /** Click on a card header lands on the service's own console. */
 const CONSOLE_URL: Record<string, string> = {
-  claude: 'https://claude.ai/settings/usage',
+  claude: 'https://console.aws.amazon.com/bedrock/home',
   grok: 'https://console.x.ai',
   copilot: 'https://github.com/settings/copilot',
   zai: 'https://z.ai',
@@ -31,6 +31,18 @@ function dotStatus(s: SubService['status']): string {
 
 function barFill(pct: number): string {
   return pct < 60 ? 'bg-jade' : pct < 85 ? 'bg-amber' : 'bg-coral';
+}
+
+function UsageMeter({ pct }: { pct: number }) {
+  const clamped = Math.min(100, Math.max(0, pct));
+  const fill = barFill(pct);
+  return (
+    <div className="usage-meter" title={`${Math.round(pct)}%`}>
+      <span className="usage-meter-track" />
+      <span className={`usage-meter-fill ${fill}`} style={{ width: `${clamped}%` }} />
+      <span className={`usage-meter-tick ${fill}`} style={{ left: `${clamped}%` }} />
+    </div>
+  );
 }
 
 /** Must match the server's redirect byte-for-byte — spotify rejects any mismatch. */
@@ -341,9 +353,7 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
                               {Math.round(u.usedPct)}%
                             </span>
                           </div>
-                          <div className="mt-1 h-1 rounded-full bg-white/10">
-                            <div className={`h-1 rounded-full ${barFill(u.usedPct)}`} style={{ width: `${pct}%` }} />
-                          </div>
+                          <UsageMeter pct={pct} />
                           {u.resetAt && (
                             <div className="mt-0.5 text-right">
                               <ResetsIn iso={u.resetAt} />
