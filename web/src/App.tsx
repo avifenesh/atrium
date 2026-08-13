@@ -4,6 +4,7 @@ import { isMuted, useSnapshot } from './api';
 import { recordSystemSample, useNow, useScrollLock } from './hooks';
 import NowView from './panels/NowView';
 import TasksPanel from './panels/TasksPanel';
+import ReentryPanel from './panels/ReentryPanel';
 import AgentsPanel from './panels/AgentsPanel';
 import RevutoPanel from './panels/RevutoPanel';
 import SystemPanel from './panels/SystemPanel';
@@ -28,6 +29,7 @@ import { isSheetOpen } from './panels/itch/Sheet';
 const VIEWS = [
   { id: 'now', label: 'Now', group: 'Today', description: 'Attention, activity, and the next useful move.' },
   { id: 'tasks', label: 'Tasks', group: 'Work', description: 'Reviews, pull requests, mentions, and local changes.', collector: 'github' },
+  { id: 'reentry', label: 'Re-entry', group: 'Work', description: 'Park a working thread, recover its facts, and resume at the next concrete move.', collector: 'reentry' },
   { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
   { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
   { id: 'system', label: 'System', group: 'Machine', description: 'Capacity, listeners, processes, and service health.', collector: 'system' },
@@ -161,6 +163,7 @@ export default function App() {
         tasksCls: 'text-mist-faint',
         comms: 0,
         agents: 0,
+        reentry: 0,
         revuto: 0,
         system: 0,
         systemCls: 'text-mist-faint',
@@ -192,6 +195,7 @@ export default function App() {
       comms: snapshot.comms.email.unreadCount,
       // only agents doing real work — daemons that are merely up stay out of the badge
       agents: workingAgents(snapshot.agents.agents, snapshot.agents.dispatches ?? []).length,
+      reentry: snapshot.reentry?.contexts.filter((context) => context.state !== 'done').length ?? 0,
       revuto: revutoFails,
       system: flags.length,
       systemCls,
@@ -304,7 +308,7 @@ export default function App() {
   const openItem = (repo: string, number: number) => setItem({ repo, number });
 
   // bottom-nav primaries on phone; everything else lives under "more"
-  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'agents', 'itch']);
+  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'reentry', 'agents']);
   const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
   const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
   const primaryActive = MOBILE_PRIMARY.has(activeView);
@@ -319,6 +323,7 @@ export default function App() {
       tasks: { n: badges.tasks, cls: badges.tasksCls },
       comms: { n: badges.comms, cls: 'text-mist-faint' },
       agents: { n: badges.agents, cls: 'text-jade' },
+      reentry: { n: badges.reentry, cls: 'text-amber' },
       // failures are errors — coral, never amber
       revuto: { n: badges.revuto, cls: 'text-coral' },
       system: { n: badges.system, cls: badges.systemCls },
@@ -417,6 +422,7 @@ export default function App() {
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
           )}
           {activeView === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
+          {activeView === 'reentry' && <ReentryPanel snapshot={snapshot} />}
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}

@@ -96,6 +96,14 @@ export const defaults = {
     viewerPath: join(HOME, 'projects', 'llm-wiki', 'tools', 'viewer.html'),
   },
 
+  reentry: {
+    /** OpenCode model order. The exact NVIDIA-hosted GLM-5.2 route is first so
+     *  status preparation keeps working when the direct Z.AI account has no credits. */
+    models: ['nvidia/z-ai/glm-5.2', 'nvidia/qwen/qwen3.5-122b-a10b'] as string[],
+    runtimeDir: join(HOME, '.config', 'atrium', 'reentry-agent'),
+    maxContexts: 32,
+  },
+
   surreal: {
     endpoint: 'http://127.0.0.1:8000',
     // surrealdb's stock local-dev credentials for the loopback memory store —
@@ -150,6 +158,7 @@ export const defaults = {
     itchMs: 60_000,
     cloudMs: 300_000,
     backupMs: 3_600_000,
+    reentryMs: 15_000,
     reposMs: 120_000,
   },
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh the Atrium Re-entry brief every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=true
+Unit=atrium-reentry-agent.service
+
+[Install]
+WantedBy=timers.target

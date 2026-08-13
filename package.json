@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build -w server && npm run build -w web && npm run build -w mcp",
+    "test": "npm run test -w server",
     "start": "node server/dist/server/src/index.js",
     "dev:server": "npm run dev -w server",
     "dev:web": "npm run dev -w web"

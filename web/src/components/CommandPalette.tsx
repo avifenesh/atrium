@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { agentAction, clearAllNotifications, refreshSection } from '../api';
+import { agentAction, clearAllNotifications, refreshSection, scanReentry } from '../api';
 import { useScrollLock } from '../hooks';
 import { runLabel } from '../panels/itch/util';
 import type { SectionName, Snapshot } from '../../../shared/types';
@@ -53,6 +53,7 @@ const SECTIONS: SectionName[] = [
   'revuto',
   'itch',
   'cloud',
+  'reentry',
   'repos',
 ];
 // snapshot lists can grow unbounded — keep the index bounded, scorer surfaces the rest
@@ -153,6 +154,17 @@ export default function CommandPalette({
         },
       });
     }
+    for (const context of (snapshot.reentry?.contexts ?? []).filter((item) => item.state !== 'done').slice(0, 40)) {
+      cmds.push({
+        key: `reentry:${context.id}`,
+        label: `${context.title} — ${context.path}`,
+        tag: 're-entry',
+        run: () => {
+          onNavigate('reentry');
+          onClose();
+        },
+      });
+    }
     // snapshot index — none pinned, so they only surface against a query and the
     // shortness tiebreak keeps exact view matches above them
     for (const n of snapshot.notes.recent.slice(0, MAX_NOTES)) {
@@ -242,6 +254,16 @@ export default function CommandPalette({
         void clearAllNotifications()
           .then(() => refreshSection('github'))
           .catch(() => {});
+        onClose();
+      },
+    });
+    cmds.push({
+      key: 'verb:reentry-scan',
+      label: 'prepare re-entry status now',
+      tag: 'action',
+      run: () => {
+        void scanReentry().catch(() => {});
+        onNavigate('reentry');
         onClose();
       },
     });

@@ -1,0 +1,21 @@
+[Unit]
+Description=Atrium Re-entry status preparation (OpenCode GLM-5.2)
+After=atrium.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__NODE_BIN__ __ROOT__/server/dist/server/src/reentry-worker.js
+Environment=NODE_ENV=production
+Environment=PATH=__NODE_DIR__:%h/.opencode/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Two provider attempts are bounded to five minutes each in the worker.
+TimeoutStartSec=20min
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

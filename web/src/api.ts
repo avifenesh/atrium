@@ -6,6 +6,8 @@ import type {
   SectionName,
   GithubItemDetail,
   GithubComment,
+  ReentryContext,
+  ReentryEnergy,
 } from '../../shared/types';
 
 const BASE = ''; // same origin (vite proxies /api in dev)
@@ -42,6 +44,38 @@ export async function agentAction(agentId: string, action: string, target?: stri
 
 export async function refreshSection(section: string): Promise<void> {
   await fetch(`${BASE}/api/refresh/${section}`, { method: 'POST' });
+}
+
+async function reentryRequest<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `re-entry request failed ${res.status}`);
+  return data as T;
+}
+
+export function parkReentry(req: {
+  path: string;
+  title?: string;
+  note?: string;
+  energy?: ReentryEnergy;
+}): Promise<ReentryContext> {
+  return reentryRequest('/api/reentry/park', req);
+}
+
+export function resumeReentry(id: string): Promise<{ context: ReentryContext; launched: boolean; via: string }> {
+  return reentryRequest(`/api/reentry/${encodeURIComponent(id)}/resume`);
+}
+
+export function archiveReentry(id: string): Promise<ReentryContext> {
+  return reentryRequest(`/api/reentry/${encodeURIComponent(id)}/archive`);
+}
+
+export function scanReentry(): Promise<{ ok: boolean; scheduled: boolean }> {
+  return reentryRequest('/api/reentry/scan');
 }
 
 /** Hand a task to eigen. Pass url/repo when dispatching a github item. */

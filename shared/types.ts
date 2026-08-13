@@ -13,6 +13,7 @@ export type SectionName =
   | 'revuto'
   | 'itch'
   | 'cloud'
+  | 'reentry'
   | 'repos';
 
 export interface Snapshot {
@@ -28,6 +29,7 @@ export interface Snapshot {
   revuto: RevutoState;
   itch: ItchState;
   cloud: CloudState;
+  reentry: ReentryState;
   repos: ReposState;
   /** Plugin collectors (anything not in the typed core above) write here via
    *  store.setExtra(). The web UI renders each entry in a generic panel keyed by
@@ -552,6 +554,88 @@ export interface RepoInfo {
 export interface ReposState {
   updatedAt: string | null;
   repos: RepoInfo[];
+  error: string | null;
+}
+
+// ---------- re-entry (durable context parking + background status brief) ----------
+
+export type ReentryEnergy = 'light' | 'medium' | 'deep';
+export type ReentryContextState = 'parked' | 'active' | 'done';
+export type ReentryScanStatus = 'queued' | 'ready' | 'error';
+
+export interface ReentryCapsule {
+  goal: string;
+  verifiedFacts: string[];
+  rejectedPaths: string[];
+  blocker: string | null;
+  nextAction: string;
+}
+
+export interface ReentryGitState {
+  branch: string | null;
+  dirty: number;
+  ahead: number | null;
+  behind: number | null;
+  lastCommitAt: string | null;
+  /** Bounded porcelain/status and diff-stat lines captured when the context was parked. */
+  summary: string[];
+}
+
+export interface ReentryResumeTarget {
+  kind: 'tmux' | 'codex' | 'claude' | 'shell';
+  /** tmux session name or durable agent session id; null for a plain shell. */
+  id: string | null;
+  capturedAt: string;
+}
+
+export interface ReentryContext {
+  id: string;
+  title: string;
+  path: string;
+  project: string;
+  note: string;
+  energy: ReentryEnergy;
+  state: ReentryContextState;
+  createdAt: string;
+  parkedAt: string;
+  updatedAt: string;
+  resumedAt: string | null;
+  git: ReentryGitState | null;
+  resumeTarget: ReentryResumeTarget;
+  capsule: ReentryCapsule | null;
+  scanStatus: ReentryScanStatus;
+  scanError: string | null;
+}
+
+export interface ReentryBriefing {
+  generatedAt: string;
+  model: string;
+  headline: string;
+  summary: string;
+  focus: {
+    contextId: string | null;
+    path: string | null;
+    title: string;
+    whyNow: string;
+    nextAction: string;
+  }[];
+  looseEnds: { label: string; detail: string; path: string | null }[];
+}
+
+export interface ReentryAgentStatus {
+  status: 'idle' | 'running' | 'error' | 'disabled';
+  model: string;
+  lastCheckedAt: string | null;
+  lastPreparedAt: string | null;
+  lastError: string | null;
+  nextRunAt: string | null;
+}
+
+export interface ReentryState {
+  updatedAt: string | null;
+  contexts: ReentryContext[];
+  briefing: ReentryBriefing | null;
+  agent: ReentryAgentStatus;
   error: string | null;
 }
 

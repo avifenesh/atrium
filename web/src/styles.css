@@ -229,6 +229,41 @@ body::after {
 .activity-rail {
   position: relative;
 }
+
+/* Re-entry's signature threadline: the quiet rail keeps the capsule readable as
+   one sequence, while only the next action earns the attention color. */
+.reentry-thread {
+  position: relative;
+  padding-left: 1.45rem;
+}
+.reentry-thread::before {
+  content: '';
+  position: absolute;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  left: 0.28rem;
+  width: 1px;
+  background: linear-gradient(rgba(255,255,255,.17), rgba(255,255,255,.07) 72%, rgba(232,199,106,.52));
+}
+.reentry-step {
+  position: relative;
+}
+.reentry-step::before {
+  content: '';
+  position: absolute;
+  top: 0.32rem;
+  left: -1.43rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: var(--color-ink-2);
+}
+.reentry-step.is-next::before {
+  border-color: var(--color-amber);
+  background: var(--color-amber);
+  box-shadow: 0 0 12px rgba(232,199,106,.42);
+}
 .activity-rail::before {
   content: '';
   position: absolute;

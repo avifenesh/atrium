@@ -13,6 +13,7 @@ import { writeNote } from './collectors/notes.js';
 import { googleStatus, googleAuthUrl, googleCallback } from './google.js';
 import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js';
 import { readNote } from './collectors/notes.js';
+import { reentry } from './reentry.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -29,6 +30,7 @@ import cloudCollector from './collectors/cloud.js';
 import backupCollector from './collectors/backup.js';
 import reposCollector from './collectors/repos.js';
 import mentionsCollector from './collectors/mentions.js';
+import reentryCollector from './collectors/reentry.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
 import { serveWikiViewer } from './wiki-viewer.js';
@@ -47,6 +49,7 @@ for (const c of [
   cloudCollector,
   backupCollector,
   reposCollector,
+  reentryCollector,
   mentionsCollector,
 ]) {
   register(c);
@@ -135,6 +138,51 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && path === '/api/health') return json(res, 200, { ok: true });
 
     if (method === 'GET' && path === '/api/snapshot') return json(res, 200, store.get());
+
+    if (method === 'GET' && path === '/api/reentry/evidence') {
+      return json(res, 200, reentry.buildEvidence());
+    }
+
+    if (method === 'POST' && path === '/api/reentry/park') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 201, await reentry.park(body));
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/reentry/scan') {
+      const result = await reentry.requestScan();
+      return json(res, result.ok ? 202 : 503, result);
+    }
+
+    if (method === 'POST' && path === '/api/reentry/agent-result') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        await reentry.applyAgentResult(body);
+        return json(res, 200, { ok: true });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/reentry/agent-error') {
+      const body = await readBody(req).catch(() => ({}));
+      await reentry.applyAgentError(body);
+      return json(res, 200, { ok: true });
+    }
+
+    const reentryAction = path.match(/^\/api\/reentry\/([^/]+)\/(resume|archive)$/);
+    if (method === 'POST' && reentryAction) {
+      const id = decodeURIComponent(reentryAction[1]);
+      try {
+        const result = reentryAction[2] === 'resume' ? await reentry.resume(id) : await reentry.archive(id);
+        return json(res, 200, result);
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
 
     if (method === 'GET' && path === '/api/stream') {
       res.writeHead(200, {
@@ -384,6 +432,7 @@ async function serveStatic(path: string, res: ServerResponse): Promise<boolean> 
   return false;
 }
 
+await reentry.load();
 await mutes.load();
 await loadMetricHistory();
 

@@ -92,6 +92,15 @@ export function emptySnapshot(): Snapshot {
       error: null,
     },
     cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
+    reentry: {
+      updatedAt: null,
+      contexts: [],
+      briefing: null,
+      agent: {
+        status: 'idle', model: '', lastCheckedAt: null, lastPreparedAt: null, lastError: null, nextRunAt: null,
+      },
+      error: null,
+    },
     repos: { updatedAt: null, repos: [], error: null },
     extra: {},
     collectors: [],
