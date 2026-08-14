@@ -117,6 +117,9 @@ function ContextCard({
         {context.note && <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-mist-dim">{context.note}</p>}
 
         <div className="reentry-thread mt-5 space-y-4">
+          <ThreadStep label="Next" next>
+            {capsule?.nextAction ?? 'Run the status agent to prepare the next concrete action.'}
+          </ThreadStep>
           <ThreadStep label="Goal">{capsule?.goal ?? (context.note || 'Awaiting an explicit goal.')}</ThreadStep>
           <ThreadStep label="Verified true">
             {capsule?.verifiedFacts.length ? (
@@ -136,9 +139,6 @@ function ContextCard({
           ) : null}
           <ThreadStep label="Blocker">
             {capsule ? capsule.blocker ?? 'No explicit blocker appears in the evidence.' : 'Not assessed yet.'}
-          </ThreadStep>
-          <ThreadStep label="Next" next>
-            {capsule?.nextAction ?? 'Run the status agent to prepare the next concrete action.'}
           </ThreadStep>
         </div>
 
@@ -195,7 +195,11 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
   const [energy, setEnergy] = useState<ReentryEnergy>('medium');
   const [busy, setBusy] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
+  const [briefingOpen, setBriefingOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
+  const focusItems = (state.briefing?.focus ?? []).filter(
+    (item) => active.length !== 1 || item.contextId !== active[0]?.id,
+  );
 
   const showFeedback = (text: string, error = false) => {
     setFeedback({ text, error });
@@ -287,9 +291,6 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
             <h2 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.025em] text-mist sm:text-2xl">
               {state.briefing?.headline ?? (state.agent.status === 'running' ? 'Reading the current workspace…' : 'Park a context without losing the thread.')}
             </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-mist-dim">
-              {state.briefing?.summary ?? 'Atrium captures the worktree and your note; the background agent turns only observed facts into a compact next-step capsule.'}
-            </p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-2">
             <div className="flex items-center gap-2 font-mono text-[11px] text-mist-faint">
@@ -308,14 +309,29 @@ export default function ReentryPanel({ snapshot }: { snapshot: Snapshot }) {
             )}
           </div>
         </div>
-        {state.briefing?.focus.length ? (
-          <div className="mt-5 grid gap-2 border-t border-white/[0.065] pt-4 md:grid-cols-2 xl:grid-cols-4">
-            {state.briefing.focus.map((item, index) => (
+        <p
+          id="reentry-briefing-summary"
+          className={`mt-3 max-w-2xl text-sm leading-relaxed text-mist-dim ${briefingOpen ? '' : 'line-clamp-3 sm:line-clamp-none'}`}
+        >
+          {state.briefing?.summary ?? 'Atrium captures the worktree and your note; the background agent turns only observed facts into a compact next-step capsule.'}
+        </p>
+        <button
+          type="button"
+          aria-expanded={briefingOpen}
+          aria-controls="reentry-briefing-summary"
+          onClick={() => setBriefingOpen((open) => !open)}
+          className="mt-1 min-h-8 cursor-pointer font-mono text-[11px] text-mist-faint sm:hidden"
+        >
+          {briefingOpen ? 'Hide briefing' : 'Read briefing'}
+        </button>
+        {focusItems.length > 0 ? (
+          <div className="mt-5 grid grid-flow-col auto-cols-[82%] gap-2 overflow-x-auto border-t border-white/[0.065] pt-4 pb-2 [scrollbar-width:none] md:grid-flow-row md:auto-cols-auto md:grid-cols-2 md:overflow-visible md:pb-0 xl:grid-cols-4">
+            {focusItems.map((item, index) => (
               <button
                 key={`${item.contextId ?? item.path ?? item.title}:${index}`}
                 type="button"
                 onClick={() => focusItem(item.contextId, item.path)}
-                className="group min-w-0 cursor-pointer rounded-lg border border-white/[0.065] bg-white/[0.025] p-3 text-left transition-colors hover:border-white/[0.13] hover:bg-white/[0.045]"
+                className="group min-w-0 snap-start cursor-pointer rounded-lg border border-white/[0.065] bg-white/[0.025] p-3 text-left transition-colors hover:border-white/[0.13] hover:bg-white/[0.045]"
               >
                 <div className="truncate text-sm font-semibold text-mist">{item.title}</div>
                 <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-mist-faint">{item.whyNow}</div>

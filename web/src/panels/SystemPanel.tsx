@@ -6,6 +6,7 @@ import { getSeries, pctTone } from '../hooks';
 import type { PortScope, Snapshot } from '../../../shared/types';
 
 const GiB = 1024 ** 3;
+const DETAIL_ROWS = 8;
 
 function gb(bytes: number): string {
   const v = bytes / GiB;
@@ -33,7 +34,7 @@ function StatTile({
   children: ReactNode;
 }) {
   return (
-    <div className="panel-surface rise min-w-0 p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
+    <div className="panel-surface rise min-w-0 p-3 sm:p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
       <div className="text-xs font-medium text-mist-dim">{label}</div>
       {children}
     </div>
@@ -43,7 +44,7 @@ function StatTile({
 /** Large numeral — mono per v2 (font-display is reserved for the wordmark + now view). */
 function BigPct({ pct, className = 'text-mist' }: { pct: number; className?: string }) {
   return (
-    <div className={`font-mono text-3xl leading-tight tabular-nums ${className}`}>
+    <div className={`font-mono text-2xl leading-tight tabular-nums sm:text-3xl ${className}`}>
       {Math.round(pct)}
       <span className="text-base text-mist-dim">%</span>
     </div>
@@ -83,7 +84,7 @@ function PortRow({ port: p }: { port: Snapshot['system']['ports'][number] }) {
             {p.port}
           </span>
         </CopyText>
-        <div className="min-w-0 flex-1 overflow-hidden">
+        <div className="min-w-6 flex-1 overflow-hidden">
           <CopyText text={p.proc}>
             <span className="block truncate text-left text-sm text-mist-dim" title={p.proc}>
               {p.proc}
@@ -91,7 +92,10 @@ function PortRow({ port: p }: { port: Snapshot['system']['ports'][number] }) {
           </CopyText>
         </div>
         <ScopePip scope={p.scope} />
-        <span className={`shrink-0 font-mono text-xs ${p.known ? 'text-mist-faint' : 'text-amber'}`}>
+        <span
+          className={`max-w-28 shrink-0 truncate font-mono text-xs sm:max-w-40 ${p.known ? 'text-mist-faint' : 'text-amber'}`}
+          title={p.label ?? 'unknown'}
+        >
           {p.label ?? 'unknown'}
         </span>
         {!p.known && (
@@ -142,12 +146,17 @@ export default function SystemPanel({
   const swapUsedB = sys.swap.totalB - sys.swap.freeB;
   const swapClass =
     sys.swap.usedPct > 90 ? 'text-coral' : sys.swap.usedPct > 75 ? 'text-amber' : 'text-mist';
+  const [portsOpen, setPortsOpen] = useState(false);
+  const [processesOpen, setProcessesOpen] = useState(false);
 
   // muted ports/services disappear — counts surface on the panel header chips
   const visiblePorts = sys.ports.filter((p) => !isMuted(snapshot, 'flag', `system:port:${p.port}`));
+  visiblePorts.sort((a, b) => Number(a.known) - Number(b.known) || a.port - b.port);
   const quietPorts = sys.ports.length - visiblePorts.length;
   const visibleServices = sys.services.filter((s) => !isMuted(snapshot, 'service', s.unit));
   const quietServices = sys.services.length - visibleServices.length;
+  const shownPorts = portsOpen ? visiblePorts : visiblePorts.slice(0, DETAIL_ROWS);
+  const shownProcesses = processesOpen ? sys.processes : sys.processes.slice(0, DETAIL_ROWS);
 
   return (
     <div>
@@ -162,13 +171,13 @@ export default function SystemPanel({
         </div>
       )}
 
-      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 items-start gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile label="cpu" riseIndex={0}>
           <div className="flex min-w-0 items-end justify-between gap-2">
             <BigPct pct={sys.cpu.pct} />
             <Spark series={getSeries('cpu')} className={`mb-1 shrink-0 ${pctTone(sys.cpu.pct)}`} />
           </div>
-          <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+          <div className="mt-1 font-mono text-[11px] tabular-nums text-mist-dim sm:text-xs">
             {sys.cpu.load1.toFixed(2)} / {sys.cpu.load5.toFixed(2)} / {sys.cpu.load15.toFixed(2)} · {sys.cpu.cores}c
           </div>
         </StatTile>
@@ -178,7 +187,7 @@ export default function SystemPanel({
             <BigPct pct={sys.mem.usedPct} />
             <Spark series={getSeries('mem')} className={`mb-1 shrink-0 ${pctTone(sys.mem.usedPct)}`} />
           </div>
-          <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+          <div className="mt-1 font-mono text-[11px] tabular-nums text-mist-dim sm:text-xs">
             {gb(memUsedB)}/{gb(sys.mem.totalB)} <span className="text-mist-faint">GB</span>
           </div>
         </StatTile>
@@ -188,7 +197,7 @@ export default function SystemPanel({
             <BigPct pct={sys.swap.usedPct} className={swapClass} />
             <Spark series={getSeries('swap')} className={`mb-1 shrink-0 ${pctTone(sys.swap.usedPct)}`} />
           </div>
-          <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+          <div className="mt-1 font-mono text-[11px] tabular-nums text-mist-dim sm:text-xs">
             {gb(swapUsedB)}/{gb(sys.swap.totalB)} <span className="text-mist-faint">GB</span>
           </div>
         </StatTile>
@@ -200,7 +209,7 @@ export default function SystemPanel({
                 <BigPct pct={sys.gpu.utilPct} />
                 <Spark series={getSeries('gpu')} className={`mb-1 shrink-0 ${pctTone(sys.gpu.utilPct)}`} />
               </div>
-              <div className="mt-1 font-mono text-xs tabular-nums text-mist-dim">
+              <div className="mt-1 font-mono text-[11px] tabular-nums text-mist-dim sm:text-xs">
                 {sys.gpu.memUsedMiB}/{sys.gpu.memTotalMiB} <span className="text-mist-faint">MiB</span> · {sys.gpu.tempC}°C
               </div>
               <div className="truncate font-mono text-[11px] tabular-nums text-mist-faint">
@@ -259,11 +268,24 @@ export default function SystemPanel({
           {visiblePorts.length === 0 ? (
             <EmptyState>No listening ports were reported.</EmptyState>
           ) : (
-            <div className="max-h-64 overflow-y-auto">
-              {visiblePorts.map((p) => (
-                <PortRow key={p.port} port={p} />
-              ))}
-            </div>
+            <>
+              <div id="system-port-rows" className={portsOpen ? 'max-h-96 overflow-y-auto' : ''}>
+                {shownPorts.map((p) => (
+                  <PortRow key={p.port} port={p} />
+                ))}
+              </div>
+              {visiblePorts.length > DETAIL_ROWS && (
+                <button
+                  type="button"
+                  aria-expanded={portsOpen}
+                  aria-controls="system-port-rows"
+                  onClick={() => setPortsOpen((open) => !open)}
+                  className="mt-2 min-h-8 cursor-pointer px-2.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+                >
+                  {portsOpen ? 'Show less' : `Show ${visiblePorts.length - DETAIL_ROWS} more`}
+                </button>
+              )}
+            </>
           )}
         </Panel>
 
@@ -271,14 +293,15 @@ export default function SystemPanel({
           {sys.processes.length === 0 ? (
             <EmptyState>No notable processes.</EmptyState>
           ) : (
-            <div className="max-h-64 overflow-y-auto">
+            <>
+              <div id="system-process-rows" className={processesOpen ? 'max-h-96 overflow-y-auto' : ''}>
               <div className="flex items-baseline gap-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-mist-faint">
                 <span className="w-14 shrink-0">pid</span>
                 <span className="min-w-0 flex-1" />
                 <span className="w-14 shrink-0 text-right">cpu%</span>
                 <span className="w-14 shrink-0 text-right">mem%</span>
               </div>
-              {sys.processes.map((p) => (
+              {shownProcesses.map((p) => (
                 <Row key={p.pid} className="group">
                   <div className="flex w-full min-w-0 items-baseline gap-2">
                     <CopyText text={String(p.pid)}>
@@ -305,7 +328,19 @@ export default function SystemPanel({
                   </div>
                 </Row>
               ))}
-            </div>
+              </div>
+              {sys.processes.length > DETAIL_ROWS && (
+                <button
+                  type="button"
+                  aria-expanded={processesOpen}
+                  aria-controls="system-process-rows"
+                  onClick={() => setProcessesOpen((open) => !open)}
+                  className="mt-2 min-h-8 cursor-pointer px-2.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-mist"
+                >
+                  {processesOpen ? 'Show less' : `Show ${sys.processes.length - DETAIL_ROWS} more`}
+                </button>
+              )}
+            </>
           )}
         </Panel>
 

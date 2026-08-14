@@ -93,7 +93,7 @@ function ItemRow({
         {item.repo}
       </span>
       <RelTime iso={item.updatedAt} />
-      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
+      <span className="row-actions mobile-row-actions ml-auto shrink-0 justify-end sm:ml-0 sm:basis-auto">
         <GithubLink href={item.url} />
         <SendToEigen title={item.title} url={item.url} repo={item.repo} sourceId={item.id} dispatches={dispatches} />
         <RepoMutes repo={item.repo} itemId={item.id} />
@@ -122,7 +122,7 @@ function PRRow({
       {pr.isDraft && <Chip className="hidden text-mist-faint sm:inline-flex">draft</Chip>}
       {decision && <Chip className={`hidden sm:inline-flex ${decision.cls}`}>{decision.label}</Chip>}
       <RelTime iso={pr.updatedAt} />
-      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
+      <span className="row-actions mobile-row-actions ml-auto shrink-0 justify-end sm:ml-0 sm:basis-auto">
         <GithubLink href={pr.url} />
         <SendToEigen title={pr.title} url={pr.url} repo={pr.repo} sourceId={pr.id} dispatches={dispatches} />
         <RepoMutes repo={pr.repo} itemId={pr.id} />
@@ -158,7 +158,7 @@ function OrgRow({
       {isPR && item.isDraft && <Chip className="hidden text-mist-faint sm:inline-flex">draft</Chip>}
       {decision && <Chip className={`hidden sm:inline-flex ${decision.cls}`}>{decision.label}</Chip>}
       <RelTime iso={item.updatedAt} />
-      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
+      <span className="row-actions mobile-row-actions ml-auto shrink-0 justify-end sm:ml-0 sm:basis-auto">
         {/* fixed slot: the cluster reserves space while hidden, so a variable-width
             author would push each row's RelTime left by a different amount */}
         <span className="hover-cluster hidden w-24 shrink-0 truncate text-right font-mono text-[11px] text-mist-faint 2xl:block">
@@ -204,7 +204,7 @@ function NotificationRow({
         </span>
       )}
       <RelTime iso={n.updatedAt} />
-      <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end gap-1 sm:ml-0 sm:basis-auto">
+      <span className="row-actions mobile-row-actions ml-auto shrink-0 justify-end sm:ml-0 sm:basis-auto">
         {item && <GithubLink href={n.url} />}
         <SendToEigen title={n.title} url={n.url} repo={n.repo} sourceId={n.id} dispatches={dispatches} />
         <button
@@ -331,6 +331,8 @@ export default function TasksPanel({
   const reviewBotNotifications = visibleNotifications.filter((n) => n.noise?.kind === 'review-bot');
   const notifications = visibleNotifications.filter((n) => n.noise?.kind !== 'review-bot');
   const ownRepos = g.ownRepos.filter(visible);
+  const quietPriorityCount =
+    (g.orgQueue.length - orgQueue.length) + (g.actNow.length - actNow.length);
 
   const clearOne = (id: string) => {
     setCleared((s) => new Set(s).add(id));
@@ -384,73 +386,79 @@ export default function TasksPanel({
       </header>
 
       <div className="grid grid-cols-12 gap-5">
-        <Panel
-          title="Waiting on you"
-          riseIndex={0}
-          className="col-span-12"
-          quietCount={g.orgQueue.length - orgQueue.length}
-          onQuietClick={onOpenQuiet}
-          right={
-            orgQueue.length > 0 ? (
-              // amber only while the review lane has items — a triage-only queue stays plain
-              <span
-                className={`font-mono text-xs tabular-nums ${orgReview.length > 0 ? 'text-amber' : 'text-mist-faint'}`}
+        {orgQueue.length === 0 && actNow.length === 0 ? (
+          <section
+            className="stat-band rise col-span-12 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3"
+            style={{ '--rise-i': 0 } as CSSProperties}
+          >
+            <Dot status="running" />
+            <h2 className="text-[13px] font-semibold text-mist">Priority queue clear</h2>
+            <span className="order-3 min-w-0 basis-full text-sm text-mist-faint sm:order-none sm:basis-auto sm:flex-1">
+              No reviews, triage requests, or immediate actions.
+            </span>
+            {quietPriorityCount > 0 && <QuietChip count={quietPriorityCount} onClick={onOpenQuiet} />}
+          </section>
+        ) : (
+          <>
+            {orgQueue.length > 0 && (
+              <Panel
+                title="Waiting on you"
+                riseIndex={0}
+                className="col-span-12"
+                quietCount={g.orgQueue.length - orgQueue.length}
+                onQuietClick={onOpenQuiet}
+                right={
+                  // amber only while the review lane has items — a triage-only queue stays plain
+                  <span
+                    className={`font-mono text-xs tabular-nums ${orgReview.length > 0 ? 'text-amber' : 'text-mist-faint'}`}
+                  >
+                    {orgQueue.length}
+                  </span>
+                }
               >
-                {orgQueue.length}
-              </span>
-            ) : undefined
-          }
-        >
-          {orgQueue.length === 0 ? (
-            <EmptyState>No reviews or triage requests are waiting on you.</EmptyState>
-          ) : (
-            <div className="max-h-72 space-y-0.5 overflow-y-auto">
-              {orgReview.length > 0 && (
-                <>
-                  <SectionLabel>
-                    review <span className="tabular-nums text-amber">· {orgReview.length}</span>
-                  </SectionLabel>
-                  {orgReview.map((it) => (
-                    <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
-                  ))}
-                </>
-              )}
-              {orgTriage.length > 0 && (
-                <>
-                  <SectionLabel>
-                    triage <span className="tabular-nums">· {orgTriage.length}</span>
-                  </SectionLabel>
-                  {orgTriage.map((it) => (
-                    <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
-                  ))}
-                </>
-              )}
-            </div>
-          )}
-        </Panel>
+                <div className="max-h-72 space-y-0.5 overflow-x-hidden overflow-y-auto">
+                  {orgReview.length > 0 && (
+                    <>
+                      <SectionLabel>
+                        review <span className="tabular-nums text-amber">· {orgReview.length}</span>
+                      </SectionLabel>
+                      {orgReview.map((it) => (
+                        <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
+                      ))}
+                    </>
+                  )}
+                  {orgTriage.length > 0 && (
+                    <>
+                      <SectionLabel>
+                        triage <span className="tabular-nums">· {orgTriage.length}</span>
+                      </SectionLabel>
+                      {orgTriage.map((it) => (
+                        <OrgRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
+                      ))}
+                    </>
+                  )}
+                </div>
+              </Panel>
+            )}
 
-        <Panel
-          title="Needs action"
-          riseIndex={1}
-          className="col-span-12"
-          quietCount={g.actNow.length - actNow.length}
-          onQuietClick={onOpenQuiet}
-          right={
-            actNow.length > 0 ? (
-              <span className="font-mono text-xs tabular-nums text-amber">{actNow.length}</span>
-            ) : undefined
-          }
-        >
-          {actNow.length === 0 ? (
-            <EmptyState>Nothing needs immediate action.</EmptyState>
-          ) : (
-            <div className="max-h-72 space-y-0.5 overflow-y-auto">
-              {actNow.map((it) => (
-                <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} accent />
-              ))}
-            </div>
-          )}
-        </Panel>
+            {actNow.length > 0 && (
+              <Panel
+                title="Needs action"
+                riseIndex={1}
+                className="col-span-12"
+                quietCount={g.actNow.length - actNow.length}
+                onQuietClick={onOpenQuiet}
+                right={<span className="font-mono text-xs tabular-nums text-amber">{actNow.length}</span>}
+              >
+                <div className="max-h-72 space-y-0.5 overflow-x-hidden overflow-y-auto">
+                  {actNow.map((it) => (
+                    <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} accent />
+                  ))}
+                </div>
+              </Panel>
+            )}
+          </>
+        )}
 
         <Panel
           title="Your open pull requests"
@@ -467,7 +475,7 @@ export default function TasksPanel({
           {myPRs.length === 0 ? (
             <EmptyState>You have no open pull requests.</EmptyState>
           ) : (
-            <div className="max-h-80 space-y-0.5 overflow-y-auto">
+            <div className="max-h-80 space-y-0.5 overflow-x-hidden overflow-y-auto">
               {myPRs.map((pr) => (
                 <PRRow key={pr.id} pr={pr} dispatches={dispatches} onOpenItem={onOpenItem} />
               ))}
@@ -490,7 +498,7 @@ export default function TasksPanel({
           {mentions.length === 0 ? (
             <EmptyState>No unread mentions.</EmptyState>
           ) : (
-            <div className="max-h-80 space-y-0.5 overflow-y-auto">
+            <div className="max-h-80 space-y-0.5 overflow-x-hidden overflow-y-auto">
               {mentions.map((it) => (
                 <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
               ))}
@@ -503,7 +511,9 @@ export default function TasksPanel({
             <button
               type="button"
               onClick={() => setTeamOpen((o) => !o)}
-              className="flex min-w-0 cursor-pointer items-baseline gap-2 text-left"
+              aria-expanded={teamOpen}
+              aria-controls="team-queue-items"
+              className="flex min-h-8 min-w-0 cursor-pointer items-center gap-2 text-left"
             >
               <span className="font-mono text-[11px] text-mist-faint">{teamOpen ? '▾' : '▸'}</span>
               <h2 className="text-[13px] font-semibold text-mist">Team queue</h2>
@@ -514,7 +524,7 @@ export default function TasksPanel({
             )}
           </header>
           {teamOpen && (
-            <div className="mt-3 max-h-80 space-y-0.5 overflow-y-auto">
+            <div id="team-queue-items" className="mt-3 max-h-80 space-y-0.5 overflow-x-hidden overflow-y-auto">
               {teamQueue.length === 0 ? (
                 <EmptyState>The team queue is clear.</EmptyState>
               ) : (
@@ -556,7 +566,7 @@ export default function TasksPanel({
           {visibleNotifications.length === 0 ? (
             <EmptyState>No unread notifications.</EmptyState>
           ) : (
-            <div className="max-h-96 overflow-y-auto">
+            <div className="max-h-96 overflow-x-hidden overflow-y-auto">
               {notifications.length > 0 && (
                 <div className="space-y-0.5">
                   {notifications.map((n) => (
@@ -607,7 +617,7 @@ export default function TasksPanel({
                     {r.openPRs}
                     <span className="text-mist-faint"> pr</span>
                   </span>
-                  <span className="mobile-row-actions ml-auto flex shrink-0 items-center justify-end sm:ml-0 sm:basis-auto">
+                  <span className="row-actions mobile-row-actions ml-auto shrink-0 justify-end sm:ml-0 sm:basis-auto">
                     <RepoMutes repo={r.repo} />
                   </span>
                 </Row>

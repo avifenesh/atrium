@@ -289,6 +289,10 @@ async function main(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ error }),
     }).catch(() => undefined);
+    // Keep the concrete provider/API failure in the user journal. The state
+    // file is intentionally overwritten by the next retry, so it cannot be
+    // the only durable diagnostic surface.
+    console.error(`[reentry-worker] ${error}`);
     process.exitCode = 1;
   }
 }

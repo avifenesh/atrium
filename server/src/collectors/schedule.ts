@@ -157,6 +157,66 @@ function usEpochToIso(v: unknown): string | null {
   return typeof v === 'number' && v > 0 ? iso(Math.floor(v / 1000)) : null;
 }
 
+export interface SystemdServiceStatus {
+  result: string | null;
+  exitStatus: number | null;
+  exitTimestamp: string | null;
+  activeState: string | null;
+  subState: string | null;
+}
+
+/** Parse the stable key/value output from `systemctl show`. */
+export function parseSystemdServiceStatus(out: string): SystemdServiceStatus {
+  const values = new Map<string, string>();
+  for (const line of out.split('\n')) {
+    const eq = line.indexOf('=');
+    if (eq > 0) values.set(line.slice(0, eq), line.slice(eq + 1));
+  }
+  const rawExitStatus = values.get('ExecMainStatus') ?? '';
+  return {
+    result: values.get('Result') || null,
+    exitStatus: /^\d+$/.test(rawExitStatus) ? Number(rawExitStatus) : null,
+    exitTimestamp: values.get('ExecMainExitTimestamp') || null,
+    activeState: values.get('ActiveState') || null,
+    subState: values.get('SubState') || null,
+  };
+}
+
+/** Parse the repeated Id= blocks emitted when `systemctl show` gets many units. */
+export function parseSystemdServiceStatuses(out: string): Map<string, SystemdServiceStatus> {
+  const statuses = new Map<string, SystemdServiceStatus>();
+  let id: string | null = null;
+  let block: string[] = [];
+  const flush = () => {
+    if (id) statuses.set(id, parseSystemdServiceStatus(block.join('\n')));
+  };
+  for (const line of out.split('\n')) {
+    if (line.startsWith('Id=')) {
+      flush();
+      id = line.slice('Id='.length);
+      block = [];
+    }
+    if (id) block.push(line);
+  }
+  flush();
+  return statuses;
+}
+
+function systemdLastStatus(status: SystemdServiceStatus | null): 'ok' | 'fail' | null {
+  if (!status?.exitTimestamp || !status.result) return null;
+  return status.result === 'success' ? 'ok' : 'fail';
+}
+
+function systemdDetail(activates: string | null, status: SystemdServiceStatus | null): string | null {
+  if (!activates) return null;
+  if (systemdLastStatus(status) !== 'fail') return `activates ${activates}`;
+  const result = status?.result ?? 'unknown result';
+  const exitStatus = status?.exitStatus === null || status?.exitStatus === undefined
+    ? ''
+    : `, status ${status.exitStatus}`;
+  return `${activates} failed (${result}${exitStatus})`;
+}
+
 async function collectSystemdUser(entries: ScheduleEntry[]): Promise<void> {
   const out = await shTry('systemctl', ['--user', 'list-timers', '--all', '--output=json']);
   if (out === null) return;
@@ -167,8 +227,30 @@ async function collectSystemdUser(entries: ScheduleEntry[]): Promise<void> {
     return; // skip source on unparseable output
   }
   if (!Array.isArray(timers)) return;
+  const serviceStatuses = new Map<string, SystemdServiceStatus | null>();
+  const services = [...new Set(
+    timers
+      .map((timer) => (typeof timer?.activates === 'string' ? timer.activates : ''))
+      .filter(Boolean),
+  )];
+  if (services.length > 0) {
+    const statusOut = await shTry('systemctl', [
+      '--user',
+      'show',
+      ...services,
+      '-p',
+      'Id,Result,ExecMainStatus,ExecMainExitTimestamp,ActiveState,SubState',
+    ]);
+    if (statusOut !== null) {
+      for (const [service, status] of parseSystemdServiceStatuses(statusOut)) {
+        serviceStatuses.set(service, status);
+      }
+    }
+  }
   for (const t of timers) {
     if (!t?.unit) continue;
+    const activates = typeof t.activates === 'string' && t.activates ? t.activates : null;
+    const serviceStatus = activates ? serviceStatuses.get(activates) ?? null : null;
     const nextRun = usEpochToIso(t.next);
     entries.push({
       id: `systemd-user:${t.unit}`,
@@ -178,8 +260,8 @@ async function collectSystemdUser(entries: ScheduleEntry[]): Promise<void> {
       enabled: nextRun !== null,
       nextRun,
       lastRun: usEpochToIso(t.last),
-      lastStatus: null,
-      detail: t.activates ? `activates ${t.activates}` : null,
+      lastStatus: systemdLastStatus(serviceStatus),
+      detail: systemdDetail(activates, serviceStatus),
       muteable: false,
     });
   }

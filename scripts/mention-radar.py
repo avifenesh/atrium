@@ -29,6 +29,12 @@ HITS_FILE = STATE_DIR / "hits.jsonl"
 DIGEST_FILE = STATE_DIR / "latest.md"
 UA = "mention-radar/1.0 (+https://github.com/avifenesh; local watch)"
 HTTP_TIMEOUT = 20
+FETCH_FAILURES: list[str] = []
+
+
+def record_fetch_failure(label: str, error: object) -> None:
+    detail = str(error).replace("\n", " ").strip()
+    FETCH_FAILURES.append(f"{label}: {detail[:180]}")
 
 # Distinctive terms only — generic names (atrium, eigen, floe, tools) would
 # drown the radar in false positives; "avifenesh" catches those co-mentions.
@@ -66,6 +72,7 @@ def http_get_json(url: str) -> dict | None:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
             return json.loads(r.read().decode("utf-8", "replace"))
     except Exception as e:  # network hiccup → skip source this round
+        record_fetch_failure(url[:120], e)
         print(f"warn: fetch failed {url[:80]}: {e}", file=sys.stderr)
         return None
 
@@ -154,10 +161,12 @@ def fetch_gh_code(term: str) -> list[dict]:
              f"search/code?q={urllib.parse.quote(term)}+in:file+filename:README&per_page=30"],
             capture_output=True, text=True, timeout=30)
         if p.returncode != 0:
+            record_fetch_failure(f"gh code search ({term})", p.stderr.strip()[:180])
             print(f"warn: gh code search failed for {term}: {p.stderr.strip()[:140]}", file=sys.stderr)
             return []
         data = json.loads(p.stdout or "{}")
     except Exception as e:
+        record_fetch_failure(f"gh code search ({term})", e)
         print(f"warn: gh code search error for {term}: {e}", file=sys.stderr)
         return []
     time.sleep(7)  # code search is rate-limited to 10 req/min
@@ -246,12 +255,23 @@ def main() -> int:
             try:
                 hits.extend(fetcher(term))
             except Exception as e:
+                record_fetch_failure(f"{fetcher.__name__}({term})", e)
                 print(f"warn: {fetcher.__name__}({term}) failed: {e}", file=sys.stderr)
             time.sleep(1)  # stay polite across terms x sources
     hits = [h for h in hits
             if matches_term(h, h["term"], deny_of.get(h["term"]), anchor_of.get(h["term"]))]
     for h in hits:
         h.pop("frag", None)  # fragments are filter input, not archive content
+
+    degraded = bool(FETCH_FAILURES)
+    if degraded:
+        print(
+            f"warn: {len(FETCH_FAILURES)} source fetches failed; results may be incomplete",
+            file=sys.stderr,
+        )
+        # Never establish a silent baseline or archive a partial backfill.
+        if baseline or "--backfill" in sys.argv:
+            return 1
 
     now = time.time()
 
@@ -303,8 +323,9 @@ def main() -> int:
         return 0
 
     if not new_hits:
-        print("no new mentions")
-        return 0
+        suffix = f" ({len(FETCH_FAILURES)} source fetches failed)" if degraded else ""
+        print(f"no new mentions{suffix}")
+        return 1 if degraded else 0
 
     with HITS_FILE.open("a") as f:
         for h in new_hits:
@@ -321,7 +342,7 @@ def main() -> int:
     print(f"{len(new_hits)} new mentions:")
     for h in new_hits:
         print(f"  [{h['source']}] ({h['term']}) {h['title'][:100]} — {h['url']}")
-    return 0
+    return 1 if degraded else 0
 
 
 if __name__ == "__main__":

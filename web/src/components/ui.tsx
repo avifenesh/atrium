@@ -57,7 +57,7 @@ export function QuietChip({ count, onClick }: { count: number; onClick?: () => v
       type="button"
       onClick={onClick}
       title="Open the quiet archive"
-      className="quiet-chip shrink-0 cursor-pointer whitespace-nowrap px-2 py-1 font-mono text-[10px] text-mist-faint transition-colors hover:text-amber"
+      className="quiet-chip inline-flex min-h-8 shrink-0 cursor-pointer items-center whitespace-nowrap px-2 py-1 font-mono text-[10px] text-mist-faint transition-colors hover:text-amber"
     >
       {count} quiet
     </button>
@@ -158,7 +158,7 @@ export function CopyText({ text, children, className = '' }: { text: string; chi
         }
         setTimeout(() => setState('idle'), 1500);
       }}
-      className={`min-w-0 max-w-full overflow-hidden cursor-pointer text-left transition-colors hover:text-mist ${className}`}
+      className={`inline-flex min-h-6 min-w-0 max-w-full cursor-pointer items-center overflow-hidden text-left transition-colors hover:text-mist ${className}`}
     >
       {state === 'idle' ? (
         children
