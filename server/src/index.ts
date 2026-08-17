@@ -15,6 +15,7 @@ import { googleStatus, googleAuthUrl, googleCallback } from './google.js';
 import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js';
 import { readNote } from './collectors/notes.js';
 import { reentry } from './reentry.js';
+import { helper } from './helper.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -32,6 +33,8 @@ import backupCollector from './collectors/backup.js';
 import reposCollector from './collectors/repos.js';
 import mentionsCollector from './collectors/mentions.js';
 import reentryCollector from './collectors/reentry.js';
+import helperCollector from './collectors/helper.js';
+import radarCollector from './collectors/radar.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
 import { serveWikiViewer } from './wiki-viewer.js';
@@ -51,7 +54,9 @@ for (const c of [
   backupCollector,
   reposCollector,
   reentryCollector,
+  helperCollector,
   mentionsCollector,
+  radarCollector,
 ]) {
   register(c);
 }
@@ -142,6 +147,66 @@ const server = createServer(async (req, res) => {
 
     if (method === 'GET' && path === '/api/reentry/evidence') {
       return json(res, 200, reentry.buildEvidence());
+    }
+
+    if (method === 'GET' && path === '/api/helper/evidence') {
+      return json(res, 200, await helper.buildEvidence());
+    }
+
+    if (method === 'POST' && path === '/api/helper/scan') {
+      const result = await helper.requestScan();
+      return json(res, result.ok ? 202 : 503, result);
+    }
+
+    if (method === 'POST' && path === '/api/helper/agent-result') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, { ok: true, ...await helper.applyAgentResult(body) });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/helper/agent-error') {
+      const body = await readBody(req).catch(() => ({}));
+      await helper.applyAgentError(body);
+      return json(res, 200, { ok: true });
+    }
+
+    if (method === 'POST' && path === '/api/helper/settings') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, await helper.updateSettings(body));
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    const helperOfferAction = path.match(/^\/api\/helper\/offers\/([^/]+)\/(dismiss|snooze|launch)$/);
+    if (method === 'POST' && helperOfferAction) {
+      const id = decodeURIComponent(helperOfferAction[1]);
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        const result = helperOfferAction[2] === 'dismiss'
+          ? await helper.dismiss(id, body)
+          : helperOfferAction[2] === 'snooze'
+            ? await helper.snooze(id, body)
+            : await helper.launch(id, body);
+        return json(res, 200, result);
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    const helperMemory = path.match(/^\/api\/helper\/(preferences|skills)\/([^/]+)$/);
+    if (method === 'DELETE' && helperMemory) {
+      try {
+        if (helperMemory[1] === 'preferences') await helper.removePreference(decodeURIComponent(helperMemory[2]));
+        else await helper.removeSkill(decodeURIComponent(helperMemory[2]));
+        return json(res, 200, { ok: true });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
     }
 
     if (method === 'POST' && path === '/api/reentry/park') {
@@ -456,6 +521,7 @@ async function serveStatic(path: string, res: ServerResponse): Promise<boolean> 
 }
 
 await reentry.load();
+await helper.load();
 await mutes.load();
 await loadMetricHistory();
 

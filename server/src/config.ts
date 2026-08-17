@@ -18,6 +18,41 @@ export const defaults = {
     disabled: [] as string[],
   },
 
+  /** Hugging Face demand radar. Watches ONLY the families listed here — models you
+   *  serve or would consider serving — because a radar over every release on the Hub
+   *  is a wall of things you cannot act on. Empty = the collector renders one "not
+   *  configured" row and polls nothing.
+   *
+   *  {
+   *    "radar": {
+   *      "watch": [
+   *        { "family": "Qwen3.8 27B", "org": "Qwen", "status": "supported",
+   *          "baseModel": "Qwen/Qwen3.8-27B",
+   *          "mirrors": ["unsloth/Qwen3.8-27B-NVFP4", "unsloth/Qwen3.8-27B-GGUF"] }
+   *      ]
+   *    }
+   *  }
+   *
+   *  `mirrors` are the repos whose discussion tabs carry the demand — usually the
+   *  popular mirror rather than the original, because that is where people ask. */
+  radar: {
+    watch: [] as Array<{
+      family: string;
+      org: string;
+      baseModel?: string;
+      /** name substring identifying the family inside a large org, e.g. 'gemma-4' */
+      match?: string;
+      mirrors?: string[];
+      status?: string;
+    }>,
+    /** Title keywords that count as someone asking for a format you could ship. */
+    demandKeywords: ['gguf', 'nvfp4', 'fp8', 'quant', 'mtp', 'speculative', 'draft', 'blackwell', '5090'] as string[],
+    /** A checkpoint younger than this raises a flag; 6h or less pages the phone. */
+    freshHours: 48,
+    /** Reactions on a matching thread before it is worth interrupting for. */
+    reactionAlert: 3,
+  },
+
   github: {
     /** your GitHub login. Empty = the github collector stays idle (set it in
      *  ~/.config/atrium/config.json to enable the tasks view). */
@@ -45,6 +80,7 @@ export const defaults = {
     hermesGatewayState: join(HOME, '.hermes', 'gateway_state.json'),
     hermesCronJobs: join(HOME, '.hermes', 'cron', 'jobs.json'),
     hermesAuth: join(HOME, '.hermes', 'auth.json'),
+    hermesStateDb: join(HOME, '.hermes', 'state.db'),
     hermesKanbanDb: join(HOME, '.hermes', 'kanban.db'),
     googleToken: join(HOME, '.hermes', 'google_token.json'),
     eigenHome: join(HOME, '.eigen'),
@@ -62,7 +98,10 @@ export const defaults = {
     grokBin: join(HOME, '.grok', 'bin', 'grok'),
     grokSessions: join(HOME, '.grok', 'sessions'),
     grokActiveSessions: join(HOME, '.grok', 'active_sessions.json'),
+    opencodeDb: join(HOME, '.local', 'share', 'opencode', 'opencode.db'),
     claudeBin: join(HOME, '.local', 'bin', 'claude'),
+    codexBin: 'codex',
+    kittyBin: '/usr/bin/kitty',
     cursorAgent: join(HOME, '.local', 'share', 'cursor-agent'),
     itchConfig: join(HOME, '.config', 'itch'),
     itchRuns: join(HOME, '.config', 'itch', 'runs'),
@@ -107,6 +146,21 @@ export const defaults = {
     models: ['grok-4.6'] as string[],
     runtimeDir: join(HOME, '.config', 'atrium', 'reentry-agent'),
     maxContexts: 32,
+  },
+
+  helper: {
+    /** The scout is intentionally fixed to Claude Code + Opus 5. */
+    model: 'claude:opus',
+    runtimeDir: join(HOME, '.config', 'atrium', 'helper-agent'),
+    skillsDir: join(HOME, '.config', 'atrium', 'helper-skills'),
+    defaultIntervalMs: 3 * 60 * 60 * 1_000,
+    minIntervalMs: 10 * 60 * 1_000,
+    maxIntervalMs: 7 * 24 * 60 * 60 * 1_000,
+    maxOffersPerScan: 5,
+    sessionWindowMs: 7 * 24 * 60 * 60 * 1_000,
+    nestedRepoRoots: [join(HOME, 'projects', 'agent-sh')],
+    /** Optional directory from LinkedIn's member data export. */
+    linkedinExportDir: '',
   },
 
   surreal: {
@@ -164,6 +218,7 @@ export const defaults = {
     cloudMs: 300_000,
     backupMs: 3_600_000,
     reentryMs: 15_000,
+    helperMs: 15_000,
     reposMs: 120_000,
   },
 

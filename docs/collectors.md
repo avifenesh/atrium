@@ -89,6 +89,42 @@ Names match the collector `name`; bespoke agent sub-sources use the `agents:<id>
 This is how a fork that doesn't run the author's bespoke tooling gets a clean core
 dashboard. See [config.md](config.md).
 
+## radar — a worked config-driven collector
+
+`server/src/collectors/radar.ts` watches a hand-picked list of Hugging Face model
+families and reports two things per family: whether a new checkpoint just landed, and
+whether anyone is publicly asking for a format you could ship (open discussion threads
+whose titles match your keywords, ranked by reactions). It raises `crit` for a
+checkpoint younger than six hours, `warn` inside the fresh window, and `info` for a
+popular request thread.
+
+It is worth reading if you are writing your own collector against a public HTTP API:
+zero dependencies, one unauthenticated request per watched item, per-item failures
+degraded into `error` rather than thrown, and flag ids keyed on the specific release or
+thread so a mute silences that one and still fires for the next.
+
+It polls nothing until you configure it. The watchlist is deliberately explicit —
+watching every release on the Hub produces a wall of things you cannot act on — and it
+lives in `~/.config/atrium/config.json`, not in this repo:
+
+```jsonc
+{
+  "radar": {
+    "watch": [
+      { "family": "Qwen3.8 27B", "org": "Qwen", "match": "Qwen3.8",
+        "status": "supported",
+        "baseModel": "Qwen/Qwen3.8-27B",
+        "mirrors": ["unsloth/Qwen3.8-27B-NVFP4", "unsloth/Qwen3.8-27B-GGUF"] }
+    ]
+  }
+}
+```
+
+`match` scopes "newest release" to the family: without it, a large org's newest
+anything wins, and for `google` that was a JAX tabular model — true and useless.
+`mirrors` are the repos whose discussion tabs carry the demand, which is usually the
+popular mirror rather than the original, because that is where people ask.
+
 ## Reusable bespoke collectors
 
 Most of the author's plugin collectors integrate private tooling, but one is published and
