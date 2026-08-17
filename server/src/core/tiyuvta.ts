@@ -123,6 +123,7 @@ export const ACTIONS = {
   'auto-topups': { method: 'POST', path: '/admin/auto-topups/run', label: 'Run auto top-ups' },
   'training-rebates': { method: 'POST', path: '/admin/training-rebates/run', label: 'Run training rebates' },
   accounting: { method: 'POST', path: '/admin/accounting/run', label: 'Run accounting pass' },
+  enrolments: { method: 'POST', path: '/admin/enrolments/run', label: 'Repair stuck enrolments' },
   'alert-test': { method: 'POST', path: '/admin/alert-test', label: 'Send a test alert' },
   enroll: { method: 'POST', path: '/admin/accounts/{tenant}/enroll', label: 'Enroll with the engine', needsTenant: true },
   suspend: { method: 'POST', path: '/admin/accounts/{tenant}/suspend', label: 'Suspend account', needsTenant: true },

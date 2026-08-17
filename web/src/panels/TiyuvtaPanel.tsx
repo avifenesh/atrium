@@ -10,8 +10,8 @@ import { RelTime } from '../components/ui';
 // The destructive-ish ones (suspend) and the per-account ones are deliberately not
 // here: they need a tenant id, and a button that suspends whichever account is typed
 // into a box is a worse surface than a documented curl. Account-scoped actions stay in
-// the API. What lives here is the four global jobs, which are idempotent by design and
-// safe to press twice.
+// the API. What lives here are the global jobs, all idempotent by design and safe to
+// press twice.
 
 const TONE: Record<NonNullable<ExtraRow['tone']>, string> = {
   ok: 'text-jade',
@@ -21,6 +21,7 @@ const TONE: Record<NonNullable<ExtraRow['tone']>, string> = {
 
 const JOBS: Array<{ action: string; label: string; hint: string }> = [
   { action: 'accounting', label: 'accounting pass', hint: 'restates the books against the engine' },
+  { action: 'enrolments', label: 'repair enrolments', hint: 'enrols accounts the engine never accepted, and grants their trial credit' },
   { action: 'auto-topups', label: 'auto top-ups', hint: 'charges accounts under their threshold' },
   { action: 'training-rebates', label: 'training rebates', hint: 'pays 5% on closed consented days' },
   { action: 'alert-test', label: 'test alert', hint: 'proves owner alerts still deliver' },
@@ -122,9 +123,9 @@ export default function TiyuvtaPanel({ section }: { section: ExtraSection }) {
           </pre>
         )}
         <p className="mt-3 text-[11px] text-mist-faint">
-          All four are idempotent — pressing one twice does not double-charge or
-          double-credit. Account-scoped actions (enroll, suspend, restore) stay in the
-          API on purpose.
+          All of these are idempotent — pressing one twice does not double-charge,
+          double-credit or double-enrol. Account-scoped actions (enroll, suspend,
+          restore) stay in the API on purpose.
         </p>
       </div>
     </div>
