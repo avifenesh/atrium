@@ -8,6 +8,9 @@ import type {
   GithubComment,
   ReentryContext,
   ReentryEnergy,
+  HelperExecutor,
+  HelperOffer,
+  HelperSettings,
 } from '../../shared/types';
 
 const BASE = ''; // same origin (vite proxies /api in dev)
@@ -102,6 +105,45 @@ export function archiveReentry(id: string): Promise<ReentryContext> {
 
 export function scanReentry(): Promise<{ ok: boolean; scheduled: boolean }> {
   return reentryRequest('/api/reentry/scan');
+}
+
+async function helperRequest<T>(path: string, method = 'POST', body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `helper request failed ${res.status}`);
+  return data as T;
+}
+
+export function scanHelper(): Promise<{ ok: boolean; scheduled: boolean }> {
+  return helperRequest('/api/helper/scan');
+}
+
+export function dismissHelperOffer(id: string, reason: string, remember: boolean): Promise<HelperOffer> {
+  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/dismiss`, 'POST', { reason, remember });
+}
+
+export function snoozeHelperOffer(id: string, durationMs = 24 * 60 * 60_000): Promise<HelperOffer> {
+  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/snooze`, 'POST', { durationMs });
+}
+
+export function launchHelperOffer(
+  id: string,
+  executor: HelperExecutor,
+  prompt: string,
+): Promise<{ offer: HelperOffer; launched: true; executor: HelperExecutor }> {
+  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/launch`, 'POST', { executor, prompt });
+}
+
+export function updateHelperSettings(settings: HelperSettings): Promise<HelperSettings> {
+  return helperRequest('/api/helper/settings', 'POST', settings);
+}
+
+export function removeHelperMemory(kind: 'preferences' | 'skills', id: string): Promise<{ ok: true }> {
+  return helperRequest(`/api/helper/${kind}/${encodeURIComponent(id)}`, 'DELETE');
 }
 
 /** Open a task in grok. Pass url/repo when dispatching a github item. */

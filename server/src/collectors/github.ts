@@ -64,6 +64,7 @@ type NotificationActivity = NonNullable<GithubNotification['latestActivity']>;
 // last good state survives poll failures; own repos refresh on a slower cadence
 let lastGood: GithubState | null = null;
 let ownReposCache: RepoCount[] = [];
+let repositoryInventoryCache: RepoCount[] = [];
 let ownReposLastSuccess = 0;
 // consecutive failed polls — gates the crit flag so a transient 5xx that heals
 // next cycle never pages. Reset to 0 on any successful poll.
@@ -386,8 +387,7 @@ async function fetchOwnRepos(): Promise<RepoCount[] | null> {
         openIssues: Number(r.issues?.totalCount ?? 0),
         openPRs: Number(r.pullRequests?.totalCount ?? 0),
         pushedAt: String(r.pushedAt ?? ''),
-      }))
-      .filter((r) => r.openIssues + r.openPRs > 0);
+      }));
   } catch {
     return null;
   }
@@ -407,7 +407,7 @@ const collector: Collector = {
         updatedAt: null,
         error: 'github.login not set — add it to ~/.config/atrium/config.json',
         actNow: [], orgQueue: [], myPRs: [], mentions: [], teamQueue: [],
-        notifications: [], ownRepos: [], rateLimit: null,
+        notifications: [], repositoryInventory: [], ownRepos: [], rateLimit: null,
       });
       store.setFlags('github', []);
       return;
@@ -481,7 +481,8 @@ const collector: Collector = {
       if (Date.now() - ownReposLastSuccess >= config.github.ownReposPollMs) {
         const repos = await fetchOwnRepos();
         if (repos !== null) {
-          ownReposCache = repos;
+          repositoryInventoryCache = repos;
+          ownReposCache = repos.filter((repo) => repo.openIssues + repo.openPRs > 0);
           ownReposLastSuccess = Date.now();
         }
       }
@@ -495,6 +496,7 @@ const collector: Collector = {
         mentions,
         teamQueue,
         notifications,
+        repositoryInventory: repositoryInventoryCache,
         ownRepos: ownReposCache,
         rateLimit,
       };
@@ -536,6 +538,7 @@ const collector: Collector = {
         mentions: [],
         teamQueue: [],
         notifications: [],
+        repositoryInventory: [],
         ownRepos: [],
         rateLimit: null,
       };

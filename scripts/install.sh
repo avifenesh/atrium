@@ -31,6 +31,11 @@ sed -e "s#__NODE_BIN__#${NODE_BIN}#g" \
     -e "s#__ROOT__#${ROOT}#g" \
     scripts/atrium-reentry-agent.service.in > ~/.config/systemd/user/atrium-reentry-agent.service
 install -m 0644 scripts/atrium-reentry-agent.timer ~/.config/systemd/user/atrium-reentry-agent.timer
+sed -e "s#__NODE_BIN__#${NODE_BIN}#g" \
+    -e "s#__NODE_DIR__#${NODE_DIR}#g" \
+    -e "s#__ROOT__#${ROOT}#g" \
+    scripts/atrium-helper-agent.service.in > ~/.config/systemd/user/atrium-helper-agent.service
+install -m 0644 scripts/atrium-helper-agent.timer ~/.config/systemd/user/atrium-helper-agent.timer
 
 # A deliberately isolated OpenCode project: no repository instructions or source
 # tree are loaded, and the custom agent denies every tool.
@@ -39,6 +44,9 @@ mkdir -p \
   ~/.config/atrium/reentry-agent/xdg-data/opencode \
   ~/.config/atrium/reentry-agent/xdg-cache \
   ~/.config/atrium/reentry-agent/xdg-state \
+  ~/.config/atrium/helper-agent \
+  ~/.config/atrium/helper-skills \
+  ~/.config/atrium/helper-launches \
   ~/.local/bin
 chmod 0700 \
   ~/.config/atrium \
@@ -48,8 +56,14 @@ chmod 0700 \
   ~/.config/atrium/reentry-agent/xdg-data/opencode \
   ~/.config/atrium/reentry-agent/xdg-cache \
   ~/.config/atrium/reentry-agent/xdg-state
+chmod 0700 \
+  ~/.config/atrium/helper-agent \
+  ~/.config/atrium/helper-skills \
+  ~/.config/atrium/helper-launches
 install -m 0600 scripts/reentry-agent/opencode.json ~/.config/atrium/reentry-agent/opencode.json
 install -m 0600 scripts/reentry-agent/reentry-status.md ~/.config/atrium/reentry-agent/.opencode/agents/reentry-status.md
+install -m 0600 scripts/helper-agent/scout-system.md ~/.config/atrium/helper-agent/scout-system.md
+install -m 0600 scripts/helper-agent/session-distiller-system.md ~/.config/atrium/helper-agent/session-distiller-system.md
 install -m 0755 scripts/atrium-reentry.mjs ~/.local/bin/atrium-reentry
 ATRIUM_OPENCODE_AUTH=~/.config/atrium/reentry-agent/xdg-data/opencode/auth.json
 if [[ -f ~/.local/share/opencode/auth.json ]]; then
@@ -70,6 +84,7 @@ systemctl_user enable atrium.service
 # installation always serves the bundle and server code that were just built.
 systemctl_user restart atrium.service
 systemctl_user enable --now atrium-reentry-agent.timer
+systemctl_user enable --now atrium-helper-agent.timer
 systemctl_user enable --now mention-radar.timer
 
 echo "open http://127.0.0.1:5599"

@@ -109,7 +109,7 @@ function claudeSettingsEnv(): Record<string, string> {
   }
 }
 
-function claudeRuntimeEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function claudeRuntimeEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   // Claude Code on Bedrock keeps the provider flags in ~/.claude/settings.json.
   // systemd/atrium does not import that env, and --safe-mode will not invent it.
   return { ...base, ...claudeSettingsEnv() };
@@ -119,7 +119,7 @@ function envFlagOn(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
-function claudeModelName(model: string, env: NodeJS.ProcessEnv): string {
+export function claudeModelName(model: string, env: NodeJS.ProcessEnv): string {
   const bedrock = envFlagOn(env.CLAUDE_CODE_USE_BEDROCK);
   if (bedrock) {
     if (model === 'opus' && env.CLAUDE_CODE_DEFAULT_OPUS_MODEL) return env.CLAUDE_CODE_DEFAULT_OPUS_MODEL;

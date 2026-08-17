@@ -62,6 +62,22 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return out;
 }
 
+async function nestedRepoCandidates(): Promise<{ name: string; path: string }[]> {
+  const candidates: { name: string; path: string }[] = [];
+  for (const nestedRoot of config.helper.nestedRepoRoots) {
+    try {
+      const entries = await readdir(nestedRoot, { withFileTypes: true });
+      const prefix = nestedRoot.split('/').filter(Boolean).at(-1) ?? 'nested';
+      candidates.push(...entries
+        .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+        .map((entry) => ({ name: `${prefix}/${entry.name}`, path: join(nestedRoot, entry.name) })));
+    } catch {
+      // Optional nested roots contribute no repositories when absent.
+    }
+  }
+  return candidates;
+}
+
 // last-good: a transient failure keeps the previous list with its real updatedAt;
 // updatedAt stays null until the first success so never-collected can't read as fresh
 let lastGood: ReposState | null = null;
@@ -78,7 +94,9 @@ const collector: Collector = {
       const dirs = entries
         .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || e.isSymbolicLink()))
         .map((e) => ({ name: e.name, path: join(root, e.name) }));
-      const repos = (await mapPool(dirs, PARALLEL, (d) => readRepo(d.name, d.path))).filter(
+      dirs.push(...await nestedRepoCandidates());
+      const uniqueDirs = [...new Map(dirs.map((entry) => [entry.path, entry])).values()];
+      const repos = (await mapPool(uniqueDirs, PARALLEL, (d) => readRepo(d.name, d.path))).filter(
         (r): r is RepoInfo => r !== null,
       );
       repos.sort((a, b) => b.dirty - a.dirty || a.name.localeCompare(b.name));
