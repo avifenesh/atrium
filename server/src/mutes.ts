@@ -16,6 +16,8 @@ const MUTE_KINDS: ReadonlySet<string> = new Set<MuteKind>([
   'github-repo',
   'github-org',
   'github-reason',
+  'github-author',
+  'github-title',
   'agent',
   'agent-resource',
   'schedule',
@@ -23,6 +25,12 @@ const MUTE_KINDS: ReadonlySet<string> = new Set<MuteKind>([
   'flag',
   'flag-source',
 ]);
+
+/** github-item mutes whose item has been gone (closed/merged) this long are retired —
+ *  the archive holds live rules, not tombstones. */
+const ITEM_GONE_GRACE_MS = 7 * 86_400_000;
+/** an until-clear flag mute younger than this survives a transiently-empty publish */
+const FLAG_CLEAR_GRACE_MS = 5 * 60_000;
 
 let current: Mute[] = [];
 
@@ -160,7 +168,17 @@ async function unenforceBestEffort(mute: Mute): Promise<void> {
 
 async function sweepExpired(): Promise<void> {
   const now = Date.now();
-  const expired = current.filter((m) => m.until !== null && new Date(m.until).getTime() <= now);
+  const activeFlagIds = new Set(store.get().flags.map((f) => f.id));
+  const expired = current.filter(
+    (m) =>
+      (m.until !== null && new Date(m.until).getTime() <= now) ||
+      // until-clear flag mutes lift once the flag stops being raised, so the next
+      // real failure alerts again instead of dying against a forever-mute
+      (m.kind === 'flag' &&
+        m.untilClear === true &&
+        !activeFlagIds.has(m.target) &&
+        now - new Date(m.createdAt).getTime() > FLAG_CLEAR_GRACE_MS),
+  );
   if (expired.length === 0) return;
   for (const m of expired) await unenforceBestEffort(m);
   const dead = new Set(expired.map((m) => m.id));
@@ -226,24 +244,57 @@ export const mutes = {
     }
     const mute: Mute = { id, kind: req.kind, target: req.target, until, mode, enforcedBy, createdAt: iso() };
     if (req.untilActivity === true && req.kind === 'github-item') mute.untilActivity = true;
+    if (req.untilClear === true && req.kind === 'flag') mute.untilClear = true;
     current = [...current.filter((m) => m.id !== id), mute];
     await persist();
     store.setMutes(current);
     return mute;
   },
 
-  /** Drop until-activity github-item mutes whose item moved since the mute was set
-   *  (new comment/push bumps updatedAt → the item resurfaces). Called by the github
-   *  collector after each poll with every item id it saw. */
+  /** Reconcile github-item mutes against a fresh poll. Three moves:
+   *  - until-activity mutes whose item moved since the mute was set wake up
+   *    (new comment/push bumps updatedAt → the item resurfaces)
+   *  - mutes whose item is still visible get lastSeenAt stamped
+   *  - mutes whose item has been gone past the grace window are retired — the
+   *    item closed/merged, so the mute is a tombstone cluttering the archive */
   async resurface(items: ReadonlyMap<string, string | null>): Promise<void> {
-    const woken = current.filter((m) => {
-      if (m.kind !== 'github-item' || m.untilActivity !== true) return false;
+    const now = Date.now();
+    const nowIso = iso();
+    let changed = false;
+    const next: Mute[] = [];
+    for (const m of current) {
+      if (m.kind !== 'github-item') {
+        next.push(m);
+        continue;
+      }
       const updatedAt = items.get(m.target);
-      return !!updatedAt && new Date(updatedAt).getTime() > new Date(m.createdAt).getTime();
-    });
-    if (woken.length === 0) return;
-    const dead = new Set(woken.map((m) => m.id));
-    current = current.filter((m) => !dead.has(m.id));
+      if (updatedAt !== undefined) {
+        if (
+          m.untilActivity === true &&
+          !!updatedAt &&
+          new Date(updatedAt).getTime() > new Date(m.createdAt).getTime()
+        ) {
+          changed = true; // woken — drop it
+          continue;
+        }
+        // coarse stamp — re-persisting every 60s poll for a timestamp nobody reads
+        // that precisely would churn the disk for nothing
+        const lastStamp = new Date(m.lastSeenAt ?? 0).getTime();
+        if (now - lastStamp > 6 * 3_600_000) {
+          next.push({ ...m, lastSeenAt: nowIso });
+          changed = true;
+        } else next.push(m);
+        continue;
+      }
+      const lastAlive = new Date(m.lastSeenAt ?? m.createdAt).getTime();
+      if (now - lastAlive > ITEM_GONE_GRACE_MS) {
+        changed = true; // retired — item long gone
+        continue;
+      }
+      next.push(m);
+    }
+    if (!changed) return;
+    current = next;
     await persist();
     store.setMutes(current);
   },

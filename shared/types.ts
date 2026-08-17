@@ -15,7 +15,8 @@ export type SectionName =
   | 'cloud'
   | 'reentry'
   | 'helper'
-  | 'repos';
+  | 'repos'
+  | 'signals';
 
 export interface Snapshot {
   generatedAt: string;
@@ -33,6 +34,7 @@ export interface Snapshot {
   reentry: ReentryState;
   helper: HelperState;
   repos: ReposState;
+  signals: SignalsState;
   /** Plugin collectors (anything not in the typed core above) write here via
    *  store.setExtra(). The web UI renders each entry in a generic panel keyed by
    *  its name. Core collectors never use this lane. */
@@ -77,6 +79,11 @@ export interface GithubItem {
   url: string;
   updatedAt: string;
   kind: 'issue' | 'pr';
+  /** author login when the lane fetches it (myPRs doesn't — always you) */
+  author?: string | null;
+  /** bot-authored or bot-titled (dependabot & friends) — the UI demotes these
+   *  out of the attention hero into a collapsed lane */
+  bot?: boolean;
 }
 
 export interface GithubPR extends GithubItem {
@@ -158,6 +165,9 @@ export interface GithubState {
   /** Inventory subset with open issues or pull requests, rendered in Tasks. */
   ownRepos: RepoCount[];
   rateLimit: { remaining: number; limit: number; resetAt: string } | null;
+  /** attention items untouched for this many days drop out of the hero into the
+   *  aging shelf (config github.agingDays — server-owned so every surface agrees) */
+  agingDays: number;
 }
 
 // ---------- agents ----------
@@ -385,9 +395,29 @@ export interface CloudState {
 
 // ---------- notes (obsidian) ----------
 
+export interface NoteEntry {
+  /** root id + path form the stable note address for /api/notes/read|write */
+  root: string;
+  path: string;
+  title: string;
+  modifiedAt: string;
+}
+
+export interface NotesRoot {
+  id: string; // 'vault' for the obsidian vault, else the configured label
+  path: string; // absolute
+  label: string;
+  count: number; // notes found under this root
+  truncated: boolean; // walk hit the file cap — the list is incomplete
+}
+
 export interface NotesState {
   updatedAt: string | null;
   vaultPath: string | null;
+  roots: NotesRoot[];
+  /** every walkable note across all roots, newest first (bounded by the per-root cap) */
+  notes: NoteEntry[];
+  /** legacy 15-newest slice — kept so an older web bundle stays functional */
   recent: { path: string; title: string; modifiedAt: string }[];
   error: string | null;
 }
@@ -565,11 +595,74 @@ export interface RepoInfo {
   ahead: number | null;
   behind: number | null;
   lastCommitAt: string | null;
+  /** origin remote as "owner/name" when parseable, else null */
+  origin: string | null;
+  /** agent-lane working copy (wt-* dir or lane/* branch) — folded in the UI so
+   *  a fleet of lanes can't drown the real repos */
+  isLane: boolean;
 }
 
 export interface ReposState {
   updatedAt: string | null;
   repos: RepoInfo[];
+  error: string | null;
+}
+
+// ---------- signals (external attention on my work — mentions, demand radar, counters) ----------
+
+export type SignalKind = 'mention' | 'release' | 'demand-thread' | 'counter';
+
+export interface SignalItem {
+  /** stable per observation so seen-tracking sticks: "<source>:<key>" */
+  id: string;
+  /** feed that produced it: 'hn' | 'gh-issue' | 'gh-code' | 'devto' | 'web' | 'reddit' |
+   *  'youtube' | 'blogs' | 'hf-hub' | 'gh-traffic' | 'crates' | ... */
+  source: string;
+  kind: SignalKind;
+  /** what of mine it is about — a watch term, model family, repo, or crate */
+  entity: string;
+  title: string;
+  detail: string | null;
+  url: string | null;
+  /** magnitude when the signal is a number (reactions, downloads, views, stars) */
+  count: number | null;
+  /** counter delta vs the previous observation window, when known */
+  delta: number | null;
+  /** when the thing happened upstream (hit date, release createdAt, snapshot day) */
+  occurredAt: string | null;
+  /** when atrium first saw it — drives the "new since review" filter */
+  firstSeenAt: string;
+}
+
+export interface SignalsWatch {
+  /** mention-radar terms (project names) */
+  terms: string[];
+  /** HF demand-radar watch list */
+  radarWatch: Array<{
+    family: string;
+    org: string;
+    baseModel?: string;
+    match?: string;
+    mirrors?: string[];
+    status?: string;
+  }>;
+  /** thread-title keywords that count as shippable demand */
+  demandKeywords: string[];
+}
+
+export interface SignalsSourceStatus {
+  id: string;
+  updatedAt: string | null;
+  error: string | null;
+}
+
+export interface SignalsState {
+  updatedAt: string | null;
+  items: SignalItem[];
+  watch: SignalsWatch;
+  /** everything firstSeen after this is "new" — set by the mark-reviewed action */
+  lastReviewedAt: string | null;
+  sources: SignalsSourceStatus[];
   error: string | null;
 }
 
@@ -811,6 +904,8 @@ export type MuteKind =
   | 'github-repo' // target: "owner/repo"
   | 'github-org' // target: "org"
   | 'github-reason' // target: notification reason
+  | 'github-author' // target: author login — one rule instead of muting each bot PR by hand
+  | 'github-title' // target: substring, or /regex/ when slash-wrapped — matches item titles
   | 'agent' // target: AgentId
   | 'agent-resource' // target: "<agentId>:<resourceId>" e.g. "revuto:owner/repo", "hermes:<jobId>"
   | 'schedule' // target: ScheduleEntry.id
@@ -830,6 +925,12 @@ export interface Mute {
   /** github-item only: auto-unmute when the item's updatedAt moves past createdAt
    *  ("reviewed, waiting for reaction" — a new comment brings it back) */
   untilActivity?: boolean;
+  /** flag only: auto-unmute once the flag stops being raised — quiet the current
+   *  failure without deafening the channel to the next one */
+  untilClear?: boolean;
+  /** github-item only: last poll that still returned this item. Mutes whose item
+   *  vanished (closed/merged) are retired automatically after a grace window. */
+  lastSeenAt?: string;
 }
 
 export interface MuteRequest {
@@ -838,6 +939,7 @@ export interface MuteRequest {
   until?: string | null; // ISO or null/omitted = forever
   enforce?: boolean; // attempt real enforcement when available
   untilActivity?: boolean; // github-item only: resurface on new activity
+  untilClear?: boolean; // flag only: auto-unmute when the flag clears
 }
 
 // ---------- flags (anomalies) ----------

@@ -47,11 +47,15 @@ async function guarded(id: AgentId, name: string, fn: () => Promise<SourceResult
 
 async function readActivity(): Promise<AgentsState['activity']> {
   const lines = await tailLines(config.paths.eigenObserve, 60);
+  // events past the TTL are dropped, not shown: a dead provider's last session
+  // must never render as "live activity" weeks later
+  const cutoff = Date.now() - config.agents.activityTtlHours * 3_600_000;
   const out: AgentsState['activity'] = [];
   for (const line of lines) {
     try {
       const j = JSON.parse(line);
       if (!j?.time || !j?.kind) continue;
+      if (new Date(String(j.time)).getTime() < cutoff) continue;
       out.push({
         time: String(j.time),
         source: 'eigen',

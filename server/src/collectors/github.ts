@@ -45,7 +45,7 @@ const NOTIFICATION_ENRICH_LIMIT = 30;
 
 // Single aliased GraphQL search (cost: 1 point). Never use `gh search` here —
 // the REST search pool is only 30 req/min and shared with everything else.
-const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt repository { nameWithOwner } } ... on PullRequest { number title url updatedAt repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } } } } orgExt: search(query: "is:open -author:${config.github.login}${BOT_AUTHOR_FILTER} archived:false ${ORG_FILTER}${NOISE_REPOS}", type: ISSUE, first: 50){ issueCount nodes { __typename ... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } ... on Issue { number title url createdAt updatedAt author { login __typename } repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
+const POLL_QUERY = `query { assigned: search(query: "is:open is:issue assignee:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt author { login __typename } repository { nameWithOwner } } } } myPRs: search(query: "is:open is:pr author:${config.github.login} archived:false${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } } } reviewReq: search(query: "is:open is:pr user-review-requested:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } } } } mentions: search(query: "is:open mentions:${config.github.login} archived:false -author:${config.github.login}${NOISE_ORGS}${NOISE_REPOS}", type: ISSUE, first: 25){ issueCount nodes { ... on Issue { number title url updatedAt author { login __typename } repository { nameWithOwner } } ... on PullRequest { number title url updatedAt author { login __typename } repository { nameWithOwner } } } } teamQueue: search(query: "is:open is:pr review-requested:${config.github.login} -author:${config.github.login} archived:false${NOISE_ORGS}${NOISE_REPOS} sort:updated-asc", type: ISSUE, first: 25){ issueCount nodes { ... on PullRequest { number title url updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } } } } orgExt: search(query: "is:open -author:${config.github.login}${BOT_AUTHOR_FILTER} archived:false ${ORG_FILTER}${NOISE_REPOS}", type: ISSUE, first: 50){ issueCount nodes { __typename ... on PullRequest { number title url createdAt updatedAt isDraft reviewDecision author { login __typename } repository { nameWithOwner } commits(last:1){nodes{commit{statusCheckRollup{state}}}} } ... on Issue { number title url createdAt updatedAt author { login __typename } repository { nameWithOwner } } } } rateLimit { cost remaining limit resetAt } }`;
 
 const REPO_FIELDS =
   'nodes { nameWithOwner isPrivate isArchived pushedAt issues(states: OPEN){ totalCount } pullRequests(states: OPEN){ totalCount } }';
@@ -72,6 +72,9 @@ let consecutiveFailures = 0;
 
 function toItem(n: any, kind: 'issue' | 'pr'): GithubItem {
   const repo = String(n?.repository?.nameWithOwner ?? '');
+  // author rides along so the UI can demote bot-authored rows and honor
+  // github-author mutes; absent on lanes that don't fetch it (myPRs = self)
+  const author = typeof n?.author?.login === 'string' ? n.author.login : null;
   return {
     id: `${repo}#${n.number}`,
     repo,
@@ -80,6 +83,8 @@ function toItem(n: any, kind: 'issue' | 'pr'): GithubItem {
     url: String(n.url ?? ''),
     updatedAt: String(n.updatedAt ?? ''),
     kind,
+    author,
+    bot: isBotAuthor(n?.author) || NOISE_TITLE.test(String(n?.title ?? '')),
   };
 }
 
@@ -408,6 +413,7 @@ const collector: Collector = {
         error: 'github.login not set — add it to ~/.config/atrium/config.json',
         actNow: [], orgQueue: [], myPRs: [], mentions: [], teamQueue: [],
         notifications: [], repositoryInventory: [], ownRepos: [], rateLimit: null,
+        agingDays: config.github.agingDays,
       });
       store.setFlags('github', []);
       return;
@@ -499,6 +505,7 @@ const collector: Collector = {
         repositoryInventory: repositoryInventoryCache,
         ownRepos: ownReposCache,
         rateLimit,
+        agingDays: config.github.agingDays,
       };
       lastGood = state;
       consecutiveFailures = 0; // healthy poll clears the failure streak
@@ -541,6 +548,7 @@ const collector: Collector = {
         repositoryInventory: [],
         ownRepos: [],
         rateLimit: null,
+        agingDays: config.github.agingDays,
       };
       store.setSection('github', { ...base, error: msg });
     }

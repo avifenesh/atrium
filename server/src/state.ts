@@ -60,6 +60,7 @@ export function emptySnapshot(): Snapshot {
     github: {
       updatedAt: null, error: null, actNow: [], orgQueue: [], myPRs: [], mentions: [],
       teamQueue: [], notifications: [], repositoryInventory: [], ownRepos: [], rateLimit: null,
+      agingDays: 14,
     },
     agents: { updatedAt: null, agents: [], activity: [], dispatches: [] },
     system: {
@@ -78,7 +79,7 @@ export function emptySnapshot(): Snapshot {
       calendar: { status: 'disabled', today: [], upcoming: [], error: null },
     },
     subs: { updatedAt: null, services: [], error: null },
-    notes: { updatedAt: null, vaultPath: null, recent: [], error: null },
+    notes: { updatedAt: null, vaultPath: null, roots: [], notes: [], recent: [], error: null },
     surreal: { updatedAt: null, up: false, endpoint: '', version: null, namespaces: [], error: null },
     revuto: {
       updatedAt: null, up: false, scheduler: null, counts: null, schedules: null, limits: null, store: null,
@@ -122,6 +123,14 @@ export function emptySnapshot(): Snapshot {
       error: null,
     },
     repos: { updatedAt: null, repos: [], error: null },
+    signals: {
+      updatedAt: null,
+      items: [],
+      watch: { terms: [], radarWatch: [], demandKeywords: [] },
+      lastReviewedAt: null,
+      sources: [],
+      error: null,
+    },
     extra: {},
     collectors: [],
     mutes: [],

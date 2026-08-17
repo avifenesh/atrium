@@ -607,7 +607,12 @@ export const reentry = {
             }
           : null,
       })),
-      repos: snapshot.repos.repos.slice(0, 80),
+      // real repos lead; lane working copies (wt-*/lane/*) trail so a fleet of agent
+      // lanes can't crowd the evidence window the brief is built from
+      repos: [
+        ...snapshot.repos.repos.filter((repo) => !repo.isLane),
+        ...snapshot.repos.repos.filter((repo) => repo.isLane),
+      ].slice(0, 80),
       agentSessions,
       peopleWaiting: snapshot.github.orgQueue.slice(0, 30).map((item) => ({
         id: item.id,

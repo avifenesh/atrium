@@ -17,33 +17,47 @@ function git(path: string, args: string[]): Promise<string | null> {
   return shTry('git', ['-C', path, ...args], { timeoutMs: GIT_TIMEOUT_MS });
 }
 
+/** "git@github.com:owner/name.git" | "https://github.com/owner/name" -> "owner/name" */
+function parseOrigin(url: string | null): string | null {
+  const raw = url?.trim();
+  if (!raw) return null;
+  const m = raw.match(/[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
+  return m ? m[1] : null;
+}
+
 async function readRepo(name: string, path: string): Promise<RepoInfo | null> {
   try {
     await stat(join(path, '.git')); // dir or file (worktree) both count
   } catch {
     return null;
   }
-  const [status, head, counts, last] = await Promise.all([
+  const [status, head, counts, last, remote] = await Promise.all([
     git(path, ['status', '--porcelain']),
     git(path, ['rev-parse', '--abbrev-ref', 'HEAD']),
     // errors when no upstream is configured — tolerated, ahead/behind stay null
     git(path, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']),
     git(path, ['log', '-1', '--format=%cI']),
+    git(path, ['remote', 'get-url', 'origin']), // errors when no origin — tolerated
   ]);
   if (status === null) return null; // unreadable working tree — skip, never guess
   const ref = head?.trim() || null;
   const detached = ref === 'HEAD'; // rev-parse prints literal HEAD when detached
+  const branch = detached ? null : ref;
   // left = upstream-only commits (behind), right = local-only (ahead)
   const m = counts?.trim().match(/^(\d+)\s+(\d+)$/) ?? null;
   return {
     name,
     path,
-    branch: detached ? null : ref,
+    branch,
     detached,
     dirty: status.split('\n').filter((l) => l.trim() !== '').length,
     ahead: m ? Number(m[2]) : null,
     behind: m ? Number(m[1]) : null,
     lastCommitAt: last?.trim() || null,
+    origin: parseOrigin(remote),
+    // fact, not judgment: wt-* dirs and lane/* branches are agent-lane working
+    // copies by the owner's own naming convention — folded in the UI, never dropped
+    isLane: name.startsWith('wt-') || (branch?.startsWith('lane/') ?? false),
   };
 }
 
