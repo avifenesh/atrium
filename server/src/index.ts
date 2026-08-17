@@ -435,6 +435,16 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, lastReviewedAt: await signals.markReviewed() });
     }
 
+    if (method === 'POST' && path === '/api/signals/lead') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        await signals.setLead(body?.id, body?.status ?? null, body?.note);
+        return json(res, 200, { ok: true });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     if (method === 'PUT' && path === '/api/signals/watch') {
       const body = await readBody(req).catch(() => ({}));
       try {

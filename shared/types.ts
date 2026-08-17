@@ -608,9 +608,19 @@ export interface ReposState {
   error: string | null;
 }
 
-// ---------- signals (external attention on my work — mentions, demand radar, counters) ----------
+// ---------- signals (external attention on the business — leads, demand, counters) ----------
 
 export type SignalKind = 'mention' | 'release' | 'demand-thread' | 'counter';
+
+/** Lead lifecycle on a signal: mentions and demand threads are places to go comment
+ *  and win a user — 'engaged' = commented/answered, 'dismissed' = not worth it. */
+export type SignalLeadStatus = 'engaged' | 'dismissed';
+
+export interface SignalLead {
+  status: SignalLeadStatus;
+  note: string | null;
+  updatedAt: string;
+}
 
 export interface SignalItem {
   /** stable per observation so seen-tracking sticks: "<source>:<key>" */
@@ -628,10 +638,14 @@ export interface SignalItem {
   count: number | null;
   /** counter delta vs the previous observation window, when known */
   delta: number | null;
+  /** counters only: recent per-day values, oldest→newest, for the trend spark */
+  spark?: number[];
   /** when the thing happened upstream (hit date, release createdAt, snapshot day) */
   occurredAt: string | null;
   /** when atrium first saw it — drives the "new since review" filter */
   firstSeenAt: string;
+  /** lead state when the owner acted on it; absent = untouched (a fresh lead) */
+  lead?: SignalLead;
 }
 
 export interface SignalsWatch {
@@ -648,6 +662,10 @@ export interface SignalsWatch {
   }>;
   /** thread-title keywords that count as shippable demand */
   demandKeywords: string[];
+  /** exposure counters portfolio — snapshotted daily because the upstream windows expire */
+  repos: string[];
+  hfModels: string[];
+  crates: string[];
 }
 
 export interface SignalsSourceStatus {

@@ -104,16 +104,27 @@ Three feeders publish typed `SignalItem`s into the `signals` section through
   that is the one time-critical event here. Demand threads are signal rows with a NEW
   marker, not flags: as info flags they buried the strip until the source got muted.
 - **exposure** — the counters other services keep for us badly (GitHub 14-day traffic,
-  HF rolling 30-day downloads, crates totals), snapshotted daily by an external script
-  and reported with day-over-day deltas against the previous snapshot.
+  HF rolling 30-day downloads, crates totals), snapshotted daily by the native writer
+  in `core/exposure-snapshot.ts` (merge-never-clobber, one JSON per UTC date, same
+  format as the retired darklanes script) and reported with day-over-day deltas plus a
+  30-day spark series. The portfolio (repos, HF models, crates) lives in the signals
+  watch file with everything else; a legacy `exposure.command` still runs for forks
+  that kept an external writer.
 
 The watch lists live in `~/.config/atrium/signals.json` and are edited from the
-Signals view (PUT `/api/signals/watch`) — mention terms, the radar family list, and
-the demand keywords all change at runtime, no code, no restart; `mention-radar.py`
-reads the same file. `config.json`'s `radar.watch` seeds the file on first run.
-Each item gets a persistent first-seen stamp; everything first seen after the last
-`POST /api/signals/reviewed` renders as new, which is what the view's `new` filter
-and the rail badge count.
+Signals view (PUT `/api/signals/watch`) — mention terms, the radar family list, the
+demand keywords, and the exposure portfolio (repos / HF models / crates) all change
+at runtime, no code, no restart; `mention-radar.py` reads the same file. `config.json`'s
+`radar.watch` seeds the file on first run. Each item gets a persistent first-seen
+stamp; everything first seen after the last `POST /api/signals/reviewed` renders as
+new, which is what the view's `new` filter and the rail badge count.
+
+Mentions and demand threads are LEADS — places to go comment and win a user. Each
+row takes one decision (`POST /api/signals/lead`): **engaged** (commented/answered)
+or **skip**; untouched leads queue on the **Business** view, which fronts the whole
+cluster — tiyuvta money/ops numbers, the lead queue, site behaviour from webtraffic,
+counter trends, and the live API surface probe. Signals/tiyuvta/webtraffic stay as
+its detail views.
 
 Radar is still worth reading if you are writing a collector against a public HTTP
 API: zero dependencies, one unauthenticated request per watched item, per-item

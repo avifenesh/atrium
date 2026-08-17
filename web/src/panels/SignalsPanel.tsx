@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { markSignalsReviewed, saveSignalsWatch } from '../api';
+import { markSignalsReviewed, saveSignalsWatch, setSignalLead } from '../api';
+import Spark from '../components/Spark';
 import { EmptyState, Panel, RelTime, Row, SectionLabel } from '../components/ui';
 import type { SignalItem, Snapshot } from '../../../shared/types';
 
@@ -33,23 +34,87 @@ function Delta({ delta }: { delta: number | null }) {
   );
 }
 
-function MentionRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
+/** Lead actions on a mention/thread row: engaged = went and commented, skip = not
+ *  worth it. One decision per row — this is the "where do I go comment" queue. */
+export function LeadButtons({ s }: { s: SignalItem }) {
+  const [busy, setBusy] = useState(false);
+  const act = async (status: 'engaged' | 'dismissed' | null) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await setSignalLead(s.id, status);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (s.lead) {
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        title={`${s.lead.status} — click to undo`}
+        onClick={(e) => {
+          e.stopPropagation();
+          void act(null);
+        }}
+        className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[10px] ${
+          s.lead.status === 'engaged' ? 'bg-jade/10 text-jade' : 'bg-white/5 text-mist-faint'
+        }`}
+      >
+        {s.lead.status === 'engaged' ? 'engaged' : 'skipped'}
+      </button>
+    );
+  }
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        disabled={busy}
+        title="mark engaged — I commented / answered this"
+        onClick={(e) => {
+          e.stopPropagation();
+          void act('engaged');
+        }}
+        className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-jade"
+      >
+        engaged
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        title="skip — not a lead"
+        onClick={(e) => {
+          e.stopPropagation();
+          void act('dismissed');
+        }}
+        className="hover-cluster shrink-0 cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-amber"
+      >
+        skip
+      </button>
+    </span>
+  );
+}
+
+export function MentionRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
+  const dimmed = s.lead?.status === 'dismissed';
   return (
     <Row href={s.url ?? undefined} title={s.title} className="flex-wrap sm:flex-nowrap">
-      <NewDot show={isNew} />
+      <NewDot show={isNew && !s.lead} />
       <SourceChip>{`${s.source} · ${s.entity}`}</SourceChip>
-      <span className="min-w-0 flex-1 truncate text-sm text-mist">{s.title}</span>
+      <span className={`min-w-0 flex-1 truncate text-sm ${dimmed ? 'text-mist-faint' : 'text-mist'}`}>{s.title}</span>
+      <LeadButtons s={s} />
       <RelTime iso={s.occurredAt ?? s.firstSeenAt} />
     </Row>
   );
 }
 
-function DemandRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
+export function DemandRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
+  const dimmed = s.lead?.status === 'dismissed';
   return (
     <Row href={s.url ?? undefined} title={s.title} className="flex-wrap sm:flex-nowrap">
-      <NewDot show={isNew} />
+      <NewDot show={isNew && !s.lead} />
       <SourceChip>{s.kind === 'release' ? `release · ${s.entity}` : s.entity}</SourceChip>
-      <span className="min-w-0 flex-1 truncate text-sm text-mist">{s.title}</span>
+      <span className={`min-w-0 flex-1 truncate text-sm ${dimmed ? 'text-mist-faint' : 'text-mist'}`}>{s.title}</span>
       {s.kind === 'demand-thread' && s.count !== null && (
         <span className="shrink-0 font-mono text-xs tabular-nums text-amber" title={`${s.count} reactions`}>
           {s.count}❤
@@ -60,18 +125,20 @@ function DemandRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
           {s.detail}
         </span>
       )}
+      {s.kind === 'demand-thread' && <LeadButtons s={s} />}
       <RelTime iso={s.occurredAt ?? s.firstSeenAt} />
     </Row>
   );
 }
 
-function CounterRow({ s }: { s: SignalItem }) {
+export function CounterRow({ s }: { s: SignalItem }) {
   return (
     <Row href={s.url ?? undefined} title={`${s.entity} — ${s.title}`}>
       <span className="min-w-0 max-w-[14rem] shrink-0 truncate font-mono text-xs text-mist-dim" title={s.entity}>
         {s.entity}
       </span>
       <span className="min-w-0 flex-1 truncate text-sm text-mist-dim">{s.title}</span>
+      {s.spark && s.spark.length >= 2 && <Spark series={s.spark} className="text-mist-faint" />}
       <span className="shrink-0 font-mono text-sm tabular-nums text-mist">{s.count ?? '—'}</span>
       <Delta delta={s.delta} />
       {s.detail && (
@@ -92,8 +159,13 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
   const [terms, setTerms] = useState(watch.terms.join('\n'));
   const [keywords, setKeywords] = useState(watch.demandKeywords.join('\n'));
   const [radar, setRadar] = useState(JSON.stringify(watch.radarWatch, null, 2));
+  const [repos, setRepos] = useState((watch.repos ?? []).join('\n'));
+  const [hfModels, setHfModels] = useState((watch.hfModels ?? []).join('\n'));
+  const [crates, setCrates] = useState((watch.crates ?? []).join('\n'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const lines = (text: string) => text.split('\n').map((t) => t.trim()).filter(Boolean);
 
   const save = async () => {
     if (busy) return;
@@ -107,9 +179,12 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
         throw new Error('radar watch must be valid JSON (array of { family, org, ... })');
       }
       await saveSignalsWatch({
-        terms: terms.split('\n').map((t) => t.trim()).filter(Boolean),
-        demandKeywords: keywords.split('\n').map((t) => t.trim()).filter(Boolean),
+        terms: lines(terms),
+        demandKeywords: lines(keywords),
         radarWatch,
+        repos: lines(repos),
+        hfModels: lines(hfModels),
+        crates: lines(crates),
       });
       onClose();
     } catch (err) {
@@ -122,8 +197,9 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
   return (
     <Panel title="Watch lists" rise={false} className="col-span-12">
       <p className="mb-3 px-2.5 text-sm text-mist-dim">
-        Saved to <span className="font-mono text-xs">~/.config/atrium/signals.json</span> and picked up by the
-        collectors on their next pass — the hourly mention radar reads the same file.
+        The business portfolio, saved to <span className="font-mono text-xs">~/.config/atrium/signals.json</span> and
+        picked up by the collectors on their next pass — the hourly mention radar and the daily exposure snapshot
+        read the same file.
       </p>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div>
@@ -149,6 +225,24 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
             hf radar watch (json)
           </label>
           <textarea id="signals-radar" rows={10} className={FIELD} value={radar} onChange={(e) => setRadar(e.target.value)} />
+        </div>
+        <div>
+          <label className={LABEL} htmlFor="signals-repos">
+            counter repos (owner/name per line)
+          </label>
+          <textarea id="signals-repos" rows={4} className={FIELD} value={repos} onChange={(e) => setRepos(e.target.value)} />
+        </div>
+        <div>
+          <label className={LABEL} htmlFor="signals-hf">
+            counter hf models (one per line)
+          </label>
+          <textarea id="signals-hf" rows={4} className={FIELD} value={hfModels} onChange={(e) => setHfModels(e.target.value)} />
+        </div>
+        <div>
+          <label className={LABEL} htmlFor="signals-crates">
+            counter crates (one per line)
+          </label>
+          <textarea id="signals-crates" rows={4} className={FIELD} value={crates} onChange={(e) => setCrates(e.target.value)} />
         </div>
       </div>
       <div className="mt-3 flex items-center justify-end gap-2">
@@ -179,24 +273,27 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
 
 export default function SignalsPanel({ snapshot }: { snapshot: Snapshot }) {
   const sig = snapshot.signals;
-  const [onlyNew, setOnlyNew] = useState(false);
+  const [mode, setMode] = useState<'all' | 'new' | 'engaged'>('all');
   const [editing, setEditing] = useState(false);
   const [marking, setMarking] = useState(false);
 
   const reviewedAt = sig.lastReviewedAt;
   const isNew = (s: SignalItem) => !reviewedAt || s.firstSeenAt > reviewedAt;
 
-  const { mentions, demand, counters, newCount } = useMemo(() => {
+  const { mentions, demand, counters, newCount, engagedCount } = useMemo(() => {
     const mentions = sig.items.filter((s) => s.kind === 'mention');
     const demand = sig.items.filter((s) => s.kind === 'release' || s.kind === 'demand-thread');
     const counters = sig.items.filter((s) => s.kind === 'counter');
-    const newCount = sig.items.filter(isNew).length;
-    return { mentions, demand, counters, newCount };
+    const newCount = sig.items.filter((s) => isNew(s) && !s.lead).length;
+    const engagedCount = sig.items.filter((s) => s.lead?.status === 'engaged').length;
+    return { mentions, demand, counters, newCount, engagedCount };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig.items, reviewedAt]);
 
-  const shownMentions = onlyNew ? mentions.filter(isNew) : mentions;
-  const shownDemand = onlyNew ? demand.filter(isNew) : demand;
+  const inMode = (s: SignalItem) =>
+    mode === 'all' ? true : mode === 'engaged' ? s.lead?.status === 'engaged' : isNew(s) && !s.lead;
+  const shownMentions = mentions.filter(inMode);
+  const shownDemand = demand.filter(inMode);
 
   const markReviewed = async () => {
     if (marking) return;
@@ -212,20 +309,22 @@ export default function SignalsPanel({ snapshot }: { snapshot: Snapshot }) {
     <div className="grid grid-cols-12 gap-5">
       <header className="col-span-12 flex flex-wrap items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2 font-mono text-xs">
-          <button
-            type="button"
-            onClick={() => setOnlyNew(false)}
-            className={`cursor-pointer rounded px-2 py-1 transition-colors ${!onlyNew ? 'bg-white/10 text-mist' : 'text-mist-faint hover:text-mist'}`}
-          >
-            all
-          </button>
-          <button
-            type="button"
-            onClick={() => setOnlyNew(true)}
-            className={`cursor-pointer rounded px-2 py-1 transition-colors ${onlyNew ? 'bg-white/10 text-mist' : 'text-mist-faint hover:text-mist'}`}
-          >
-            new{newCount > 0 ? ` · ${newCount}` : ''}
-          </button>
+          {(
+            [
+              ['all', 'all'],
+              ['new', newCount > 0 ? `new · ${newCount}` : 'new'],
+              ['engaged', engagedCount > 0 ? `engaged · ${engagedCount}` : 'engaged'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setMode(value)}
+              className={`cursor-pointer rounded px-2 py-1 transition-colors ${mode === value ? 'bg-white/10 text-mist' : 'text-mist-faint hover:text-mist'}`}
+            >
+              {label}
+            </button>
+          ))}
           {reviewedAt && (
             <span className="text-mist-faint">
               reviewed <RelTime iso={reviewedAt} />
@@ -271,7 +370,7 @@ export default function SignalsPanel({ snapshot }: { snapshot: Snapshot }) {
         }
       >
         {shownMentions.length === 0 ? (
-          <EmptyState>{onlyNew ? 'Nothing new since the last review.' : 'No mentions recorded yet.'}</EmptyState>
+          <EmptyState>{mode !== 'all' ? `Nothing ${mode === 'new' ? 'new since the last review' : 'engaged yet'}.` : 'No mentions recorded yet.'}</EmptyState>
         ) : (
           <div className="max-h-[32rem] space-y-0.5 overflow-y-auto">
             {shownMentions.map((s) => (
@@ -295,8 +394,8 @@ export default function SignalsPanel({ snapshot }: { snapshot: Snapshot }) {
             <EmptyState>
               {sig.watch.radarWatch.length === 0
                 ? 'No families watched — edit the watch lists to add some.'
-                : onlyNew
-                  ? 'Nothing new since the last review.'
+                : mode !== 'all'
+                  ? `Nothing ${mode === 'new' ? 'new since the last review' : 'engaged yet'}.`
                   : 'No releases or demand threads right now.'}
             </EmptyState>
           ) : (

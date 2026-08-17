@@ -39,7 +39,7 @@ const VIEW_FOR: Record<string, string> = {
   google: 'comms',
   spotify: 'subs',
   radar: 'signals',
-  tiyuvta: 'tiyuvta',
+  tiyuvta: 'business',
 };
 
 function viewFor(f: Flag): string | null {

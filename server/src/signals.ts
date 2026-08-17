@@ -19,7 +19,14 @@ import { join } from 'node:path';
 import { config } from './config.js';
 import { store } from './state.js';
 import { iso, readJson } from './util.js';
-import type { SignalItem, SignalsSourceStatus, SignalsState, SignalsWatch } from '../../shared/types.js';
+import type {
+  SignalItem,
+  SignalLead,
+  SignalLeadStatus,
+  SignalsSourceStatus,
+  SignalsState,
+  SignalsWatch,
+} from '../../shared/types.js';
 
 const FILE = join(config.configDir, 'signals.json');
 const SEEN_CAP = 4000;
@@ -36,6 +43,8 @@ interface PersistedSignals {
   watch: SignalsWatch;
   lastReviewedAt: string | null;
   seen: Record<string, string>;
+  /** lead lifecycle by signal id — engaged (commented) / dismissed */
+  leads: Record<string, SignalLead>;
 }
 
 function defaultWatch(): SignalsWatch {
@@ -46,10 +55,15 @@ function defaultWatch(): SignalsWatch {
     demandKeywords: Array.isArray(radar.demandKeywords) && radar.demandKeywords.length
       ? radar.demandKeywords
       : ['gguf', 'nvfp4', 'fp8', 'quant', 'mtp', 'speculative', 'draft', 'blackwell', '5090'],
+    // seeds mirror the retired darklanes snapshot constants — the business
+    // portfolio lives here now, edited from the UI like everything else
+    repos: ['avifenesh/memra'],
+    hfModels: ['Avifenesh/Qwen3.8-27B-NVFP4-MTP-GGUF', 'Avifenesh/bw24-bench'],
+    crates: ['memra-server', 'memra-engine'],
   };
 }
 
-let persisted: PersistedSignals = { watch: defaultWatch(), lastReviewedAt: null, seen: {} };
+let persisted: PersistedSignals = { watch: defaultWatch(), lastReviewedAt: null, seen: {}, leads: {} };
 let loaded = false;
 const bySource = new Map<string, { items: SignalItem[]; status: SignalsSourceStatus }>();
 
@@ -69,7 +83,12 @@ async function persist(): Promise<void> {
 }
 
 function assemble(): SignalsState {
-  const items = [...bySource.values()].flatMap((s) => s.items);
+  const items = [...bySource.values()].flatMap((s) => {
+    return s.items.map((item) => {
+      const lead = persisted.leads[item.id];
+      return lead ? { ...item, lead } : item;
+    });
+  });
   items.sort((a, b) => (b.occurredAt ?? b.firstSeenAt).localeCompare(a.occurredAt ?? a.firstSeenAt));
   const sources = [...bySource.values()].map((s) => s.status);
   return {
@@ -93,14 +112,19 @@ export const signals = {
     const saved = await readJson<Partial<PersistedSignals>>(FILE);
     if (saved && typeof saved === 'object') {
       const w = saved.watch;
+      const def = defaultWatch();
       persisted = {
         watch: {
-          terms: Array.isArray(w?.terms) ? w.terms : defaultWatch().terms,
-          radarWatch: Array.isArray(w?.radarWatch) ? w.radarWatch : defaultWatch().radarWatch,
-          demandKeywords: Array.isArray(w?.demandKeywords) ? w.demandKeywords : defaultWatch().demandKeywords,
+          terms: Array.isArray(w?.terms) ? w.terms : def.terms,
+          radarWatch: Array.isArray(w?.radarWatch) ? w.radarWatch : def.radarWatch,
+          demandKeywords: Array.isArray(w?.demandKeywords) ? w.demandKeywords : def.demandKeywords,
+          repos: Array.isArray(w?.repos) ? w.repos : def.repos,
+          hfModels: Array.isArray(w?.hfModels) ? w.hfModels : def.hfModels,
+          crates: Array.isArray(w?.crates) ? w.crates : def.crates,
         },
         lastReviewedAt: typeof saved.lastReviewedAt === 'string' ? saved.lastReviewedAt : null,
         seen: saved.seen && typeof saved.seen === 'object' ? (saved.seen as Record<string, string>) : {},
+        leads: saved.leads && typeof saved.leads === 'object' ? (saved.leads as Record<string, SignalLead>) : {},
       };
     } else {
       await persist(); // seed the file so the terms are editable from day one
@@ -133,10 +157,39 @@ export const signals = {
       }
       next.radarWatch = patch.radarWatch;
     }
+    for (const key of ['repos', 'hfModels', 'crates'] as const) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      if (!Array.isArray(value) || value.some((t) => typeof t !== 'string')) {
+        throw new Error(`${key} must be an array of strings`);
+      }
+      next[key] = value.map((t) => t.trim()).filter(Boolean);
+    }
     persisted.watch = next;
     await persist();
     emit();
     return next;
+  },
+
+  /** Record what happened with a lead (engaged = commented/answered, dismissed =
+   *  not worth it); null status clears it back to untouched. */
+  async setLead(id: string, status: SignalLeadStatus | null, note?: string): Promise<void> {
+    if (typeof id !== 'string' || !id) throw new Error('missing signal id');
+    if (status === null) {
+      delete persisted.leads[id];
+    } else {
+      if (status !== 'engaged' && status !== 'dismissed') throw new Error(`invalid lead status: ${status}`);
+      persisted.leads[id] = { status, note: note?.trim() || null, updatedAt: iso() };
+    }
+    // retire lead records whose signal is long gone from every feed — the file
+    // holds decisions about live leads, not a graveyard
+    const liveIds = new Set([...bySource.values()].flatMap((s) => s.items.map((i) => i.id)));
+    const cutoff = Date.now() - 90 * 86_400_000;
+    for (const [key, lead] of Object.entries(persisted.leads)) {
+      if (!liveIds.has(key) && new Date(lead.updatedAt).getTime() < cutoff) delete persisted.leads[key];
+    }
+    await persist();
+    emit();
   },
 
   async markReviewed(): Promise<string> {
