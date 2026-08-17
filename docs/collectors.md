@@ -89,37 +89,36 @@ Names match the collector `name`; bespoke agent sub-sources use the `agents:<id>
 This is how a fork that doesn't run the author's bespoke tooling gets a clean core
 dashboard. See [config.md](config.md).
 
-## radar — a worked config-driven collector
+## signals — one surface for outside attention
 
-`server/src/collectors/radar.ts` watches a hand-picked list of Hugging Face model
-families and reports two things per family: whether a new checkpoint just landed, and
-whether anyone is publicly asking for a format you could ship (open discussion threads
-whose titles match your keywords, ranked by reactions). It raises `crit` for a
-checkpoint younger than six hours, `warn` inside the fresh window, and `info` for a
-popular request thread.
+Three feeders publish typed `SignalItem`s into the `signals` section through
+`server/src/signals.ts` instead of writing unrelated shapes into the plugin lane:
 
-It is worth reading if you are writing your own collector against a public HTTP API:
-zero dependencies, one unauthenticated request per watched item, per-item failures
-degraded into `error` rather than thrown, and flag ids keyed on the specific release or
-thread so a mute silences that one and still fires for the next.
+- **mentions** — public mentions of your projects (HN, GitHub, web/blogs, dev.to,
+  reddit, YouTube), collected hourly by `scripts/mention-radar.py` and read from its
+  `hits.jsonl`.
+- **radar** (`server/src/collectors/radar.ts`) — a hand-picked list of Hugging Face
+  model families: whether a new checkpoint just landed, and whether anyone is publicly
+  asking for a format you could ship (open threads whose titles match your keywords,
+  ranked by reactions). A fresh checkpoint still raises `crit` (≤6h) / `warn` flags —
+  that is the one time-critical event here. Demand threads are signal rows with a NEW
+  marker, not flags: as info flags they buried the strip until the source got muted.
+- **exposure** — the counters other services keep for us badly (GitHub 14-day traffic,
+  HF rolling 30-day downloads, crates totals), snapshotted daily by an external script
+  and reported with day-over-day deltas against the previous snapshot.
 
-It polls nothing until you configure it. The watchlist is deliberately explicit —
-watching every release on the Hub produces a wall of things you cannot act on — and it
-lives in `~/.config/atrium/config.json`, not in this repo:
+The watch lists live in `~/.config/atrium/signals.json` and are edited from the
+Signals view (PUT `/api/signals/watch`) — mention terms, the radar family list, and
+the demand keywords all change at runtime, no code, no restart; `mention-radar.py`
+reads the same file. `config.json`'s `radar.watch` seeds the file on first run.
+Each item gets a persistent first-seen stamp; everything first seen after the last
+`POST /api/signals/reviewed` renders as new, which is what the view's `new` filter
+and the rail badge count.
 
-```jsonc
-{
-  "radar": {
-    "watch": [
-      { "family": "Qwen3.8 27B", "org": "Qwen", "match": "Qwen3.8",
-        "status": "supported",
-        "baseModel": "Qwen/Qwen3.8-27B",
-        "mirrors": ["unsloth/Qwen3.8-27B-NVFP4", "unsloth/Qwen3.8-27B-GGUF"] }
-    ]
-  }
-}
-```
-
+Radar is still worth reading if you are writing a collector against a public HTTP
+API: zero dependencies, one unauthenticated request per watched item, per-item
+failures degraded into `error` rather than thrown, and flag/item ids keyed on the
+specific release or thread so a mute silences that one and still fires for the next.
 `match` scopes "newest release" to the family: without it, a large org's newest
 anything wins, and for `google` that was a JAX tabular model — true and useless.
 `mirrors` are the repos whose discussion tabs carry the demand, which is usually the

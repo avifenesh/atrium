@@ -52,6 +52,29 @@ collector stays idle (it can't search without a login).
 | `pollMs` | `60000` | poll cadence |
 | `ownReposPollMs` | `600000` | slower cadence for own-repo counts |
 | `failThreshold` | `3` | consecutive failed polls before the crit flag pages you |
+| `agingDays` | `14` | attention items untouched this long leave the hero for the aging shelf |
+
+### `agents`
+
+| key | default | meaning |
+| --- | --- | --- |
+| `activityTtlHours` | `24` | activity-ticker events older than this are dropped — a dead provider's last session never renders as "live activity" |
+
+### `notes`
+
+The vault (Obsidian registry, or `~/revuto` fallback) is always scanned as root
+`vault`. Extra note piles that live elsewhere are added here:
+
+```jsonc
+{ "notes": { "roots": [
+  { "id": "codex", "label": "Codex", "path": "~/Documents/Codex" },
+  { "id": "learning", "label": "Learning", "path": "~/learning" }
+] } }
+```
+
+Each root is walked for `.md`/`.txt` (hidden dirs skipped, 2000 files per root);
+the Notes view searches and filters across all of them, and `/api/notes/read|write`
+take a `root` alongside the relative path.
 
 ### `notify`
 
