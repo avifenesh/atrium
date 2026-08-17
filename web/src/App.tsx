@@ -18,6 +18,7 @@ import StreampilePanel from './panels/StreampilePanel';
 import WikiPanel from './panels/WikiPanel';
 import ExtraPanel, { extraKeys } from './panels/ExtraPanel';
 import TiyuvtaPanel from './panels/TiyuvtaPanel';
+import WebTrafficPanel from './panels/WebTrafficPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
 import ItemDetail from './components/ItemDetail';
@@ -487,12 +488,16 @@ export default function App() {
           {activeView === 'streampile' && <StreampilePanel />}
           {activeView === 'knowledge' && <WikiPanel />}
           {/* plugin (extra-lane) sections render in the generic panel, unless they
-              ship their own — tiyuvta needs buttons, so it has a panel and must not
-              also render generically or every row would appear twice. */}
+              ship their own — tiyuvta needs buttons and webtraffic needs series and
+              tables, so each has a panel and must not also render generically or
+              every row would appear twice. */}
           {activeView === 'tiyuvta' && snapshot.extra?.tiyuvta && (
             <TiyuvtaPanel section={snapshot.extra.tiyuvta} />
           )}
-          {activeView !== 'tiyuvta' && snapshot.extra?.[activeView] && (
+          {activeView === 'webtraffic' && snapshot.extra?.webtraffic && (
+            <WebTrafficPanel section={snapshot.extra.webtraffic} />
+          )}
+          {activeView !== 'tiyuvta' && activeView !== 'webtraffic' && snapshot.extra?.[activeView] && (
             <ExtraPanel section={snapshot.extra[activeView]} sectionKey={activeView} />
           )}
         </main>

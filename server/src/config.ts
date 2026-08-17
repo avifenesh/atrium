@@ -44,6 +44,19 @@ export const defaults = {
     tokenEnvVar: 'OWNER_ADMIN_TOKEN',
   },
 
+  /** Web traffic — the two public sites' cookieless analytics dataset on Cloudflare
+   *  Analytics Engine, read over the SQL API. READ-ONLY: the collector only queries.
+   *  The credential is the SAME file the darklanes reporting scripts use
+   *  (~/.config/tiyuvta/cloudflare.env — CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN,
+   *  token scope "Account Analytics: Read"); it is read in place, never copied here.
+   *  Empty credsEnvPath = that default path. Missing file = "not set up" row. */
+  webtraffic: {
+    credsEnvPath: '',
+    dataset: 'tiyuvta_web',
+    /** trailing report window; deltas compare against the window before it */
+    windowDays: 7,
+  },
+
   /** Hugging Face demand radar. Watches ONLY the families listed here — models you
    *  serve or would consider serving — because a radar over every release on the Hub
    *  is a wall of things you cannot act on. Empty = the collector renders one "not

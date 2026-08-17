@@ -37,6 +37,7 @@ import helperCollector from './collectors/helper.js';
 import radarCollector from './collectors/radar.js';
 import tiyuvtaCollector from './collectors/tiyuvta.js';
 import exposureCollector from './collectors/exposure.js';
+import webtrafficCollector from './collectors/webtraffic.js';
 import { isAction as isTiyuvtaAction, runAction as runTiyuvtaAction } from './core/tiyuvta.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
@@ -62,6 +63,7 @@ for (const c of [
   radarCollector,
   tiyuvtaCollector,
   exposureCollector,
+  webtrafficCollector,
 ]) {
   register(c);
 }
