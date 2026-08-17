@@ -18,6 +18,20 @@ export const defaults = {
     disabled: [] as string[],
   },
 
+  /** Exposure counters that expire upstream: GitHub keeps 14 days of traffic and the
+   *  top ten referrers, Hugging Face gives one rolling 30-day download number and no
+   *  history. The snapshot is written by an external command so there is one definition
+   *  of the file format; this daemon only schedules it and shows the result.
+   *
+   *  { "exposure": { "command": ["node", "/path/to/snapshot.mjs"],
+   *                  "snapshotDir": "/path/to/snapshots" } }
+   *
+   *  Empty = the collector renders "not configured" and runs nothing. */
+  exposure: {
+    command: [] as string[],
+    snapshotDir: '',
+  },
+
   /** tiyuvta inference console — the operator surface for the hosted product.
    *  The console is public-facing, so its admin PAGES were retired: the same API is
    *  driven from here instead, behind the loopback boundary. The bearer is read from
