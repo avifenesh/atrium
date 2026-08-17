@@ -34,8 +34,10 @@ import { isSheetOpen } from './panels/itch/Sheet';
 const VIEWS = [
   { id: 'now', label: 'Now', group: 'Today', description: 'Attention, activity, and the next useful move.' },
   { id: 'tasks', label: 'Tasks', group: 'Work', description: 'Reviews, pull requests, mentions, and local changes.', collector: 'github' },
-  { id: 'helper', label: 'What can I do for you', navLabel: 'For you', group: 'Work', description: 'Evidence-backed work an agent can take off your plate.', collector: 'helper' },
-  { id: 'reentry', label: 'Re-entry', group: 'Work', description: 'Park a working thread, recover its facts, and resume at the next concrete move.', collector: 'reentry' },
+  // re-entry (resume YOUR parked threads) and the helper scout (offers of NEW work)
+  // are one question — "what should I pick up?" — so they share one view. The two
+  // background agents stay separate; only the surface merged.
+  { id: 'foryou', label: 'For you', group: 'Work', description: 'Pick a parked thread back up, or take an evidence-backed offer off the scout.' },
   { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
   { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
   { id: 'system', label: 'System', group: 'Machine', description: 'Capacity, listeners, processes, and service health.', collector: 'system' },
@@ -56,11 +58,16 @@ const NAV_GROUPS = ['Today', 'Work', 'Business', 'Machine', 'Explore', 'Library'
  *  generic Plugins bucket — ops console and site analytics are business detail views */
 const BUSINESS_EXTRAS = new Set(['tiyuvta', 'webtraffic']);
 
+/** retired view ids whose deep links (desktop entries, palette muscle memory,
+ *  NowView/pickup buttons) must keep landing somewhere sensible */
+const VIEW_ALIASES: Record<string, string> = { helper: 'foryou', reentry: 'foryou' };
+const resolveViewId = (v: string): string => VIEW_ALIASES[v] ?? v;
+
 function parseHash(raw: string): { view: string; focus: string | null } {
   const h = raw.startsWith('#') ? raw.slice(1) : raw;
   const i = h.indexOf('/');
-  if (i < 0) return { view: h || 'now', focus: null };
-  const view = h.slice(0, i) || 'now';
+  if (i < 0) return { view: resolveViewId(h || 'now'), focus: null };
+  const view = resolveViewId(h.slice(0, i) || 'now');
   const rest = h.slice(i + 1);
   if (!rest) return { view, focus: null };
   try {
@@ -375,7 +382,8 @@ export default function App() {
   // resolve an unknown/stale hash (e.g. a plugin disabled since the link was made) to 'now'
   const activeView = isKnownView(view) ? view : 'now';
   const navigate = (v: string, nextFocus?: string | null) => {
-    if (isKnownView(v)) setView(v);
+    const resolved = resolveViewId(v);
+    if (isKnownView(resolved)) setView(resolved);
     setFocus(nextFocus ?? null);
     setMoreOpen(false);
   };
@@ -386,7 +394,7 @@ export default function App() {
   const openItem = (repo: string, number: number) => setItem({ repo, number });
 
   // bottom-nav primaries on phone; everything else lives under "more"
-  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'helper', 'reentry']);
+  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'foryou', 'business']);
   const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
   const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
   const primaryActive = MOBILE_PRIMARY.has(activeView);
@@ -401,8 +409,8 @@ export default function App() {
       tasks: { n: badges.tasks, cls: badges.tasksCls },
       comms: { n: badges.comms, cls: 'text-mist-faint' },
       agents: { n: badges.agents, cls: 'text-jade' },
-      helper: { n: badges.helper, cls: 'text-amber' },
-      reentry: { n: badges.reentry, cls: 'text-amber' },
+      // parked threads + open offers — everything waiting for a pickup decision
+      foryou: { n: badges.helper + badges.reentry, cls: 'text-amber' },
       // failures are errors — coral, never amber
       revuto: { n: badges.revuto, cls: 'text-coral' },
       system: { n: badges.system, cls: badges.systemCls },
@@ -458,7 +466,7 @@ export default function App() {
                             activeView === v.id ? 'is-active text-mist' : 'text-mist-dim hover:text-mist'
                           }`}
                         >
-                          {'navLabel' in v ? v.navLabel : v.label}
+                          {v.label}
                           {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
                         </button>
                       </li>
@@ -504,8 +512,18 @@ export default function App() {
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
           )}
           {activeView === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
-          {activeView === 'helper' && <HelperPanel snapshot={snapshot} />}
-          {activeView === 'reentry' && <ReentryPanel snapshot={snapshot} />}
+          {activeView === 'foryou' && (
+            <div>
+              <div className="mb-3 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">
+                Pick up where you left
+              </div>
+              <ReentryPanel snapshot={snapshot} />
+              <div className="mb-3 mt-10 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">
+                Offers from the scout
+              </div>
+              <HelperPanel snapshot={snapshot} />
+            </div>
+          )}
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
@@ -566,7 +584,7 @@ export default function App() {
                   on ? 'is-active text-mist' : 'text-mist-faint'
                 }`}
               >
-                <span className="font-mono text-[12px] leading-none">{'navLabel' in v ? v.navLabel : v.label}</span>
+                <span className="font-mono text-[12px] leading-none">{v.label}</span>
                 {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
               </button>
             );
