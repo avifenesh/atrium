@@ -1,18 +1,19 @@
 // Mention radar — surfaces public mentions of the author's projects (HN, GitHub,
 // web/blogs, YouTube, dev.to, reddit) collected hourly by scripts/mention-radar.py
 // (systemd user timer mention-radar.timer, installed by scripts/install.sh). Reads
-// the radar's hits.jsonl tail and renders one link row per mention in the generic
-// extra panel.
+// the radar's hits.jsonl tail and publishes each mention into the signals section.
+// The watched terms live in ~/.config/atrium/signals.json (shared with the script),
+// so editing them is a UI action, not a code change.
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { store } from '../state.js';
+import { signals } from '../signals.js';
 import type { Collector } from './registry.js';
-import type { ExtraRow } from '../../../shared/types.js';
+import type { SignalItem } from '../../../shared/types.js';
 
 const HITS_FILE = join(homedir(), '.local', 'share', 'mention-radar', 'hits.jsonl');
-const MAX_ROWS = 50;
+const MAX_ROWS = 100;
 
 interface Hit {
   id: string;
@@ -41,32 +42,26 @@ const collector: Collector = {
           }
         })
         .filter((h): h is Hit => !!h?.url);
-      const rows: ExtraRow[] = hits
+      const items: Array<Omit<SignalItem, 'firstSeenAt'>> = hits
         .slice(-MAX_ROWS)
         .reverse()
         .map((h) => ({
-          label: `${h.source} · ${h.term}`,
-          value: `${h.title.slice(0, 80)}${h.date ? ` — ${h.date.slice(0, 10)}` : ''}`,
-          href: h.url,
-          tone: 'ok',
+          id: `mention:${h.id}`,
+          source: h.source,
+          kind: 'mention' as const,
+          entity: h.term,
+          title: h.title.slice(0, 160),
+          detail: null,
+          url: h.url,
+          count: null,
+          delta: null,
+          occurredAt: h.date || null,
         }));
-      store.setExtra('mentions', {
-        title: 'mentions',
-        updatedAt: new Date().toISOString(),
-        up: true,
-        rows: rows.length ? rows : [{ label: 'mention-radar', value: 'no mentions recorded yet' }],
-        error: null,
-        data: { total: hits.length },
-      });
+      await signals.publish('mentions', items, null);
     } catch (err) {
       const missing = (err as NodeJS.ErrnoException).code === 'ENOENT';
-      store.setExtra('mentions', {
-        title: 'mentions',
-        updatedAt: new Date().toISOString(),
-        up: missing, // no hits file yet = radar simply hasn't fired, not an outage
-        rows: [{ label: 'mention-radar', value: missing ? 'no mentions recorded yet' : 'read failed' }],
-        error: missing ? null : err instanceof Error ? err.message : String(err),
-      });
+      // no hits file yet = the radar simply hasn't fired, not an outage
+      await signals.publish('mentions', [], missing ? null : err instanceof Error ? err.message : String(err));
     }
   },
 };

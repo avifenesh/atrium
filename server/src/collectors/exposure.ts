@@ -18,12 +18,12 @@
 // so there is exactly one definition of the file format: the same command can be run
 // by hand, and this collector is only the scheduler and the display.
 
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../config.js';
-import { store } from '../state.js';
-import { iso, sh } from '../util.js';
-import type { ExtraRow } from '../../../shared/types.js';
+import { signals } from '../signals.js';
+import { sh } from '../util.js';
+import type { SignalItem } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
 
 interface ExposureConfig {
@@ -54,6 +54,27 @@ interface Snapshot {
   notes: string[];
 }
 
+async function readSnapshot(dir: string, file: string): Promise<Snapshot | null> {
+  try {
+    return JSON.parse(await readFile(join(dir, file), 'utf8')) as Snapshot;
+  } catch {
+    return null; // the run failed, or it is the first cycle after midnight before a write
+  }
+}
+
+/** newest dated snapshot strictly before `today` — the delta baseline */
+async function previousSnapshot(dir: string, today: string): Promise<Snapshot | null> {
+  try {
+    const files = (await readdir(dir))
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f) && f < `${today}.json`)
+      .sort();
+    const last = files.at(-1);
+    return last ? readSnapshot(dir, last) : null;
+  } catch {
+    return null;
+  }
+}
+
 const collector: Collector = {
   name: 'exposure',
   // Six hours. The window being protected is fourteen days wide, so this is far more
@@ -63,16 +84,9 @@ const collector: Collector = {
 
   async run() {
     const { command, snapshotDir } = settings();
-    const now = iso();
 
     if (command.length === 0 || !snapshotDir) {
-      store.setExtra('exposure', {
-        title: 'exposure',
-        updatedAt: now,
-        up: true,
-        rows: [{ label: 'not configured', value: 'set exposure.command and exposure.snapshotDir', tone: 'warn' }],
-        error: null,
-      });
+      await signals.publish('exposure', [], null); // unconfigured is the fresh-install default
       return;
     }
 
@@ -96,56 +110,78 @@ const collector: Collector = {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    let snapshot: Snapshot | null = null;
-    try {
-      snapshot = JSON.parse(await readFile(join(snapshotDir, `${today}.json`), 'utf8')) as Snapshot;
-    } catch {
-      /* the run failed, or it is the first cycle after midnight before a write */
-    }
+    const [snapshot, previous] = await Promise.all([
+      readSnapshot(snapshotDir, `${today}.json`),
+      previousSnapshot(snapshotDir, today),
+    ]);
 
-    const rows: ExtraRow[] = [];
+    const items: Array<Omit<SignalItem, 'firstSeenAt'>> = [];
     if (snapshot) {
+      const counter = (
+        key: string,
+        entity: string,
+        title: string,
+        count: number | null,
+        prev: number | null | undefined,
+        opts: { detail?: string | null; url?: string | null } = {},
+      ) => {
+        items.push({
+          id: `exposure:${key}`,
+          source: 'exposure',
+          kind: 'counter',
+          entity,
+          title,
+          detail: opts.detail ?? null,
+          url: opts.url ?? null,
+          count,
+          // deltas compare against the previous recorded day — the whole point of
+          // writing these down before the upstream window expires
+          delta: count !== null && typeof prev === 'number' ? count - prev : null,
+          occurredAt: snapshot.date ?? null,
+        });
+      };
+
       const views = snapshot.traffic.views14d;
       const clones = snapshot.traffic.clones14d;
       if (snapshot.repo) {
-        rows.push({
-          label: 'repo',
-          value: `${snapshot.repo.stars} stars · ${snapshot.repo.forks} forks · ${snapshot.repo.watchers} watching`,
+        counter('repo:stars', 'repo', 'stars', snapshot.repo.stars, previous?.repo?.stars, {
+          detail: `${snapshot.repo.forks} forks · ${snapshot.repo.watchers} watching`,
         });
       }
-      rows.push({
-        label: 'views, 14d',
-        value: views ? `${views.total} · ${views.uniques} unique` : 'not recorded — no gh token',
-        tone: views ? undefined : 'warn',
+      counter('traffic:views14d', 'repo', 'views, 14d', views?.total ?? null, previous?.traffic.views14d?.total, {
+        detail: views ? `${views.uniques} unique` : 'not recorded — no gh token',
       });
-      if (clones) rows.push({ label: 'clones, 14d', value: `${clones.total} · ${clones.uniques} unique` });
+      if (clones) {
+        counter('traffic:clones14d', 'repo', 'clones, 14d', clones.total, previous?.traffic.clones14d?.total, {
+          detail: `${clones.uniques} unique`,
+        });
+      }
       for (const model of snapshot.huggingface) {
-        rows.push({
-          label: `  hf ${model.id.split('/').pop()}`,
-          value: `${model.downloads30d ?? '?'} downloads/30d · ${model.likes ?? 0} likes`,
-          href: `https://huggingface.co/${model.id}`,
+        const prev = previous?.huggingface.find((m) => m.id === model.id);
+        counter(`hf:${model.id}`, model.id.split('/').pop() ?? model.id, 'downloads, 30d', model.downloads30d, prev?.downloads30d, {
+          detail: `${model.likes ?? 0} likes`,
+          url: `https://huggingface.co/${model.id}`,
         });
       }
       for (const crate of snapshot.crates) {
-        rows.push({ label: `  crate ${crate.name}`, value: `${crate.totalDownloads ?? '?'} total · ${crate.recentDownloads ?? '?'} recent` });
+        const prev = previous?.crates.find((c) => c.name === crate.name);
+        counter(`crate:${crate.name}`, crate.name, 'crate downloads', crate.totalDownloads, prev?.totalDownloads, {
+          detail: crate.recentDownloads !== null ? `${crate.recentDownloads} recent` : null,
+          url: `https://crates.io/crates/${crate.name}`,
+        });
       }
       // The reason the job exists: this table is gone in fourteen days.
       for (const referrer of (snapshot.traffic.referrers ?? []).slice(0, 5)) {
-        rows.push({ label: `  ↳ ${referrer.referrer}`, value: `${referrer.count} views · ${referrer.uniques} unique` });
-      }
-      if (snapshot.notes.length) {
-        rows.push({ label: 'notes', value: snapshot.notes[0].slice(0, 90), tone: 'warn' });
+        const prev = previous?.traffic.referrers?.find((r) => r.referrer === referrer.referrer);
+        counter(`referrer:${referrer.referrer}`, referrer.referrer, 'referrer views, 14d', referrer.count, prev?.count, {
+          detail: `${referrer.uniques} unique`,
+        });
       }
     }
 
-    store.setExtra('exposure', {
-      title: 'exposure',
-      updatedAt: now,
-      up: failure === null,
-      rows,
-      error: failure ?? (snapshot ? null : `no snapshot for ${today} in ${snapshotDir}`),
-      data: snapshot ? { date: snapshot.date, lastLine: stdout.trim().split('\n').pop() } : undefined,
-    });
+    const error = failure ?? (snapshot ? null : `no snapshot for ${today} in ${snapshotDir}`);
+    void stdout;
+    await signals.publish('exposure', items, error);
   },
 };
 

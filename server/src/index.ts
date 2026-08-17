@@ -16,6 +16,7 @@ import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js'
 import { readNote } from './collectors/notes.js';
 import { reentry } from './reentry.js';
 import { helper } from './helper.js';
+import { signals } from './signals.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -421,8 +422,27 @@ const server = createServer(async (req, res) => {
 
     if (method === 'GET' && path === '/api/notes/read') {
       const rel = url.searchParams.get('path') ?? '';
+      const root = url.searchParams.get('root') ?? 'vault';
       try {
-        return json(res, 200, await readNote(rel));
+        return json(res, 200, await readNote(rel, root));
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    // signals — the "outside world noticed my work" section
+    if (method === 'POST' && path === '/api/signals/reviewed') {
+      return json(res, 200, { ok: true, lastReviewedAt: await signals.markReviewed() });
+    }
+
+    if (method === 'PUT' && path === '/api/signals/watch') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        const watch = await signals.setWatch(body);
+        // feeders read the watch on every run — kick them so the change lands now
+        void runOnce('radar');
+        void runOnce('mentions');
+        return json(res, 200, { ok: true, watch });
       } catch (err) {
         return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
       }
@@ -546,6 +566,7 @@ async function serveStatic(path: string, res: ServerResponse): Promise<boolean> 
 await reentry.load();
 await helper.load();
 await mutes.load();
+await signals.load();
 await loadMetricHistory();
 
 // Loopback is a hard invariant, not a default: there is no auth layer, and
