@@ -9,6 +9,7 @@ import ReentryPanel from './panels/ReentryPanel';
 import AgentsPanel from './panels/AgentsPanel';
 import RevutoPanel from './panels/RevutoPanel';
 import SystemPanel from './panels/SystemPanel';
+import SignalsPanel from './panels/SignalsPanel';
 import CommsPanel from './panels/CommsPanel';
 import SubsPanel from './panels/SubsPanel';
 import SchedulePanel from './panels/SchedulePanel';
@@ -37,6 +38,7 @@ const VIEWS = [
   { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
   { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
   { id: 'system', label: 'System', group: 'Machine', description: 'Capacity, listeners, processes, and service health.', collector: 'system' },
+  { id: 'signals', label: 'Signals', group: 'Reach', description: 'Mentions, demand, and the counters that show your work being found.' },
   { id: 'comms', label: 'Comms', group: 'Today', description: 'Unread mail and the calendar ahead.' },
   { id: 'subs', label: 'Subscriptions', group: 'Machine', description: 'Services, cloud resources, and recurring costs.' },
   { id: 'schedule', label: 'Schedule', group: 'Machine', description: 'Timers, cron jobs, and their latest runs.', collector: 'schedule' },
@@ -46,7 +48,11 @@ const VIEWS = [
   { id: 'knowledge', label: 'Knowledge', group: 'Library', description: 'Projects, techniques, sources, and the links between them.' },
 ] as const;
 
-const NAV_GROUPS = ['Today', 'Work', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
+const NAV_GROUPS = ['Today', 'Work', 'Reach', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
+
+/** extra-lane sections that belong with Signals rather than in a generic Plugins
+ *  bucket — the "who is finding/using my stuff" cluster lives together */
+const REACH_EXTRAS = new Set(['tiyuvta', 'webtraffic']);
 
 function parseHash(raw: string): { view: string; focus: string | null } {
   const h = raw.startsWith('#') ? raw.slice(1) : raw;
@@ -169,7 +175,7 @@ export default function App() {
   const [item, setItem] = useState<{ repo: string; number: number } | null>(null);
   // palette → notes reader: pending open consumed by NotesPanel (itch scrollTarget idiom —
   // open-note state is panel-local, so the jump rides a one-shot signal)
-  const [noteTarget, setNoteTarget] = useState<string | null>(null);
+  const [noteTarget, setNoteTarget] = useState<{ root: string; path: string } | null>(null);
   // palette → itch run: same one-shot idiom (selected-run state lives in ItchBody)
   const [runTarget, setRunTarget] = useState<string | null>(null);
   // ItemDetail registers its esc step here (composer-absorb logic lives with the composer)
@@ -189,27 +195,45 @@ export default function App() {
         system: 0,
         systemCls: 'text-mist-faint',
         itch: 0,
+        signals: 0,
       };
+    // mirror the NowView hero: bot-authored and aging act-now items are shelf rows,
+    // not attention — the badge must agree with what the hero calls "needs action"
+    const agingMs = (snapshot.github.agingDays || 14) * 86_400_000;
+    const nowMs = Date.now();
+    const attention = (it: { id: string; updatedAt: string; author?: string | null; title: string; bot?: boolean }) =>
+      !isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title }) &&
+      !it.bot &&
+      !(it.updatedAt !== '' && nowMs - new Date(it.updatedAt).getTime() > agingMs);
     const taskIds = new Set<string>();
-    for (const it of [...snapshot.github.actNow, ...snapshot.github.orgQueue]) {
-      if (!isMuted(snapshot, 'github-item', it.id)) taskIds.add(it.id);
+    for (const it of snapshot.github.actNow) {
+      if (attention(it)) taskIds.add(it.id);
+    }
+    for (const it of snapshot.github.orgQueue) {
+      if (!isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title })) taskIds.add(it.id);
     }
     // amber is scoped to act-now + org review (mirrors the NowView hero); a queue of
     // triage-only leftovers keeps the count but drops the attention color
-    const tasksAttention = [
-      ...snapshot.github.actNow,
-      ...snapshot.github.orgQueue.filter((it) => it.lane === 'review'),
-    ].some((it) => !isMuted(snapshot, 'github-item', it.id));
+    const tasksAttention =
+      snapshot.github.actNow.some(attention) ||
+      snapshot.github.orgQueue.some(
+        (it) => it.lane === 'review' && !isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title }),
+      );
     // system badge tone follows the highest unmuted flag severity (mirrors FlagStrip:
-    // crit coral, warn amber, info stays quiet) — coral is reserved for errors
+    // crit coral, warn amber; info is fyi, never a signal) — coral is reserved for errors
     const flags = snapshot.flags.filter((f) => !isMuted(snapshot, 'flag', f.id));
-    const systemCls = flags.some((f) => f.severity === 'crit')
+    const signalFlags = flags.filter((f) => f.severity !== 'info');
+    const systemCls = signalFlags.some((f) => f.severity === 'crit')
       ? 'text-coral'
-      : flags.some((f) => f.severity === 'warn')
+      : signalFlags.some((f) => f.severity === 'warn')
         ? 'text-amber'
         : 'text-mist-faint';
     // optional-chain both: a stale server snapshot may lack revuto during rollout
     const revutoFails = snapshot.revuto?.up ? (snapshot.revuto.counts?.recentFailures ?? 0) : 0;
+    const reviewedAt = snapshot.signals?.lastReviewedAt ?? null;
+    const newSignals = (snapshot.signals?.items ?? []).filter(
+      (s) => !reviewedAt || s.firstSeenAt > reviewedAt,
+    ).length;
     return {
       tasks: taskIds.size,
       tasksCls: tasksAttention ? 'text-amber' : 'text-mist-faint',
@@ -219,10 +243,11 @@ export default function App() {
       helper: snapshot.helper?.offers.filter((offer) => offer.status === 'offered').length ?? 0,
       reentry: snapshot.reentry?.contexts.filter((context) => context.state !== 'done').length ?? 0,
       revuto: revutoFails,
-      system: flags.length,
+      system: signalFlags.length,
       systemCls,
       // optional-chain: a stale server snapshot may lack itch during rollout
       itch: snapshot.itch?.up && snapshot.itch.research.running ? 1 : 0,
+      signals: newSignals,
     };
   }, [snapshot]);
 
@@ -328,7 +353,7 @@ export default function App() {
   const extraViews = extraKeys(snapshot).map((k) => ({
     id: k,
     label: snapshot.extra[k]?.title ?? k,
-    group: 'Plugins' as const,
+    group: (REACH_EXTRAS.has(k) ? 'Reach' : 'Plugins') as (typeof NAV_GROUPS)[number],
     description: 'A collector-provided workspace.',
   }));
   const allViews = [...coreViews, ...extraViews];
@@ -369,6 +394,8 @@ export default function App() {
       system: { n: badges.system, cls: badges.systemCls },
       // research running is work-in-progress — jade like agents, not amber
       itch: { n: badges.itch, cls: 'text-jade' },
+      // new outside attention is good news — jade, never an alarm color
+      signals: { n: badges.signals, cls: 'text-jade' },
     };
     const b = map[id];
     return b && b.n > 0 ? b : null;
@@ -467,6 +494,7 @@ export default function App() {
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {activeView === 'signals' && <SignalsPanel snapshot={snapshot} />}
           {activeView === 'comms' && <CommsPanel snapshot={snapshot} />}
           {activeView === 'subs' && <SubsPanel snapshot={snapshot} />}
           {activeView === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
@@ -624,8 +652,8 @@ export default function App() {
           onNavigate={navigate}
           onOpenQuiet={openQuiet}
           onOpenItem={openItem}
-          onOpenNote={(path) => {
-            setNoteTarget(path);
+          onOpenNote={(path, root) => {
+            setNoteTarget({ root: root ?? 'vault', path });
             setView('notes');
           }}
           onOpenRun={(stem) => {

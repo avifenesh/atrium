@@ -9,6 +9,8 @@ const KINDS: { kind: MuteKind; placeholder: string; label: string }[] = [
   { kind: 'github-repo', placeholder: 'owner/repo', label: 'GitHub repos' },
   { kind: 'github-org', placeholder: 'org', label: 'GitHub orgs' },
   { kind: 'github-reason', placeholder: 'review_requested', label: 'GitHub reasons' },
+  { kind: 'github-author', placeholder: 'dependabot', label: 'GitHub authors' },
+  { kind: 'github-title', placeholder: '^Bump  — or /regex/', label: 'GitHub title rules' },
   { kind: 'agent', placeholder: 'revuto', label: 'Agents' },
   { kind: 'agent-resource', placeholder: 'revuto:owner/repo', label: 'Agent resources' },
   { kind: 'schedule', placeholder: 'hermes:job-id', label: 'Schedule' },
@@ -145,6 +147,13 @@ function MuteEntry({ m }: { m: Mute }) {
           title="quiet until new activity — a comment or push brings it back"
         >
           til activity
+        </span>
+      ) : m.untilClear ? (
+        <span
+          className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] bg-white/5 text-mist-faint"
+          title="quiet until the signal clears — the next failure alerts again"
+        >
+          til clear
         </span>
       ) : (
         <Until iso={m.until} />

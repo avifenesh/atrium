@@ -69,9 +69,11 @@ function RepoMutes({ repo, itemId }: { repo: string; itemId?: string }) {
 }
 
 function notMuted(snapshot: Snapshot) {
-  // github-item cascades through repo and org mutes inside isMuted
-  return (x: { repo: string; id?: string }) =>
-    x.id ? !isMuted(snapshot, 'github-item', x.id) : !isMuted(snapshot, 'github-repo', x.repo);
+  // github-item cascades through repo/org and author/title rules inside isMuted
+  return (x: { repo: string; id?: string; author?: string | null; title?: string }) =>
+    x.id
+      ? !isMuted(snapshot, 'github-item', x.id, { author: x.author, title: x.title })
+      : !isMuted(snapshot, 'github-repo', x.repo);
 }
 
 function ItemRow({
@@ -306,7 +308,10 @@ export default function TasksPanel({
   const [cleared, setCleared] = useState<ReadonlySet<string>>(new Set());
   const [clearAllArmed, setClearAllArmed] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
+  const [lanesOpen, setLanesOpen] = useState(false);
   const [reviewBotOpen, setReviewBotOpen] = useState(false);
+  const [botsOpen, setBotsOpen] = useState(false);
+  const [agingOpen, setAgingOpen] = useState(false);
 
   // older servers don't ship the repos section yet — skip the panel entirely
   const local = snapshot.repos as ReposState | undefined;
@@ -319,7 +324,14 @@ export default function TasksPanel({
   // orgQueue outranks actNow — if an item is in both (external PR where I'm also a
   // requested reviewer), show it only in the higher lane
   const orgIds = new Set(g.orgQueue.map((it) => it.id));
-  const actNow = g.actNow.filter((it) => visible(it) && !orgIds.has(it.id));
+  const actNowAll = g.actNow.filter((it) => visible(it) && !orgIds.has(it.id));
+  // hero discipline (mirrors NowView): bots collapse, aging shelves, humans lead
+  const agingMs = (g.agingDays || 14) * 86_400_000;
+  const nowMs = Date.now();
+  const aging = (it: GithubItem) => it.updatedAt !== '' && nowMs - new Date(it.updatedAt).getTime() > agingMs;
+  const actNowBots = actNowAll.filter((it) => it.bot);
+  const actNowAging = actNowAll.filter((it) => !it.bot && aging(it));
+  const actNow = actNowAll.filter((it) => !it.bot && !aging(it));
   const myPRs = g.myPRs.filter(visible);
   const mentions = g.mentions.filter(visible);
   const teamQueue = g.teamQueue.filter(visible);
@@ -332,7 +344,8 @@ export default function TasksPanel({
   const notifications = visibleNotifications.filter((n) => n.noise?.kind !== 'review-bot');
   const ownRepos = g.ownRepos.filter(visible);
   const quietPriorityCount =
-    (g.orgQueue.length - orgQueue.length) + (g.actNow.length - actNow.length);
+    (g.orgQueue.length - orgQueue.length) +
+    (g.actNow.filter((it) => !orgIds.has(it.id)).length - actNowAll.length);
 
   const clearOne = (id: string) => {
     setCleared((s) => new Set(s).add(id));
@@ -446,7 +459,7 @@ export default function TasksPanel({
                 title="Needs action"
                 riseIndex={1}
                 className="col-span-12"
-                quietCount={g.actNow.length - actNow.length}
+                quietCount={quietPriorityCount}
                 onQuietClick={onOpenQuiet}
                 right={<span className="font-mono text-xs tabular-nums text-amber">{actNow.length}</span>}
               >
@@ -458,6 +471,60 @@ export default function TasksPanel({
               </Panel>
             )}
           </>
+        )}
+
+        {/* demoted lanes: bot updates and aging items never share the hero with
+            fresh human asks, but stay one click away */}
+        {actNowBots.length > 0 && (
+          <section className="panel-surface rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 1 } as CSSProperties}>
+            <header className="flex items-baseline justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setBotsOpen((o) => !o)}
+                aria-expanded={botsOpen}
+                className="flex min-h-8 min-w-0 cursor-pointer items-center gap-2 text-left"
+              >
+                <span className="font-mono text-[11px] text-mist-faint">{botsOpen ? '▾' : '▸'}</span>
+                <h2 className="text-[13px] font-semibold text-mist">Bot updates</h2>
+                <span className="font-mono text-xs tabular-nums text-mist-dim">{actNowBots.length}</span>
+              </button>
+              {actNowBots[0]?.author && (
+                <MuteButton kind="github-author" target={actNowBots[0].author} label={`quiet @${actNowBots[0].author}`} />
+              )}
+            </header>
+            {botsOpen && (
+              <div className="mt-3 max-h-72 space-y-0.5 overflow-x-hidden overflow-y-auto">
+                {actNowBots.map((it) => (
+                  <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {actNowAging.length > 0 && (
+          <section className="panel-surface rise col-span-12 p-4 xl:p-5" style={{ '--rise-i': 1 } as CSSProperties}>
+            <header className="flex items-baseline justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setAgingOpen((o) => !o)}
+                aria-expanded={agingOpen}
+                className="flex min-h-8 min-w-0 cursor-pointer items-center gap-2 text-left"
+              >
+                <span className="font-mono text-[11px] text-mist-faint">{agingOpen ? '▾' : '▸'}</span>
+                <h2 className="text-[13px] font-semibold text-mist">Aging</h2>
+                <span className="font-mono text-xs tabular-nums text-mist-dim">{actNowAging.length}</span>
+                <span className="font-mono text-[11px] text-mist-faint">untouched &gt; {g.agingDays || 14}d</span>
+              </button>
+            </header>
+            {agingOpen && (
+              <div className="mt-3 max-h-72 space-y-0.5 overflow-x-hidden overflow-y-auto">
+                {actNowAging.map((it) => (
+                  <ItemRow key={it.id} item={it} dispatches={dispatches} onOpenItem={onOpenItem} />
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         <Panel
@@ -652,20 +719,52 @@ export default function TasksPanel({
                 {local.updatedAt === null ? 'Local repos have not been collected yet.' : 'No local repos were found.'}
               </EmptyState>
             ) : (
-              <div className="space-y-0.5">
-                {(localOpen ? local.repos : local.repos.slice(0, LOCAL_ROWS)).map((r) => (
-                  <RepoRow key={r.path} r={r} />
-                ))}
-                {!localOpen && local.repos.length > LOCAL_ROWS && (
-                  <button
-                    type="button"
-                    onClick={() => setLocalOpen(true)}
-                    className="cursor-pointer py-1 pl-2.5 font-mono text-[11px] tabular-nums text-mist-faint transition-colors hover:text-mist"
-                  >
-                    … {local.repos.length - LOCAL_ROWS} more
-                  </button>
-                )}
-              </div>
+              (() => {
+                // lane working copies (wt-* dirs / lane/* branches) fold into one
+                // group so a fleet of agent lanes can't drown the real repos
+                const mains = local.repos.filter((r) => !r.isLane);
+                const lanes = local.repos.filter((r) => r.isLane);
+                return (
+                  <div className="space-y-0.5">
+                    {(localOpen ? mains : mains.slice(0, LOCAL_ROWS)).map((r) => (
+                      <RepoRow key={r.path} r={r} />
+                    ))}
+                    {!localOpen && mains.length > LOCAL_ROWS && (
+                      <button
+                        type="button"
+                        onClick={() => setLocalOpen(true)}
+                        className="cursor-pointer py-1 pl-2.5 font-mono text-[11px] tabular-nums text-mist-faint transition-colors hover:text-mist"
+                      >
+                        … {mains.length - LOCAL_ROWS} more
+                      </button>
+                    )}
+                    {lanes.length > 0 && (
+                      <div className="mt-2 border-t pt-2 hairline">
+                        <button
+                          type="button"
+                          onClick={() => setLanesOpen((o) => !o)}
+                          aria-expanded={lanesOpen}
+                          className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.04]"
+                        >
+                          <span className="shrink-0 font-mono text-[11px] text-mist-faint">{lanesOpen ? '▾' : '▸'}</span>
+                          <Chip className="text-mist-dim">lanes</Chip>
+                          <span className="min-w-0 flex-1 truncate text-sm text-mist-dim">
+                            {[...new Set(lanes.map((r) => r.origin ?? r.name))].slice(0, 3).join(' · ')}
+                          </span>
+                          <span className="shrink-0 font-mono text-xs tabular-nums text-mist-faint">{lanes.length}</span>
+                        </button>
+                        {lanesOpen && (
+                          <div className="mt-2 space-y-0.5">
+                            {lanes.map((r) => (
+                              <RepoRow key={r.path} r={r} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </Panel>
         )}
