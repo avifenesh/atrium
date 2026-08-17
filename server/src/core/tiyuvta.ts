@@ -113,6 +113,60 @@ export const readWebhookFailures = () => request<{ data: unknown[] }>('GET', '/a
 export const readCreditRequests = () => request<{ data: unknown[] }>('GET', '/admin/credit-requests');
 
 /**
+ * Which API surfaces the LIVE endpoint actually serves, and which models it lists.
+ *
+ * Probed without a key on purpose. Auth runs before body validation, so a route that
+ * exists answers 401 and a route that does not answers 404 — which means presence is
+ * measurable for zero tokens and zero credentials. The engine repo having a surface and
+ * the serving box answering on it are different facts, and on 2026-08-17 they differed:
+ * v0.90.0 shipped /v1/messages and /v1/responses while the box still 404'd both.
+ */
+export interface ApiSurfaces {
+  base: string;
+  surfaces: Array<{ path: string; state: 'present' | 'absent' | 'unknown'; status: number }>;
+  models: string[];
+}
+
+export async function readApiSurfaces(apiBase = 'https://api.tiyuvta.ai/v1'): Promise<ApiSurfaces> {
+  const paths = ['/chat/completions', '/completions', '/responses', '/messages', '/embeddings'];
+  const surfaces = await Promise.all(
+    paths.map(async (path) => {
+      try {
+        const response = await fetch(`${apiBase}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+          signal: AbortSignal.timeout(15_000),
+        });
+        // Three states, not two. "Not 404" was wrong: during a deploy every path
+        // answers 502, which made a restarting box look like it served everything —
+        // including surfaces it has never had. A route that exists REJECTS a bad
+        // request (400/401/422); one that does not exist says 404; anything else is
+        // unknown and must not be reported as either.
+        const { status } = response;
+        const state: ApiSurfaces['surfaces'][number]['state'] =
+          status === 404 ? 'absent' : status < 500 ? 'present' : 'unknown';
+        return { path, state, status };
+      } catch {
+        return { path, state: 'unknown' as const, status: 0 };
+      }
+    }),
+  );
+
+  let models: string[] = [];
+  try {
+    const catalogue = (await (await fetch(`${apiBase}/models`, { signal: AbortSignal.timeout(15_000) })).json()) as {
+      data?: Array<{ id?: string }>;
+    };
+    models = (catalogue.data ?? []).map((entry) => entry.id ?? '').filter(Boolean);
+  } catch {
+    /* leave empty; the row says so */
+  }
+
+  return { base: apiBase, surfaces, models };
+}
+
+/**
  * Everything that can be TRIGGERED from here, by name. An allowlist rather than a
  * path passthrough: this daemon accepts loopback POSTs, and a passthrough would turn
  * any of them into "call any console admin endpoint".

@@ -9,7 +9,7 @@
 // failures are money problems and page; an unenrolled account cannot mint a key, which
 // is a customer sitting in a broken state, so it warns.
 
-import { readCreditRequests, readDashboard, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
+import { readApiSurfaces, readCreditRequests, readDashboard, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
 import type { ExtraRow, Flag } from '../../../shared/types.js';
@@ -32,10 +32,11 @@ const collector: Collector = {
       // the other three are small and independent, so a failure in any one of them
       // must not cost the dashboard.
       const dashboard = await readDashboard();
-      const [traffic, webhooks, invoices] = await Promise.all([
+      const [traffic, webhooks, invoices, api] = await Promise.all([
         readTraffic(7).catch(() => null),
         readWebhookFailures().catch(() => null),
         readCreditRequests().catch(() => null),
+        readApiSurfaces().catch(() => null),
       ]);
 
       const { accounts, money: m, books, promo, totals } = dashboard;
@@ -76,6 +77,33 @@ const collector: Collector = {
       const invoiceCount = invoices?.data?.length ?? null;
       if (invoiceCount) {
         rows.push({ label: 'invoice requests', value: `${count(invoiceCount)} awaiting payment`, tone: 'warn' });
+      }
+
+      // What the box actually serves, which is a different question from what the engine
+      // repo has released. This row is how a deploy landing becomes visible without
+      // anyone re-testing by hand or asking.
+      if (api) {
+        const named = (state: string) =>
+          api.surfaces.filter((s) => s.state === state).map((s) => s.path.replace('/', ''));
+        const live = named('present');
+        const missing = named('absent');
+        const unknown = named('unknown');
+        rows.push({
+          label: 'api surfaces',
+          value: live.length ? live.join(', ') : unknown.length ? 'unreachable — deploying?' : 'none answering',
+          tone: live.length ? 'ok' : 'err',
+        });
+        if (missing.length) {
+          rows.push({ label: '  not served', value: missing.join(', '), tone: 'warn' });
+        }
+        if (unknown.length) {
+          rows.push({ label: '  unknown', value: `${unknown.join(', ')} — 5xx, cannot tell`, tone: 'warn' });
+        }
+        rows.push({
+          label: 'models served',
+          value: api.models.length ? api.models.join(', ') : 'catalogue unreadable',
+          tone: api.models.length ? undefined : 'warn',
+        });
       }
 
       if (traffic) {
@@ -141,7 +169,7 @@ const collector: Collector = {
         up: true,
         rows,
         error: null,
-        data: { dashboard, traffic, webhookFailures: webhooks?.data ?? null, creditRequests: invoices?.data ?? null },
+        data: { dashboard, traffic, api, webhookFailures: webhooks?.data ?? null, creditRequests: invoices?.data ?? null },
       });
       store.setFlags('tiyuvta', flags);
     } catch (error) {
