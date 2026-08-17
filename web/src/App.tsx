@@ -4,6 +4,7 @@ import { isMuted, useSnapshot } from './api';
 import { recordSystemSample, useNow, useScrollLock } from './hooks';
 import NowView from './panels/NowView';
 import TasksPanel from './panels/TasksPanel';
+import HelperPanel from './panels/HelperPanel';
 import ReentryPanel from './panels/ReentryPanel';
 import AgentsPanel from './panels/AgentsPanel';
 import RevutoPanel from './panels/RevutoPanel';
@@ -16,6 +17,7 @@ import ItchPanel from './panels/ItchPanel';
 import StreampilePanel from './panels/StreampilePanel';
 import WikiPanel from './panels/WikiPanel';
 import ExtraPanel, { extraKeys } from './panels/ExtraPanel';
+import TiyuvtaPanel from './panels/TiyuvtaPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
 import ItemDetail from './components/ItemDetail';
@@ -29,6 +31,7 @@ import { isSheetOpen } from './panels/itch/Sheet';
 const VIEWS = [
   { id: 'now', label: 'Now', group: 'Today', description: 'Attention, activity, and the next useful move.' },
   { id: 'tasks', label: 'Tasks', group: 'Work', description: 'Reviews, pull requests, mentions, and local changes.', collector: 'github' },
+  { id: 'helper', label: 'What can I do for you', navLabel: 'For you', group: 'Work', description: 'Evidence-backed work an agent can take off your plate.', collector: 'helper' },
   { id: 'reentry', label: 'Re-entry', group: 'Work', description: 'Park a working thread, recover its facts, and resume at the next concrete move.', collector: 'reentry' },
   { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
   { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
@@ -179,6 +182,7 @@ export default function App() {
         tasksCls: 'text-mist-faint',
         comms: 0,
         agents: 0,
+        helper: 0,
         reentry: 0,
         revuto: 0,
         system: 0,
@@ -211,6 +215,7 @@ export default function App() {
       comms: snapshot.comms.email.unreadCount,
       // only agents doing real work — daemons that are merely up stay out of the badge
       agents: workingAgents(snapshot.agents.agents, snapshot.agents.dispatches ?? []).length,
+      helper: snapshot.helper?.offers.filter((offer) => offer.status === 'offered').length ?? 0,
       reentry: snapshot.reentry?.contexts.filter((context) => context.state !== 'done').length ?? 0,
       revuto: revutoFails,
       system: flags.length,
@@ -341,7 +346,7 @@ export default function App() {
   const openItem = (repo: string, number: number) => setItem({ repo, number });
 
   // bottom-nav primaries on phone; everything else lives under "more"
-  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'reentry', 'agents']);
+  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'helper', 'reentry']);
   const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
   const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
   const primaryActive = MOBILE_PRIMARY.has(activeView);
@@ -356,6 +361,7 @@ export default function App() {
       tasks: { n: badges.tasks, cls: badges.tasksCls },
       comms: { n: badges.comms, cls: 'text-mist-faint' },
       agents: { n: badges.agents, cls: 'text-jade' },
+      helper: { n: badges.helper, cls: 'text-amber' },
       reentry: { n: badges.reentry, cls: 'text-amber' },
       // failures are errors — coral, never amber
       revuto: { n: badges.revuto, cls: 'text-coral' },
@@ -409,7 +415,7 @@ export default function App() {
                             activeView === v.id ? 'is-active text-mist' : 'text-mist-dim hover:text-mist'
                           }`}
                         >
-                          {v.label}
+                          {'navLabel' in v ? v.navLabel : v.label}
                           {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
                         </button>
                       </li>
@@ -455,6 +461,7 @@ export default function App() {
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
           )}
           {activeView === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
+          {activeView === 'helper' && <HelperPanel snapshot={snapshot} />}
           {activeView === 'reentry' && <ReentryPanel snapshot={snapshot} />}
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
@@ -479,8 +486,13 @@ export default function App() {
           )}
           {activeView === 'streampile' && <StreampilePanel />}
           {activeView === 'knowledge' && <WikiPanel />}
-          {/* plugin (extra-lane) sections render in the generic panel */}
-          {snapshot.extra?.[activeView] && (
+          {/* plugin (extra-lane) sections render in the generic panel, unless they
+              ship their own — tiyuvta needs buttons, so it has a panel and must not
+              also render generically or every row would appear twice. */}
+          {activeView === 'tiyuvta' && snapshot.extra?.tiyuvta && (
+            <TiyuvtaPanel section={snapshot.extra.tiyuvta} />
+          )}
+          {activeView !== 'tiyuvta' && snapshot.extra?.[activeView] && (
             <ExtraPanel section={snapshot.extra[activeView]} sectionKey={activeView} />
           )}
         </main>
@@ -505,7 +517,7 @@ export default function App() {
                   on ? 'is-active text-mist' : 'text-mist-faint'
                 }`}
               >
-                <span className="font-mono text-[12px] leading-none">{v.label}</span>
+                <span className="font-mono text-[12px] leading-none">{'navLabel' in v ? v.navLabel : v.label}</span>
                 {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
               </button>
             );

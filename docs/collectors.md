@@ -125,6 +125,25 @@ anything wins, and for `google` that was a JAX tabular model — true and useles
 `mirrors` are the repos whose discussion tabs carry the demand, which is usually the
 popular mirror rather than the original, because that is where people ask.
 
+## Collectors that drive something (actions)
+
+A plugin collector renders rows and nothing else. When a view needs BUTTONS, the shape
+is: a client module under `server/src/core/`, an allowlisted `POST /api/<name>/:action`
+route in `server/src/index.ts`, and a small bespoke panel that posts to it. The
+`tiyuvta` collector is the worked example.
+
+Two rules that fell out of building it and are worth copying:
+
+- **Allowlist the action names; never proxy a path.** This daemon accepts loopback
+  POSTs, so a passthrough route turns into "call any endpoint on the upstream API with
+  the owner's credentials".
+- **Do not copy the upstream secret into `config.json`.** Point at the file that
+  already owns it (`tokenEnvPath`) so there is one copy on the machine and rotating it
+  needs no change here.
+
+If a section has its own panel, exclude it from the generic `ExtraPanel` render in
+`web/src/App.tsx` — otherwise every row appears twice.
+
 ## Reusable bespoke collectors
 
 Most of the author's plugin collectors integrate private tooling, but one is published and

@@ -18,6 +18,18 @@ export const defaults = {
     disabled: [] as string[],
   },
 
+  /** tiyuvta inference console — the operator surface for the hosted product.
+   *  The console is public-facing, so its admin PAGES were retired: the same API is
+   *  driven from here instead, behind the loopback boundary. The bearer is read from
+   *  the file that already owns it rather than copied into this config, so there is
+   *  one copy of the secret on the machine.
+   *  Empty tokenEnvPath / missing file = the collector renders "not set up". */
+  tiyuvta: {
+    baseUrl: 'https://inference.tiyuvta.ai',
+    tokenEnvPath: '',
+    tokenEnvVar: 'OWNER_ADMIN_TOKEN',
+  },
+
   /** Hugging Face demand radar. Watches ONLY the families listed here — models you
    *  serve or would consider serving — because a radar over every release on the Hub
    *  is a wall of things you cannot act on. Empty = the collector renders one "not

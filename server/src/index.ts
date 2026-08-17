@@ -35,6 +35,8 @@ import mentionsCollector from './collectors/mentions.js';
 import reentryCollector from './collectors/reentry.js';
 import helperCollector from './collectors/helper.js';
 import radarCollector from './collectors/radar.js';
+import tiyuvtaCollector from './collectors/tiyuvta.js';
+import { isAction as isTiyuvtaAction, runAction as runTiyuvtaAction } from './core/tiyuvta.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
 import { serveWikiViewer } from './wiki-viewer.js';
@@ -57,6 +59,7 @@ for (const c of [
   helperCollector,
   mentionsCollector,
   radarCollector,
+  tiyuvtaCollector,
 ]) {
   register(c);
 }
@@ -204,6 +207,22 @@ const server = createServer(async (req, res) => {
         if (helperMemory[1] === 'preferences') await helper.removePreference(decodeURIComponent(helperMemory[2]));
         else await helper.removeSkill(decodeURIComponent(helperMemory[2]));
         return json(res, 200, { ok: true });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    const tiyuvtaAction = path.match(/^\/api\/tiyuvta\/([a-z-]+)$/);
+    if (method === 'POST' && tiyuvtaAction) {
+      const name = tiyuvtaAction[1];
+      if (!isTiyuvtaAction(name)) return json(res, 404, { error: `unknown action ${name}` });
+      const body = (await readBody(req).catch(() => ({}))) as { tenant?: string };
+      try {
+        const result = await runTiyuvtaAction(name, body?.tenant);
+        // Re-poll immediately: an action that changes the numbers should not leave a
+        // stale panel until the next five-minute cycle.
+        void tiyuvtaCollector.run();
+        return json(res, 200, { ok: true, result });
       } catch (err) {
         return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
       }
