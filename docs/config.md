@@ -72,9 +72,12 @@ The vault (Obsidian registry, or `~/revuto` fallback) is always scanned as root
 ] } }
 ```
 
-Each root is walked for `.md`/`.txt` (hidden dirs skipped, 2000 files per root);
-the Notes view searches and filters across all of them, and `/api/notes/read|write`
-take a `root` alongside the relative path.
+Each root is walked for `.md`/`.txt`, hidden dirs skipped, 20 dirs deep (agent-export
+trees really do nest 13 down), and the newest 2000 notes per root are kept — a pile over
+the budget loses its oldest notes, never today's. A root that hit either bound is marked
+truncated in the Notes view instead of passing as complete. The Notes view searches and
+filters across all roots, and `/api/notes/read|write` take a `root` alongside the
+relative path.
 
 ### `notify`
 

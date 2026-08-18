@@ -7,8 +7,12 @@ import { readJson, iso } from '../util.js';
 import type { Collector } from './registry.js';
 import type { NoteEntry, NotesRoot, NotesState } from '../../../shared/types.js';
 
-const MAX_DEPTH = 8; // Codex-style exports nest 6-7 levels deep; hidden dirs are pruned anyway
-const MAX_FILES = 2000; // per root
+// Depth measured against the real piles, not guessed: ~/Documents/Codex agent exports
+// carry vendored source trees 13 dirs below the root, so a depth-8 wall silently dropped
+// ~190 of its 1026 notes. Hidden dirs are pruned anyway, which is what keeps this cheap.
+const MAX_DEPTH = 20;
+const KEEP_PER_ROOT = 2000; // notes kept per root — the newest survive the cap, see selectNewest
+const MAX_SCAN = 20_000; // candidate note files one root's walk will look at before giving up
 const READ_CAP_BYTES = 512 * 1024;
 const WRITE_CAP_BYTES = 512 * 1024;
 // .md is the native format; .txt rides along because real note piles have both
@@ -36,7 +40,7 @@ function expandHome(p: string): string {
   return p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
 }
 
-interface RootDef {
+export interface RootDef {
   id: string;
   label: string;
   path: string; // absolute
@@ -64,11 +68,15 @@ async function resolveRoots(): Promise<RootDef[]> {
   return roots;
 }
 
-async function walkNotes(root: RootDef): Promise<{ files: string[]; truncated: boolean }> {
+/** Walk one root for note files. Bounded twice — MAX_DEPTH dirs down and MAX_SCAN
+ *  candidates wide — and `truncated` reports either bound biting, including the depth
+ *  wall. A clipped subtree used to come back as a complete list, which is how the
+ *  Codex root read as "835 notes, nothing missing" while ~190 sat below the wall. */
+export async function walkNotes(root: RootDef): Promise<{ files: string[]; truncated: boolean }> {
   const found: string[] = [];
   let truncated = false;
   async function rec(dir: string, depth: number): Promise<void> {
-    if (found.length >= MAX_FILES) {
+    if (found.length >= MAX_SCAN) {
       truncated = true;
       return;
     }
@@ -79,7 +87,7 @@ async function walkNotes(root: RootDef): Promise<{ files: string[]; truncated: b
       return; // unreadable dir: skip, keep walking elsewhere
     }
     for (const e of entries) {
-      if (found.length >= MAX_FILES) {
+      if (found.length >= MAX_SCAN) {
         truncated = true;
         return;
       }
@@ -87,6 +95,7 @@ async function walkNotes(root: RootDef): Promise<{ files: string[]; truncated: b
         // hidden dirs never; 'memory' holds a live SurrealKV datastore in the vault
         if (e.name.startsWith('.') || (root.id === 'vault' && e.name === 'memory')) continue;
         if (depth < MAX_DEPTH) await rec(join(dir, e.name), depth + 1);
+        else truncated = true; // a subtree we refuse to enter may hold notes — say so
       } else if (e.isFile() && NOTE_EXT.test(e.name)) {
         found.push(join(dir, e.name));
       }
@@ -94,6 +103,14 @@ async function walkNotes(root: RootDef): Promise<{ files: string[]; truncated: b
   }
   await rec(root.path, 0);
   return { files: found, truncated };
+}
+
+/** Newest-first selection under the per-root budget. The cap keeps one huge pile from
+ *  crowding the other roots out of the snapshot; recency decides who survives it,
+ *  because directory order is arbitrary and the note touched today is the one wanted
+ *  back. Sorting here also feeds the global newest-first order in run(). */
+export function selectNewest<T extends { mtimeMs: number }>(entries: T[], limit = KEEP_PER_ROOT): T[] {
+  return [...entries].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, Math.max(0, limit));
 }
 
 /** Resolve a caller-supplied (rootId, relative path) against the live roots and
@@ -283,13 +300,15 @@ async function run(): Promise<void> {
           modifiedAt: iso(s.mtimeMs),
           mtimeMs: s.mtimeMs,
         }));
-      all.push(...entries);
+      const kept = selectNewest(entries);
+      all.push(...kept);
       const rootInfo: NotesRoot = {
         id: root.id,
         path: root.path,
         label: root.label,
-        count: entries.length,
-        truncated,
+        count: kept.length,
+        // either bound bit: the walk stopped early, or the budget dropped older notes
+        truncated: truncated || kept.length < entries.length,
       };
       state.roots.push(rootInfo);
     }
