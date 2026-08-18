@@ -37,6 +37,7 @@ import reentryCollector from './collectors/reentry.js';
 import helperCollector from './collectors/helper.js';
 import radarCollector from './collectors/radar.js';
 import tiyuvtaCollector from './collectors/tiyuvta.js';
+import distributionCollector from './collectors/distribution.js';
 import exposureCollector from './collectors/exposure.js';
 import webtrafficCollector from './collectors/webtraffic.js';
 import { isAction as isTiyuvtaAction, runAction as runTiyuvtaAction } from './core/tiyuvta.js';
@@ -63,6 +64,7 @@ for (const c of [
   mentionsCollector,
   radarCollector,
   tiyuvtaCollector,
+  distributionCollector,
   exposureCollector,
   webtrafficCollector,
 ]) {

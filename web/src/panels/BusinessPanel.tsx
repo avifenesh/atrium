@@ -4,6 +4,7 @@ import Spark from '../components/Spark';
 import { EmptyState, Panel, RelTime, Row } from '../components/ui';
 import { CounterRow, DemandRow, LeadButtons, MentionRow } from './SignalsPanel';
 import type { SignalItem, Snapshot } from '../../../shared/types';
+import type { ExtraRow } from '../../../shared/types';
 
 /** The business board — tiyuvta inference in one glance.
  *  Money/ops up top (accounts, credit, spend, failures), the lead queue on the left
@@ -19,6 +20,7 @@ interface TiyuvtaData {
     totals: { requests: number; cachedPromptTokens: number; promptTokens: number };
     promo: { claimed: number; seats: number; remaining: number };
     books: { outOfBalance: number };
+    top?: Array<{ email: string; tenantId: string; creditedMicro: number; spentMicro: number; requests: number; paid: boolean; suspended: boolean; enrolled: boolean; createdAt?: number; lastActiveDay?: number | string | null }>;
   } | null;
   api: { surfaces: Array<{ path: string; state: string }>; models: string[] } | null;
   webhookFailures: unknown[] | null;
@@ -33,6 +35,15 @@ interface WebTrafficData {
 }
 
 const usd = (micro: number) => `$${(micro / 1e6).toFixed(micro >= 100e6 ? 0 : 2)}`;
+
+// last-active day (epoch ms of a usage_days bucket) -> 'today' / 'Nd ago' / 'never'
+const ageOf = (day?: number | string | null): string => {
+  if (!day) return 'never';
+  const t = typeof day === 'number' ? day : Date.parse(day);
+  if (!Number.isFinite(t)) return 'never';
+  const d = Math.floor((Date.now() - t) / 86_400_000);
+  return d <= 0 ? 'today' : `${d}d ago`;
+};
 
 function Stat({
   value,
@@ -101,6 +112,13 @@ export default function BusinessPanel({
     ? Math.round((dash.totals.cachedPromptTokens / dash.totals.promptTokens) * 100)
     : null;
   const liveSurfaces = tiyuvta?.api?.surfaces.filter((s) => s.state === 'present') ?? [];
+
+  // activation — the accounts we already acquired, ranked coldest first.
+  // A signup that never made a second request is the cheapest revenue there is.
+  const topAccounts = dash?.top ?? [];
+  const silent = topAccounts.filter((a) => a.requests <= 1);
+  const distributionRows = (snapshot.extra?.distribution?.rows ?? []) as ExtraRow[];
+
 
   return (
     <div className="grid grid-cols-12 gap-5">
@@ -259,7 +277,60 @@ export default function BusinessPanel({
           )}
         </Panel>
 
-        <Panel title="Updated" riseIndex={5}>
+        <Panel title="Activation" riseIndex={5}>
+          {topAccounts.length === 0 ? (
+            <EmptyState>No account data — tiyuvta console not reporting.</EmptyState>
+          ) : (
+            <>
+              {silent.length > 0 && (
+                <div className="mb-1 px-2.5 font-mono text-[11px] text-amber">
+                  {silent.length} account{silent.length === 1 ? '' : 's'} signed up and went silent — email them
+                </div>
+              )}
+              <div className="max-h-56 space-y-0.5 overflow-y-auto">
+                {[...topAccounts]
+                  .sort((a, b) => a.requests - b.requests)
+                  .map((a) => (
+                    <Row key={a.tenantId} className="py-1.5">
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-dim">{a.email}</span>
+                      <span className={`shrink-0 font-mono text-xs tabular-nums ${a.requests <= 1 ? 'text-amber' : 'text-mist'}`}>
+                        {a.requests} req
+                      </span>
+                      <span className="shrink-0 font-mono text-xs tabular-nums text-mist-faint">{usd(a.spentMicro)}</span>
+                      <span className="shrink-0 font-mono text-[10px] tabular-nums text-mist-faint">{ageOf(a.lastActiveDay)}</span>
+                      {a.paid && <span className="shrink-0 font-mono text-[10px] text-jade">paid</span>}
+                      {!a.enrolled && <span className="shrink-0 font-mono text-[10px] text-coral">unenrolled</span>}
+                    </Row>
+                  ))}
+              </div>
+            </>
+          )}
+        </Panel>
+
+        <Panel title="Distribution" riseIndex={6}>
+          {distributionRows.length === 0 ? (
+            <EmptyState>Distribution collector not reporting yet.</EmptyState>
+          ) : (
+            <div className="space-y-0.5">
+              {distributionRows.map((r) => (
+                <Row key={r.label} className="py-1.5">
+                  {r.href ? (
+                    <a href={r.href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-xs text-mist-dim underline-offset-2 hover:underline">
+                      {r.label}
+                    </a>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-dim">{r.label}</span>
+                  )}
+                  <span className={`shrink-0 truncate font-mono text-xs ${r.tone === 'ok' ? 'text-jade' : r.tone === 'warn' ? 'text-amber' : r.tone === 'err' ? 'text-coral' : 'text-mist'}`}>
+                    {r.value}
+                  </span>
+                </Row>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Updated" riseIndex={7}>
           <Row className="justify-between py-1.5 font-mono text-[11px] text-mist-faint">
             <span>tiyuvta</span>
             <RelTime iso={snapshot.extra?.tiyuvta?.updatedAt ?? null} />
