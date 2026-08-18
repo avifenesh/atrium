@@ -9,6 +9,8 @@ import ReentryPanel from './panels/ReentryPanel';
 import AgentsPanel from './panels/AgentsPanel';
 import RevutoPanel from './panels/RevutoPanel';
 import SystemPanel from './panels/SystemPanel';
+import BusinessPanel from './panels/BusinessPanel';
+import SignalsPanel from './panels/SignalsPanel';
 import CommsPanel from './panels/CommsPanel';
 import SubsPanel from './panels/SubsPanel';
 import SchedulePanel from './panels/SchedulePanel';
@@ -32,11 +34,15 @@ import { isSheetOpen } from './panels/itch/Sheet';
 const VIEWS = [
   { id: 'now', label: 'Now', group: 'Today', description: 'Attention, activity, and the next useful move.' },
   { id: 'tasks', label: 'Tasks', group: 'Work', description: 'Reviews, pull requests, mentions, and local changes.', collector: 'github' },
-  { id: 'helper', label: 'What can I do for you', navLabel: 'For you', group: 'Work', description: 'Evidence-backed work an agent can take off your plate.', collector: 'helper' },
-  { id: 'reentry', label: 'Re-entry', group: 'Work', description: 'Park a working thread, recover its facts, and resume at the next concrete move.', collector: 'reentry' },
+  // re-entry (resume YOUR parked threads) and the helper scout (offers of NEW work)
+  // are one question — "what should I pick up?" — so they share one view. The two
+  // background agents stay separate; only the surface merged.
+  { id: 'foryou', label: 'For you', group: 'Work', description: 'Pick a parked thread back up, or take an evidence-backed offer off the scout.' },
   { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
   { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
   { id: 'system', label: 'System', group: 'Machine', description: 'Capacity, listeners, processes, and service health.', collector: 'system' },
+  { id: 'business', label: 'Business', group: 'Business', description: 'Tiyuvta inference in one glance — money, leads, funnel, serving state.' },
+  { id: 'signals', label: 'Signals', group: 'Business', description: 'Mentions, demand, and the counters that show the business being found.' },
   { id: 'comms', label: 'Comms', group: 'Today', description: 'Unread mail and the calendar ahead.' },
   { id: 'subs', label: 'Subscriptions', group: 'Machine', description: 'Services, cloud resources, and recurring costs.' },
   { id: 'schedule', label: 'Schedule', group: 'Machine', description: 'Timers, cron jobs, and their latest runs.', collector: 'schedule' },
@@ -46,13 +52,22 @@ const VIEWS = [
   { id: 'knowledge', label: 'Knowledge', group: 'Library', description: 'Projects, techniques, sources, and the links between them.' },
 ] as const;
 
-const NAV_GROUPS = ['Today', 'Work', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
+const NAV_GROUPS = ['Today', 'Work', 'Business', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
+
+/** extra-lane sections that belong on the business board's shelf rather than in a
+ *  generic Plugins bucket — ops console and site analytics are business detail views */
+const BUSINESS_EXTRAS = new Set(['tiyuvta', 'webtraffic']);
+
+/** retired view ids whose deep links (desktop entries, palette muscle memory,
+ *  NowView/pickup buttons) must keep landing somewhere sensible */
+const VIEW_ALIASES: Record<string, string> = { helper: 'foryou', reentry: 'foryou' };
+const resolveViewId = (v: string): string => VIEW_ALIASES[v] ?? v;
 
 function parseHash(raw: string): { view: string; focus: string | null } {
   const h = raw.startsWith('#') ? raw.slice(1) : raw;
   const i = h.indexOf('/');
-  if (i < 0) return { view: h || 'now', focus: null };
-  const view = h.slice(0, i) || 'now';
+  if (i < 0) return { view: resolveViewId(h || 'now'), focus: null };
+  const view = resolveViewId(h.slice(0, i) || 'now');
   const rest = h.slice(i + 1);
   if (!rest) return { view, focus: null };
   try {
@@ -169,7 +184,7 @@ export default function App() {
   const [item, setItem] = useState<{ repo: string; number: number } | null>(null);
   // palette → notes reader: pending open consumed by NotesPanel (itch scrollTarget idiom —
   // open-note state is panel-local, so the jump rides a one-shot signal)
-  const [noteTarget, setNoteTarget] = useState<string | null>(null);
+  const [noteTarget, setNoteTarget] = useState<{ root: string; path: string } | null>(null);
   // palette → itch run: same one-shot idiom (selected-run state lives in ItchBody)
   const [runTarget, setRunTarget] = useState<string | null>(null);
   // ItemDetail registers its esc step here (composer-absorb logic lives with the composer)
@@ -189,27 +204,55 @@ export default function App() {
         system: 0,
         systemCls: 'text-mist-faint',
         itch: 0,
+        signals: 0,
+        business: 0,
+        businessCls: 'text-mist-faint',
       };
+    // mirror the NowView hero: bot-authored and aging act-now items are shelf rows,
+    // not attention — the badge must agree with what the hero calls "needs action"
+    const agingMs = (snapshot.github.agingDays || 14) * 86_400_000;
+    const nowMs = Date.now();
+    const attention = (it: { id: string; updatedAt: string; author?: string | null; title: string; bot?: boolean }) =>
+      !isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title }) &&
+      !it.bot &&
+      !(it.updatedAt !== '' && nowMs - new Date(it.updatedAt).getTime() > agingMs);
     const taskIds = new Set<string>();
-    for (const it of [...snapshot.github.actNow, ...snapshot.github.orgQueue]) {
-      if (!isMuted(snapshot, 'github-item', it.id)) taskIds.add(it.id);
+    for (const it of snapshot.github.actNow) {
+      if (attention(it)) taskIds.add(it.id);
+    }
+    for (const it of snapshot.github.orgQueue) {
+      if (!isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title })) taskIds.add(it.id);
     }
     // amber is scoped to act-now + org review (mirrors the NowView hero); a queue of
     // triage-only leftovers keeps the count but drops the attention color
-    const tasksAttention = [
-      ...snapshot.github.actNow,
-      ...snapshot.github.orgQueue.filter((it) => it.lane === 'review'),
-    ].some((it) => !isMuted(snapshot, 'github-item', it.id));
+    const tasksAttention =
+      snapshot.github.actNow.some(attention) ||
+      snapshot.github.orgQueue.some(
+        (it) => it.lane === 'review' && !isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title }),
+      );
     // system badge tone follows the highest unmuted flag severity (mirrors FlagStrip:
-    // crit coral, warn amber, info stays quiet) — coral is reserved for errors
+    // crit coral, warn amber; info is fyi, never a signal) — coral is reserved for errors
     const flags = snapshot.flags.filter((f) => !isMuted(snapshot, 'flag', f.id));
-    const systemCls = flags.some((f) => f.severity === 'crit')
+    const signalFlags = flags.filter((f) => f.severity !== 'info');
+    const systemCls = signalFlags.some((f) => f.severity === 'crit')
       ? 'text-coral'
-      : flags.some((f) => f.severity === 'warn')
+      : signalFlags.some((f) => f.severity === 'warn')
         ? 'text-amber'
         : 'text-mist-faint';
     // optional-chain both: a stale server snapshot may lack revuto during rollout
     const revutoFails = snapshot.revuto?.up ? (snapshot.revuto.counts?.recentFailures ?? 0) : 0;
+    const reviewedAt = snapshot.signals?.lastReviewedAt ?? null;
+    const newSignals = (snapshot.signals?.items ?? []).filter(
+      (s) => (!reviewedAt || s.firstSeenAt > reviewedAt) && !s.lead,
+    ).length;
+    // ops attention: broken books / webhook failures are coral, waiting invoices amber
+    const tiyuvtaData = (snapshot.extra?.tiyuvta?.data ?? null) as {
+      dashboard?: { books?: { outOfBalance?: number } } | null;
+      webhookFailures?: unknown[] | null;
+      creditRequests?: unknown[] | null;
+    } | null;
+    const bizCrit = (tiyuvtaData?.dashboard?.books?.outOfBalance ?? 0) + (tiyuvtaData?.webhookFailures?.length ?? 0);
+    const bizWarn = tiyuvtaData?.creditRequests?.length ?? 0;
     return {
       tasks: taskIds.size,
       tasksCls: tasksAttention ? 'text-amber' : 'text-mist-faint',
@@ -219,10 +262,13 @@ export default function App() {
       helper: snapshot.helper?.offers.filter((offer) => offer.status === 'offered').length ?? 0,
       reentry: snapshot.reentry?.contexts.filter((context) => context.state !== 'done').length ?? 0,
       revuto: revutoFails,
-      system: flags.length,
+      system: signalFlags.length,
       systemCls,
       // optional-chain: a stale server snapshot may lack itch during rollout
       itch: snapshot.itch?.up && snapshot.itch.research.running ? 1 : 0,
+      signals: newSignals,
+      business: bizCrit + bizWarn,
+      businessCls: bizCrit > 0 ? 'text-coral' : 'text-amber',
     };
   }, [snapshot]);
 
@@ -328,7 +374,7 @@ export default function App() {
   const extraViews = extraKeys(snapshot).map((k) => ({
     id: k,
     label: snapshot.extra[k]?.title ?? k,
-    group: 'Plugins' as const,
+    group: (BUSINESS_EXTRAS.has(k) ? 'Business' : 'Plugins') as (typeof NAV_GROUPS)[number],
     description: 'A collector-provided workspace.',
   }));
   const allViews = [...coreViews, ...extraViews];
@@ -336,7 +382,8 @@ export default function App() {
   // resolve an unknown/stale hash (e.g. a plugin disabled since the link was made) to 'now'
   const activeView = isKnownView(view) ? view : 'now';
   const navigate = (v: string, nextFocus?: string | null) => {
-    if (isKnownView(v)) setView(v);
+    const resolved = resolveViewId(v);
+    if (isKnownView(resolved)) setView(resolved);
     setFocus(nextFocus ?? null);
     setMoreOpen(false);
   };
@@ -347,7 +394,7 @@ export default function App() {
   const openItem = (repo: string, number: number) => setItem({ repo, number });
 
   // bottom-nav primaries on phone; everything else lives under "more"
-  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'helper', 'reentry']);
+  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'foryou', 'business']);
   const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
   const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
   const primaryActive = MOBILE_PRIMARY.has(activeView);
@@ -362,13 +409,16 @@ export default function App() {
       tasks: { n: badges.tasks, cls: badges.tasksCls },
       comms: { n: badges.comms, cls: 'text-mist-faint' },
       agents: { n: badges.agents, cls: 'text-jade' },
-      helper: { n: badges.helper, cls: 'text-amber' },
-      reentry: { n: badges.reentry, cls: 'text-amber' },
+      // parked threads + open offers — everything waiting for a pickup decision
+      foryou: { n: badges.helper + badges.reentry, cls: 'text-amber' },
       // failures are errors — coral, never amber
       revuto: { n: badges.revuto, cls: 'text-coral' },
       system: { n: badges.system, cls: badges.systemCls },
       // research running is work-in-progress — jade like agents, not amber
       itch: { n: badges.itch, cls: 'text-jade' },
+      // new outside attention is good news — jade, never an alarm color
+      signals: { n: badges.signals, cls: 'text-jade' },
+      business: { n: badges.business, cls: badges.businessCls },
     };
     const b = map[id];
     return b && b.n > 0 ? b : null;
@@ -416,7 +466,7 @@ export default function App() {
                             activeView === v.id ? 'is-active text-mist' : 'text-mist-dim hover:text-mist'
                           }`}
                         >
-                          {'navLabel' in v ? v.navLabel : v.label}
+                          {v.label}
                           {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
                         </button>
                       </li>
@@ -462,11 +512,23 @@ export default function App() {
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
           )}
           {activeView === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
-          {activeView === 'helper' && <HelperPanel snapshot={snapshot} />}
-          {activeView === 'reentry' && <ReentryPanel snapshot={snapshot} />}
+          {activeView === 'foryou' && (
+            <div>
+              <div className="mb-3 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">
+                Pick up where you left
+              </div>
+              <ReentryPanel snapshot={snapshot} />
+              <div className="mb-3 mt-10 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">
+                Offers from the scout
+              </div>
+              <HelperPanel snapshot={snapshot} />
+            </div>
+          )}
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
+          {activeView === 'business' && <BusinessPanel snapshot={snapshot} onNavigate={navigate} />}
+          {activeView === 'signals' && <SignalsPanel snapshot={snapshot} />}
           {activeView === 'comms' && <CommsPanel snapshot={snapshot} />}
           {activeView === 'subs' && <SubsPanel snapshot={snapshot} />}
           {activeView === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
@@ -522,7 +584,7 @@ export default function App() {
                   on ? 'is-active text-mist' : 'text-mist-faint'
                 }`}
               >
-                <span className="font-mono text-[12px] leading-none">{'navLabel' in v ? v.navLabel : v.label}</span>
+                <span className="font-mono text-[12px] leading-none">{v.label}</span>
                 {b && <span className={`font-mono text-[10px] tabular-nums ${b.cls}`}>{b.n}</span>}
               </button>
             );
@@ -624,8 +686,8 @@ export default function App() {
           onNavigate={navigate}
           onOpenQuiet={openQuiet}
           onOpenItem={openItem}
-          onOpenNote={(path) => {
-            setNoteTarget(path);
+          onOpenNote={(path, root) => {
+            setNoteTarget({ root: root ?? 'vault', path });
             setView('notes');
           }}
           onOpenRun={(stem) => {

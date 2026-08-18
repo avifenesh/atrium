@@ -259,6 +259,104 @@ body::after {
   border: 1px solid rgba(255,255,255,.2);
   background: var(--color-ink-2);
 }
+
+/* The helper's signature is an evidence spine: observed signals flow down the
+   offer into one reviewable handoff, without turning the page into a card grid. */
+.helper-command {
+  isolation: isolate;
+}
+.helper-command.is-scanning::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 22%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(145, 170, 200, 0.09), transparent);
+  animation: helper-scan 2.8s ease-in-out infinite;
+}
+@keyframes helper-scan {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(520%); }
+}
+
+.helper-offer {
+  --helper-spine: rgba(145, 170, 200, 0.46);
+}
+.helper-offer::after {
+  content: '';
+  position: absolute;
+  top: 1.25rem;
+  bottom: 1.25rem;
+  left: 0;
+  width: 2px;
+  background: linear-gradient(var(--color-slate-glow), var(--helper-spine) 72%, var(--color-amber));
+  box-shadow: 0 0 20px rgba(145, 170, 200, 0.24);
+}
+.helper-new {
+  border-bottom: 1px solid rgba(232, 199, 106, 0.42);
+  padding-bottom: 0.18rem;
+}
+.helper-evidence {
+  position: relative;
+  margin-left: 0.25rem;
+  padding-left: 1rem;
+}
+.helper-evidence::before {
+  content: '';
+  position: absolute;
+  top: 1.9rem;
+  bottom: 0.7rem;
+  left: 0;
+  width: 1px;
+  background: rgba(145, 170, 200, 0.25);
+}
+.helper-evidence-row {
+  position: relative;
+}
+.helper-evidence-row::before {
+  content: '';
+  position: absolute;
+  top: 0.92rem;
+  left: -1.16rem;
+  width: 0.34rem;
+  height: 0.34rem;
+  border: 1px solid rgba(145, 170, 200, 0.65);
+  border-radius: 999px;
+  background: var(--color-ink-2);
+}
+.helper-composer textarea {
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+.helper-memory {
+  min-width: 0;
+}
+.helper-history > summary::-webkit-details-marker,
+.helper-memory summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .helper-evidence-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.15rem;
+  }
+  .helper-evidence-row::before {
+    top: 0.95rem;
+  }
+  .helper-memory {
+    border-top: 1px solid rgba(255, 255, 255, 0.075);
+    padding-top: 1.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .helper-command.is-scanning::before {
+    animation: none;
+    transform: none;
+    width: 100%;
+  }
+}
 .reentry-step.is-next::before {
   border-color: var(--color-amber);
   background: var(--color-amber);

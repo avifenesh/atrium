@@ -112,6 +112,22 @@ export const defaults = {
      *  so a transient GitHub 5xx that heals next cycle never reaches your phone.
      *  3 × pollMs = ~3 min of sustained failure before you're alerted. */
     failThreshold: 3,
+    /** attention items untouched for this many days leave the hero for the aging
+     *  shelf — an 18-month-old assigned issue must not outrank today's review */
+    agingDays: 14,
+  },
+
+  agents: {
+    /** activity-ticker events older than this are dropped — a dead provider's
+     *  last session must never render as "live activity" weeks later */
+    activityTtlHours: 24,
+  },
+
+  notes: {
+    /** extra scan roots beyond the obsidian vault, e.g.
+     *  [{ "id": "codex", "label": "Codex", "path": "~/Documents/Codex" }].
+     *  The vault (or ~/revuto fallback) is always included as root id 'vault'. */
+    roots: [] as Array<{ id: string; label?: string; path: string }>,
   },
 
   paths: {

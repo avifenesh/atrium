@@ -8,6 +8,11 @@ import type {
   GithubComment,
   ReentryContext,
   ReentryEnergy,
+  HelperExecutor,
+  HelperOffer,
+  HelperSettings,
+  SignalLeadStatus,
+  SignalsWatch,
 } from '../../shared/types';
 
 const BASE = ''; // same origin (vite proxies /api in dev)
@@ -104,6 +109,45 @@ export function scanReentry(): Promise<{ ok: boolean; scheduled: boolean }> {
   return reentryRequest('/api/reentry/scan');
 }
 
+async function helperRequest<T>(path: string, method = 'POST', body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `helper request failed ${res.status}`);
+  return data as T;
+}
+
+export function scanHelper(): Promise<{ ok: boolean; scheduled: boolean }> {
+  return helperRequest('/api/helper/scan');
+}
+
+export function dismissHelperOffer(id: string, reason: string, remember: boolean): Promise<HelperOffer> {
+  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/dismiss`, 'POST', { reason, remember });
+}
+
+export function snoozeHelperOffer(id: string, durationMs = 24 * 60 * 60_000): Promise<HelperOffer> {
+  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/snooze`, 'POST', { durationMs });
+}
+
+export function launchHelperOffer(
+  id: string,
+  executor: HelperExecutor,
+  prompt: string,
+): Promise<{ offer: HelperOffer; launched: true; executor: HelperExecutor }> {
+  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/launch`, 'POST', { executor, prompt });
+}
+
+export function updateHelperSettings(settings: HelperSettings): Promise<HelperSettings> {
+  return helperRequest('/api/helper/settings', 'POST', settings);
+}
+
+export function removeHelperMemory(kind: 'preferences' | 'skills', id: string): Promise<{ ok: true }> {
+  return helperRequest(`/api/helper/${kind}/${encodeURIComponent(id)}`, 'DELETE');
+}
+
 /** Open a task in grok. Pass url/repo when dispatching a github item. */
 export async function dispatchToEigen(req: {
   title: string;
@@ -139,6 +183,7 @@ export async function clearAllNotifications(): Promise<void> {
 }
 
 export interface NoteContent {
+  root: string;
   path: string;
   title: string;
   content: string;
@@ -146,8 +191,8 @@ export interface NoteContent {
 }
 
 /** Fetch one note's markdown for the in-app reader. Throws the server's error message on failure. */
-export async function fetchNote(relPath: string): Promise<NoteContent> {
-  const res = await fetch(`${BASE}/api/notes/read?path=${encodeURIComponent(relPath)}`);
+export async function fetchNote(relPath: string, root = 'vault'): Promise<NoteContent> {
+  const res = await fetch(`${BASE}/api/notes/read?path=${encodeURIComponent(relPath)}&root=${encodeURIComponent(root)}`);
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(body?.error ?? `note read failed ${res.status}`);
   return body as NoteContent;
@@ -169,11 +214,12 @@ export async function saveNote(
   relPath: string,
   content: string,
   baseModifiedAt?: string,
+  root = 'vault',
 ): Promise<{ modifiedAt: string }> {
   const res = await fetch(`${BASE}/api/notes/write`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: relPath, content, baseModifiedAt }),
+    body: JSON.stringify({ path: relPath, content, baseModifiedAt, root }),
   });
   const body = await res.json().catch(() => null);
   if (res.status === 409) throw new NoteConflictError(body?.error ?? 'file changed on disk');
@@ -300,10 +346,30 @@ export function useSnapshot(): { snapshot: Snapshot | null; connected: boolean }
   return { snapshot, connected };
 }
 
-/** True when this target is muted — cascades: item ⊂ repo ⊂ org. */
-export function isMuted(snapshot: Snapshot, kind: string, target: string): boolean {
+/** github-title mute targets are substrings, or /regex/ when slash-wrapped */
+function titleMatches(pattern: string, title: string): boolean {
+  const m = pattern.match(/^\/(.+)\/(i?)$/);
+  if (m) {
+    try {
+      return new RegExp(m[1], m[2]).test(title);
+    } catch {
+      return false; // a broken regex mutes nothing rather than everything
+    }
+  }
+  return title.toLowerCase().includes(pattern.toLowerCase());
+}
+
+/** True when this target is muted — cascades: item ⊂ repo ⊂ org, plus rule mutes
+ *  (author / title pattern) when the caller passes the item's metadata. */
+export function isMuted(
+  snapshot: Snapshot,
+  kind: string,
+  target: string,
+  meta?: { author?: string | null; title?: string },
+): boolean {
   const now = Date.now();
   const repo = kind === 'github-item' ? target.split('#')[0] : kind === 'github-repo' ? target : null;
+  const author = meta?.author?.toLowerCase().replace(/\[bot\]$/, '') ?? null;
   return snapshot.mutes.some((m) => {
     if (m.until && new Date(m.until).getTime() < now) return false;
     if (m.kind === kind && m.target === target) return true;
@@ -313,6 +379,43 @@ export function isMuted(snapshot: Snapshot, kind: string, target: string): boole
       if (m.kind === 'github-repo' && m.target === repo) return true;
       if (m.kind === 'github-org' && repo.startsWith(`${m.target}/`)) return true;
     }
+    if (kind === 'github-item') {
+      // one rule instead of 53 hand mutes: quiet an author (dependabot) or a title shape
+      if (m.kind === 'github-author' && author !== null && m.target.toLowerCase().replace(/\[bot\]$/, '') === author)
+        return true;
+      if (m.kind === 'github-title' && meta?.title && titleMatches(m.target, meta.title)) return true;
+    }
     return false;
   });
+}
+
+/** Record a lead decision on a signal (engaged/dismissed); null clears it. */
+export async function setSignalLead(id: string, status: SignalLeadStatus | null, note?: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/signals/lead`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id, status, note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `lead update failed ${res.status}`);
+  }
+}
+
+/** Advance the signals "new since review" clock to now. */
+export async function markSignalsReviewed(): Promise<void> {
+  const res = await fetch(`${BASE}/api/signals/reviewed`, { method: 'POST' });
+  if (!res.ok) throw new Error(`mark reviewed failed ${res.status}`);
+}
+
+/** Save the signals watch config (partial — only the provided arrays change). */
+export async function saveSignalsWatch(patch: Partial<SignalsWatch>): Promise<SignalsWatch> {
+  const res = await fetch(`${BASE}/api/signals/watch`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error ?? `watch save failed ${res.status}`);
+  return body.watch as SignalsWatch;
 }

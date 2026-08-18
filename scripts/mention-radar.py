@@ -65,6 +65,28 @@ TERMS: list[tuple[str, str | None, str | None]] = [
     ("avifenesh", None, None),
 ]
 
+# The list of ACTIVE terms is runtime-editable from atrium (Signals view) via
+# ~/.config/atrium/signals.json — watch.terms controls which terms run; the
+# deny/anchor regexes above stay here as the per-term spam filters and apply
+# whenever the term matches one. Unknown terms run unfiltered. Missing or
+# malformed file = the builtin list above, unchanged behavior.
+SIGNALS_WATCH_FILE = Path.home() / ".config" / "atrium" / "signals.json"
+
+
+def effective_terms() -> list[tuple[str, str | None, str | None]]:
+    try:
+        watch = json.loads(SIGNALS_WATCH_FILE.read_text())["watch"]
+        terms = watch["terms"]
+        if not isinstance(terms, list) or not all(isinstance(t, str) for t in terms):
+            raise ValueError("watch.terms must be a list of strings")
+    except Exception:
+        return TERMS
+    known = {t[0]: t for t in TERMS}
+    return [known.get(t.strip(), (t.strip(), None, None)) for t in terms if t.strip()]
+
+
+TERMS = effective_terms()
+
 
 def http_get_json(url: str) -> dict | None:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})

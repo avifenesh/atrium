@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { Snapshot } from '../../../shared/types';
+import type { NoteEntry, Snapshot } from '../../../shared/types';
 import { fetchNote, saveNote, NoteConflictError, type NoteContent } from '../api';
 import { Panel, RelTime, EmptyState, Row, CopyText } from '../components/ui';
 import { renderMarkdown } from '../components/markdown';
@@ -7,6 +7,13 @@ import { renderMarkdown } from '../components/markdown';
 // markdown rendering (h1-h4, bold, italic, inline code, fenced code, lists,
 // blockquotes, links, wikilinks, hr) lives in ../components/markdown so the notes
 // panel and the github reader share one escaped, no-dangerouslySetInnerHTML renderer.
+
+export interface NoteTarget {
+  root: string;
+  path: string;
+}
+
+const LIST_ROWS = 200; // rendered rows cap — search reaches everything, the DOM doesn't
 
 // ---------- panel ----------
 
@@ -19,13 +26,23 @@ export default function NotesPanel({
   snapshot: Snapshot;
   /** palette / slide-over / quiet drawer open — they own esc, the reader must not also close */
   overlayOpen?: boolean;
-  /** pending palette jump (note path) — one-shot, consumed on arrival (itch scrollTarget idiom) */
-  openTarget?: string | null;
+  /** pending palette jump — one-shot, consumed on arrival (itch scrollTarget idiom) */
+  openTarget?: NoteTarget | null;
   onOpenTargetConsumed?: () => void;
 }) {
-  const { vaultPath, recent, error, updatedAt } = snapshot.notes;
+  const { vaultPath, roots, error, updatedAt } = snapshot.notes;
+  // full multi-root list; fall back to the legacy vault slice for an older server
+  const allNotes: NoteEntry[] = useMemo(
+    () =>
+      snapshot.notes.notes?.length
+        ? snapshot.notes.notes
+        : (snapshot.notes.recent ?? []).map((n) => ({ ...n, root: 'vault' })),
+    [snapshot.notes.notes, snapshot.notes.recent],
+  );
 
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  const [open, setOpen] = useState<NoteTarget | null>(null);
+  const [query, setQuery] = useState('');
+  const [rootFilter, setRootFilter] = useState<string | null>(null);
   const [note, setNote] = useState<NoteContent | null>(null);
   const [noteErr, setNoteErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -42,8 +59,14 @@ export default function NotesPanel({
 
   const dirty = editing && note !== null && draft !== note.content;
 
-  const absPath = (path: string): string =>
-    path.startsWith('/') ? path : vaultPath ? `${vaultPath}/${path}` : path;
+  const rootPath = (rootId: string): string | null =>
+    roots?.find((r) => r.id === rootId)?.path ?? (rootId === 'vault' ? vaultPath : null);
+
+  const absPath = (t: NoteTarget): string => {
+    if (t.path.startsWith('/')) return t.path;
+    const base = rootPath(t.root);
+    return base ? `${base}/${t.path}` : t.path;
+  };
 
   // leave edit mode and clear all edit-scoped transient state
   const resetEdit = (): void => {
@@ -56,14 +79,14 @@ export default function NotesPanel({
 
   // request to leave the current note (close or switch). If editing with unsaved
   // changes, arm an inline "discard?" instead of dropping the edits silently.
-  const requestLeave = (next: string | null): void => {
+  const requestLeave = (next: NoteTarget | null): void => {
     if (dirty && !discardArm) {
       setDiscardArm(true);
       setTimeout(() => setDiscardArm(false), 4000); // disarm if they don't confirm
       return;
     }
     resetEdit();
-    setOpenPath(next);
+    setOpen(next);
   };
 
   // palette jump — consume the target, then route through requestLeave so a dirty
@@ -91,7 +114,7 @@ export default function NotesPanel({
     setSaving(true);
     setSaveErr(null);
     try {
-      const { modifiedAt } = await saveNote(note.path, draft, overwrite ? undefined : note.modifiedAt);
+      const { modifiedAt } = await saveNote(note.path, draft, overwrite ? undefined : note.modifiedAt, note.root);
       setNote({ ...note, content: draft, modifiedAt });
       resetEdit();
       setSaved(true);
@@ -105,13 +128,13 @@ export default function NotesPanel({
   };
 
   useEffect(() => {
-    if (!openPath) return;
+    if (!open) return;
     let stale = false;
     setLoading(true);
     setNote(null);
     setNoteErr(null);
     resetEdit();
-    fetchNote(openPath)
+    fetchNote(open.path, open.root)
       .then((n) => {
         if (!stale) setNote(n);
       })
@@ -124,15 +147,15 @@ export default function NotesPanel({
     return () => {
       stale = true;
     };
-  }, [openPath]);
+  }, [open?.root, open?.path]);
 
   // re-fetch the open note from disk (reload after a conflict, discarding the draft)
   const reloadNote = (): void => {
-    if (!openPath) return;
+    if (!open) return;
     setLoading(true);
     setNoteErr(null);
     resetEdit();
-    fetchNote(openPath)
+    fetchNote(open.path, open.root)
       .then(setNote)
       .catch((err: unknown) => setNoteErr(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
@@ -144,7 +167,7 @@ export default function NotesPanel({
   }, [editing]);
 
   useEffect(() => {
-    if (!openPath) return;
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       // Cmd/Ctrl+S saves while editing (and only then) — let the browser save dialog
       // fire normally when we're just reading
@@ -163,61 +186,106 @@ export default function NotesPanel({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // onKey closes over editing/draft/note/discardArm/saving — re-bind when they change
-  }, [openPath, editing, draft, note, discardArm, saving, overlayOpen]);
+  }, [open, editing, draft, note, discardArm, saving, overlayOpen]);
 
   const body = useMemo(() => (note ? renderMarkdown(note.content) : null), [note]);
 
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () =>
+      allNotes.filter(
+        (n) =>
+          (rootFilter === null || n.root === rootFilter) &&
+          (q === '' || n.title.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)),
+      ),
+    [allNotes, rootFilter, q],
+  );
+  const shown = filtered.slice(0, LIST_ROWS);
+  const showRoots = (roots?.length ?? 0) > 1;
+
   const list = (
     <Panel
-      title="Recent notes"
+      title="Notes"
       riseIndex={0}
       right={
         <span className="flex min-w-0 items-baseline gap-3">
-          {recent.length > 0 && (
-            <span className="font-mono text-xs tabular-nums text-mist-faint">{recent.length}</span>
-          )}
-          {openPath || !vaultPath ? (
-            <RelTime iso={updatedAt} />
-          ) : (
-            <CopyText text={vaultPath}>
-              <span className="block max-w-56 truncate font-mono text-xs" title={vaultPath}>
-                {vaultPath}
-              </span>
-            </CopyText>
-          )}
+          <span className="font-mono text-xs tabular-nums text-mist-faint">
+            {q || rootFilter ? `${filtered.length} / ${allNotes.length}` : allNotes.length}
+          </span>
+          <RelTime iso={updatedAt} />
         </span>
       }
     >
       {error && (
         <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">{error}</div>
       )}
-      {recent.length === 0 ? (
-        <EmptyState>No recent notes were found.</EmptyState>
+      <div className="mb-2 flex flex-col gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search title or path…"
+          aria-label="Search notes"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 font-mono text-xs text-mist placeholder:text-mist-faint focus:border-amber/50 focus:outline-none"
+        />
+        {showRoots && (
+          <div className="flex flex-wrap items-center gap-1 font-mono text-[11px]">
+            <button
+              type="button"
+              onClick={() => setRootFilter(null)}
+              className={`cursor-pointer rounded px-2 py-1 transition-colors ${rootFilter === null ? 'bg-white/10 text-mist' : 'text-mist-faint hover:text-mist'}`}
+            >
+              all
+            </button>
+            {roots.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => setRootFilter((cur) => (cur === r.id ? null : r.id))}
+                title={`${r.path}${r.truncated ? ' — list truncated at the walk cap' : ''}`}
+                className={`cursor-pointer rounded px-2 py-1 transition-colors ${rootFilter === r.id ? 'bg-white/10 text-mist' : 'text-mist-faint hover:text-mist'}`}
+              >
+                {r.label} <span className="tabular-nums">{r.count}</span>
+                {r.truncated ? '+' : ''}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {shown.length === 0 ? (
+        <EmptyState>{q ? 'No notes match that search.' : 'No notes were found.'}</EmptyState>
       ) : (
         <div className="max-h-[34rem] overflow-y-auto">
-          {recent.map((n) => {
-            const abs = absPath(n.path);
+          {shown.map((n) => {
+            const target = { root: n.root, path: n.path };
+            const abs = absPath(target);
+            const isOpen = open?.root === n.root && open?.path === n.path;
             return (
               <Row
-                key={n.path}
-                onClick={() => requestLeave(n.path)}
+                key={`${n.root}:${n.path}`}
+                onClick={() => requestLeave(target)}
                 title={`read ${n.title}`}
-                className={openPath === n.path ? 'bg-white/[0.05]' : ''}
+                className={isOpen ? 'bg-white/[0.05]' : ''}
               >
                 <div className="min-w-0 flex-1 overflow-hidden">
                   <span className="block truncate text-sm text-mist">{n.title}</span>
-                  <span className="block truncate font-mono text-xs text-mist-faint">{n.path}</span>
+                  <span className="block truncate font-mono text-xs text-mist-faint">
+                    {showRoots && n.root !== 'vault' ? `${n.root} · ` : ''}
+                    {n.path}
+                  </span>
                 </div>
                 <RelTime iso={n.modifiedAt} />
                 <span className="flex shrink-0 items-center gap-1">
-                  <a
-                    href={`obsidian://open?path=${encodeURIComponent(abs)}`}
-                    onClick={(e) => e.stopPropagation()}
-                    title="open in obsidian"
-                    className="hover-cluster shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
-                  >
-                    obsidian
-                  </a>
+                  {n.root === 'vault' && (
+                    <a
+                      href={`obsidian://open?path=${encodeURIComponent(abs)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title="open in obsidian"
+                      className="hover-cluster shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                    >
+                      obsidian
+                    </a>
+                  )}
                   <CopyText text={abs} className="hover-cluster shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
                     copy
                   </CopyText>
@@ -225,18 +293,23 @@ export default function NotesPanel({
               </Row>
             );
           })}
+          {filtered.length > LIST_ROWS && (
+            <div className="px-2.5 py-2 font-mono text-[11px] text-mist-faint">
+              … {filtered.length - LIST_ROWS} more — narrow the search to reach them
+            </div>
+          )}
         </div>
       )}
     </Panel>
   );
 
-  if (!openPath) return list;
+  if (!open) return list;
 
-  const meta = recent.find((n) => n.path === openPath);
-  const title = note?.title ?? meta?.title ?? openPath.split('/').pop()!.replace(/\.md$/, '');
-  const relPath = note?.path ?? openPath;
+  const meta = allNotes.find((n) => n.root === open.root && n.path === open.path);
+  const title = note?.title ?? meta?.title ?? open.path.split('/').pop()!.replace(/\.(md|txt)$/, '');
+  const relPath = note?.path ?? open.path;
   const modifiedAt = note?.modifiedAt ?? meta?.modifiedAt ?? null;
-  const abs = absPath(relPath);
+  const abs = absPath(open);
 
   return (
     <div className="flex min-w-0 items-start gap-4">
@@ -259,6 +332,7 @@ export default function NotesPanel({
                 {title}
               </div>
               <div className="truncate font-mono text-xs text-mist-faint" title={relPath}>
+                {showRoots && open.root !== 'vault' ? `${open.root} · ` : ''}
                 {relPath}
               </div>
             </div>
@@ -280,7 +354,7 @@ export default function NotesPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => requestLeave(openPath)}
+                  onClick={() => requestLeave(open)}
                   title={dirty ? 'discard changes' : 'cancel edit'}
                   className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors ${
                     discardArm ? 'text-coral hover:text-coral' : 'text-mist-faint hover:text-mist'
@@ -300,13 +374,15 @@ export default function NotesPanel({
                 >
                   edit
                 </button>
-                <a
-                  href={`obsidian://open?path=${encodeURIComponent(abs)}`}
-                  title="open in obsidian"
-                  className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
-                >
-                  obsidian
-                </a>
+                {open.root === 'vault' && (
+                  <a
+                    href={`obsidian://open?path=${encodeURIComponent(abs)}`}
+                    title="open in obsidian"
+                    className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] text-mist-faint transition-colors hover:text-slate-glow"
+                  >
+                    obsidian
+                  </a>
+                )}
                 <CopyText text={abs} className="shrink-0 px-1.5 py-0.5 font-mono text-[11px] text-mist-faint">
                   copy path
                 </CopyText>

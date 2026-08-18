@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { isMuted, refreshSection, teachPort } from '../api';
 import { useNow, FRESH_WINDOW_MS } from '../hooks';
 import { MuteButton, QuietChip, RelTime } from './ui';
@@ -37,6 +38,10 @@ const VIEW_FOR: Record<string, string> = {
   repos: 'tasks',
   google: 'comms',
   spotify: 'subs',
+  radar: 'signals',
+  tiyuvta: 'business',
+  reentry: 'foryou',
+  helper: 'foryou',
 };
 
 function viewFor(f: Flag): string | null {
@@ -70,16 +75,22 @@ export default function FlagStrip({
   onNavigate: (viewId: string, focus?: string | null) => void;
   onOpenQuiet?: () => void;
 }) {
-  const raw = snapshot.flags
+  const [fyiOpen, setFyiOpen] = useState(false);
+  const unmuted = snapshot.flags
     .filter((f) => !isMuted(snapshot, 'flag', f.id))
     .sort(
       (a, b) =>
         SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
         new Date(b.raisedAt).getTime() - new Date(a.raisedAt).getTime(),
     );
+  // info never counts as an active signal — a wall of fyi rows is how the strip
+  // cried wolf until whole sources got muted forever. warn/crit are the signals;
+  // info collapses to one expandable line.
+  const raw = unmuted.filter((f) => f.severity !== 'info');
+  const fyi = unmuted.filter((f) => f.severity === 'info');
   const portFlags = raw.filter((f) => f.id.startsWith('system:port:'));
   const flags = raw.filter((f) => !f.id.startsWith('system:port:') || portFlags.length < 2);
-  const hidden = snapshot.flags.length - raw.length;
+  const hidden = snapshot.flags.length - unmuted.length;
   const topSev = raw[0]?.severity ?? 'info';
   const collapsedListeners = portFlags.length >= 2;
   // "new since you looked" — server raisedAt within the freshness window. Survives
@@ -89,7 +100,7 @@ export default function FlagStrip({
   const now = useNow(30_000);
   const newCount = raw.filter((f) => now - new Date(f.raisedAt).getTime() < FRESH_WINDOW_MS).length;
 
-  if (raw.length === 0 && hidden === 0) return null;
+  if (raw.length === 0 && fyi.length === 0 && hidden === 0) return null;
 
   return (
     <section className="signal-strip rise mb-5 px-3 py-2" aria-label="Active signals">
@@ -206,12 +217,53 @@ export default function FlagStrip({
                     Teach
                   </button>
                 )}
-                <MuteButton kind="flag" target={f.id} />
+                {/* failure quiets lift on recovery, so the NEXT failure still alerts;
+                    "source" stays the forever door */}
+                <MuteButton kind="flag" target={f.id} untilClear />
                 <MuteButton kind="flag-source" target={f.source} label="source" className="opacity-60" />
               </span>
             </div>
           );
         })}
+        {fyi.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setFyiOpen((o) => !o)}
+              aria-expanded={fyiOpen}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-r-md border-l border-l-slate-glow/50 py-1 pl-3 pr-1 text-left font-mono text-[11px] text-mist-faint transition-colors hover:bg-white/[0.035] hover:text-mist-dim"
+            >
+              <span>{fyiOpen ? '▾' : '▸'}</span>
+              {fyi.length} fyi
+            </button>
+            {fyiOpen &&
+              fyi.map((f) => {
+                const view = viewFor(f);
+                return (
+                  <div
+                    key={f.id}
+                    role={view ? 'button' : undefined}
+                    tabIndex={view ? 0 : undefined}
+                    onClick={view ? () => onNavigate(view, focusForFlag(f)) : undefined}
+                    title={`${f.title} — ${f.detail}`}
+                    className={`group flex items-center gap-3 rounded-r-md border-l py-1.5 pl-3 pr-1 transition-colors hover:bg-white/[0.035] ${view ? 'cursor-pointer' : ''} ${SEV_BORDER.info}`}
+                  >
+                    <span className="min-w-0 truncate font-mono text-xs text-mist-dim" title={f.title}>
+                      {f.title}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-mist-faint hidden sm:block" title={f.detail}>
+                      {f.detail}
+                    </span>
+                    <RelTime iso={f.raisedAt} />
+                    <span className="flex shrink-0 items-center gap-1">
+                      <MuteButton kind="flag" target={f.id} />
+                      <MuteButton kind="flag-source" target={f.source} label="source" className="opacity-60" />
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
         {hidden > 0 && (
           <div className="flex justify-end px-1 py-0.5">
             <QuietChip count={hidden} onClick={onOpenQuiet} />

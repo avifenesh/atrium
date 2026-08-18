@@ -1,0 +1,21 @@
+[Unit]
+Description=Atrium proactive offer scout (Claude Code Opus 5)
+After=atrium.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__NODE_BIN__ __ROOT__/server/dist/server/src/helper-worker.js
+Environment=NODE_ENV=production
+Environment=PATH=__NODE_DIR__:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=90min
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%h/.config/atrium
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

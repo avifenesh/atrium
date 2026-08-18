@@ -65,7 +65,7 @@ const SECTIONS: SectionName[] = [
   'repos',
 ];
 // snapshot lists can grow unbounded — keep the index bounded, scorer surfaces the rest
-const MAX_NOTES = 50;
+const MAX_NOTES = 1000;
 const MAX_RUNS = 40;
 const MAX_SCHED = 60;
 const MAX_REVIEWERS = 40;
@@ -86,7 +86,7 @@ export default function CommandPalette({
   onNavigate: (view: string, focus?: string | null) => void;
   onOpenQuiet: () => void;
   onOpenItem: (repo: string, number: number) => void;
-  onOpenNote: (path: string) => void;
+  onOpenNote: (path: string, root?: string) => void;
   onOpenRun: (stem: string) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -227,15 +227,19 @@ export default function CommandPalette({
       });
     }
     // snapshot index — none pinned, so they only surface against a query and the
-    // shortness tiebreak keeps exact view matches above them
-    for (const n of snapshot.notes.recent.slice(0, MAX_NOTES)) {
+    // shortness tiebreak keeps exact view matches above them. The full multi-root
+    // list (not the legacy 15-newest slice) so every note is one ⌘K away.
+    const paletteNotes = snapshot.notes.notes?.length
+      ? snapshot.notes.notes
+      : snapshot.notes.recent.map((n) => ({ ...n, root: 'vault' }));
+    for (const n of paletteNotes.slice(0, MAX_NOTES)) {
       cmds.push({
-        key: `note:${n.path}`,
+        key: `note:${n.root}:${n.path}`,
         // path in the scored label so "find by folder/filename" works; truncate handles length
         label: `${n.title} — ${n.path}`,
         tag: 'note',
         run: () => {
-          onOpenNote(n.path);
+          onOpenNote(n.path, n.root);
           onClose();
         },
       });

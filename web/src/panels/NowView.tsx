@@ -94,12 +94,27 @@ export default function NowView({
   const { github, agents, system, comms } = snapshot;
 
   // people blocked on him — outranks his own work; review lane = external PRs awaiting his review
-  const orgQueue = github.orgQueue.filter((it) => !isMuted(snapshot, 'github-item', it.id));
+  const orgQueue = github.orgQueue.filter(
+    (it) => !isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title }),
+  );
   // quiet = archive: muted items are GONE; the panel chip carries the hidden count.
   // orgQueue outranks actNow — drop items that also sit in the org queue so they show once
   const orgIds = new Set(github.orgQueue.map((it) => it.id));
-  const actNow = github.actNow.filter((it) => !isMuted(snapshot, 'github-item', it.id) && !orgIds.has(it.id));
-  const actNowHidden = github.actNow.filter((it) => !orgIds.has(it.id)).length - actNow.length;
+  const actNowAll = github.actNow.filter(
+    (it) => !isMuted(snapshot, 'github-item', it.id, { author: it.author, title: it.title }) && !orgIds.has(it.id),
+  );
+  const actNowHidden = github.actNow.filter((it) => !orgIds.has(it.id)).length - actNowAll.length;
+  // the hero holds only fresh human asks. Bot-authored rows collapse to one line per
+  // repo; items untouched past agingDays drop to a shelf line — an 18-month-old
+  // assigned issue must not outrank today's review request.
+  const agingMs = (github.agingDays || 14) * 86_400_000;
+  const nowMs = Date.now();
+  const isAging = (updatedAt: string) => updatedAt !== '' && nowMs - new Date(updatedAt).getTime() > agingMs;
+  const actNowBots = actNowAll.filter((it) => it.bot);
+  const actNowAging = actNowAll.filter((it) => !it.bot && isAging(it.updatedAt));
+  const actNow = actNowAll.filter((it) => !it.bot && !isAging(it.updatedAt));
+  const botsByRepo = new Map<string, number>();
+  for (const it of actNowBots) botsByRepo.set(it.repo, (botsByRepo.get(it.repo) ?? 0) + 1);
   const orgReview = orgQueue.filter((it) => it.lane === 'review');
   const freshIds = useFirstSeen([...actNow.map((it) => it.id), ...orgReview.map((it) => it.id)]);
   // real work only — daemons that are merely up stay out of the hero / panel
@@ -132,7 +147,11 @@ export default function NowView({
           nextAction: parked[0].capsule?.nextAction ?? 'Resume this parked thread.',
         }
       : null);
-  const mentionRows = (snapshot.extra?.mentions?.rows ?? []).filter((row) => row.href).slice(0, 3);
+  // top mentions come from the unified signals section now — new-since-review first
+  const signalMentions = (snapshot.signals?.items ?? []).filter((s) => s.kind === 'mention' && s.url);
+  const reviewedAt = snapshot.signals?.lastReviewedAt ?? null;
+  const newMentions = signalMentions.filter((s) => !reviewedAt || s.firstSeenAt > reviewedAt);
+  const mentionRows = (newMentions.length > 0 ? newMentions : signalMentions).slice(0, 3);
   const itchRun = snapshot.itch?.runs?.[0] ?? null;
   const itchDays = itchAgeDays(itchRun?.stem ?? null);
 
@@ -237,6 +256,31 @@ export default function NowView({
               ))}
             </div>
           )}
+          {(botsByRepo.size > 0 || actNowAging.length > 0) && (
+            <div className="mt-2 space-y-0.5 border-t pt-2 hairline">
+              {[...botsByRepo.entries()].map(([repo, n]) => (
+                <Row key={`bots-${repo}`} onClick={() => onNavigate('tasks')} title={`${n} bot PRs in ${repo}`} className="py-1.5">
+                  <span className="shrink-0 rounded border hairline px-1.5 py-px font-mono text-[10px] text-mist-faint">bots</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-mist-dim">
+                    {n} update{n === 1 ? '' : 's'} · {repo}
+                  </span>
+                </Row>
+              ))}
+              {actNowAging.length > 0 && (
+                <Row
+                  onClick={() => onNavigate('tasks')}
+                  title={`${actNowAging.length} items untouched for over ${github.agingDays || 14} days`}
+                  className="py-1.5"
+                >
+                  <span className="shrink-0 rounded border hairline px-1.5 py-px font-mono text-[10px] text-mist-faint">aging</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-mist-dim">
+                    {actNowAging.length} older item{actNowAging.length === 1 ? '' : 's'} parked past{' '}
+                    {github.agingDays || 14}d
+                  </span>
+                </Row>
+              )}
+            </div>
+          )}
         </Panel>
 
         {ticker.length > 0 && (
@@ -316,7 +360,7 @@ export default function NowView({
             right={
               <button
                 type="button"
-                onClick={() => onNavigate('mentions')}
+                onClick={() => onNavigate('signals')}
                 className="cursor-pointer font-mono text-[11px] text-mist-faint hover:text-mist"
               >
                 all
@@ -324,10 +368,15 @@ export default function NowView({
             }
           >
             <div className="space-y-0.5">
-              {mentionRows.map((row) => (
-                <Row key={row.href} href={row.href} title={row.value}>
-                  <span className="shrink-0 font-mono text-[11px] text-mist-faint">{row.label}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-mist">{row.value}</span>
+              {mentionRows.map((s) => (
+                <Row key={s.id} href={s.url ?? undefined} title={s.title}>
+                  <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
+                    {(!reviewedAt || s.firstSeenAt > reviewedAt) && (
+                      <span className="block h-1.5 w-1.5 rounded-full bg-jade" />
+                    )}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-mist-faint">{`${s.source} · ${s.entity}`}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-mist">{s.title}</span>
                 </Row>
               ))}
             </div>

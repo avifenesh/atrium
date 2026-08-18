@@ -63,6 +63,7 @@ export default function SchedulePanel({
   const { entries, error, updatedAt } = snapshot.schedule;
   const [filter, setFilter] = useState<string>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showDisabled, setShowDisabled] = useState(false);
 
   // quieted entries disappear — the drawer is their archive
   const visible = entries.filter((e) => !isMuted(snapshot, 'schedule', e.id));
@@ -70,14 +71,24 @@ export default function SchedulePanel({
 
   const sources = [...new Set(visible.map((e) => shortSource(e.source)))];
 
+  // failures lead — a red run must never hide below the fold of healthy timers
+  const failed = visible
+    .filter((e) => e.lastStatus === 'fail')
+    .sort((a, b) => (b.lastRun ?? '').localeCompare(a.lastRun ?? ''));
+  const failedIds = new Set(failed.map((e) => e.id));
   const upcoming = visible
-    .filter((e) => e.enabled && e.nextRun)
+    .filter((e) => e.enabled && e.nextRun && !failedIds.has(e.id))
     // compare instants, not strings — hermes emits +03:00 offset ISO while cron/revuto emit Z
     .sort((a, b) => new Date(a.nextRun as string).getTime() - new Date(b.nextRun as string).getTime());
+  // disabled entries are dead weight in a "what runs when" view — folded away by default
+  const disabled = visible.filter((e) => !e.enabled && !failedIds.has(e.id));
   const rest = visible
-    .filter((e) => !(e.enabled && e.nextRun))
-    .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name));
-  const sorted = [...upcoming, ...rest].filter((e) => filter === 'all' || shortSource(e.source) === filter);
+    .filter((e) => e.enabled && !e.nextRun && !failedIds.has(e.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...failed, ...upcoming, ...rest, ...(showDisabled ? disabled : [])].filter(
+    (e) => filter === 'all' || shortSource(e.source) === filter,
+  );
+  const disabledCount = disabled.filter((e) => filter === 'all' || shortSource(e.source) === filter).length;
 
   return (
     <Panel
@@ -98,7 +109,7 @@ export default function SchedulePanel({
         <div className="mb-3 rounded-lg border border-coral/40 bg-coral/10 p-3 text-sm text-coral">{error}</div>
       )}
 
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {['all', ...sources].map((s) => (
           <button
             key={s}
@@ -110,6 +121,16 @@ export default function SchedulePanel({
             {s}
           </button>
         ))}
+        {disabledCount > 0 && (
+          <button
+            onClick={() => setShowDisabled((v) => !v)}
+            className={`ml-auto rounded-full px-2.5 py-2 font-mono text-[11px] transition-colors sm:py-0.5 ${
+              showDisabled ? 'glass-raised text-mist' : 'text-mist-faint hover:text-mist'
+            }`}
+          >
+            {showDisabled ? 'hide' : 'show'} {disabledCount} disabled
+          </button>
+        )}
       </div>
 
       {sorted.length === 0 ? (

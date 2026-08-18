@@ -1,0 +1,14 @@
+[Unit]
+Description=Ask what Atrium can do for you every 3 hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=3h
+RandomizedDelaySec=30s
+AccuracySec=15s
+Persistent=true
+Unit=atrium-helper-agent.service
+
+[Install]
+WantedBy=timers.target
+

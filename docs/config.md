@@ -52,6 +52,32 @@ collector stays idle (it can't search without a login).
 | `pollMs` | `60000` | poll cadence |
 | `ownReposPollMs` | `600000` | slower cadence for own-repo counts |
 | `failThreshold` | `3` | consecutive failed polls before the crit flag pages you |
+| `agingDays` | `14` | attention items untouched this long leave the hero for the aging shelf |
+
+### `agents`
+
+| key | default | meaning |
+| --- | --- | --- |
+| `activityTtlHours` | `24` | activity-ticker events older than this are dropped — a dead provider's last session never renders as "live activity" |
+
+### `notes`
+
+The vault (Obsidian registry, or `~/revuto` fallback) is always scanned as root
+`vault`. Extra note piles that live elsewhere are added here:
+
+```jsonc
+{ "notes": { "roots": [
+  { "id": "codex", "label": "Codex", "path": "~/Documents/Codex" },
+  { "id": "learning", "label": "Learning", "path": "~/learning" }
+] } }
+```
+
+Each root is walked for `.md`/`.txt`, hidden dirs skipped, 20 dirs deep (agent-export
+trees really do nest 13 down), and the newest 2000 notes per root are kept — a pile over
+the budget loses its oldest notes, never today's. A root that hit either bound is marked
+truncated in the Notes view instead of passing as complete. The Notes view searches and
+filters across all roots, and `/api/notes/read|write` take a `root` alongside the
+relative path.
 
 ### `notify`
 

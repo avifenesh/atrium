@@ -1,15 +1,22 @@
 import { open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { config } from '../config.js';
 import { store } from '../state.js';
 import { readJson, iso } from '../util.js';
 import type { Collector } from './registry.js';
-import type { NotesState } from '../../../shared/types.js';
+import type { NoteEntry, NotesRoot, NotesState } from '../../../shared/types.js';
 
-const MAX_DEPTH = 4;
-const MAX_FILES = 2000;
+// Depth measured against the real piles, not guessed: ~/Documents/Codex agent exports
+// carry vendored source trees 13 dirs below the root, so a depth-8 wall silently dropped
+// ~190 of its 1026 notes. Hidden dirs are pruned anyway, which is what keeps this cheap.
+const MAX_DEPTH = 20;
+const KEEP_PER_ROOT = 2000; // notes kept per root — the newest survive the cap, see selectNewest
+const MAX_SCAN = 20_000; // candidate note files one root's walk will look at before giving up
 const READ_CAP_BYTES = 512 * 1024;
 const WRITE_CAP_BYTES = 512 * 1024;
+// .md is the native format; .txt rides along because real note piles have both
+const NOTE_EXT = /\.(md|txt)$/;
 
 interface ObsidianRegistry {
   vaults?: Record<string, { path?: string; open?: boolean }>;
@@ -29,10 +36,50 @@ async function findVault(): Promise<string | null> {
   return null;
 }
 
-async function walkMd(root: string): Promise<string[]> {
+function expandHome(p: string): string {
+  return p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
+}
+
+export interface RootDef {
+  id: string;
+  label: string;
+  path: string; // absolute
+}
+
+/** The vault (root id 'vault') plus any configured extra roots that exist on disk.
+ *  Roots come from config.notes.roots — the fix for note piles that live outside
+ *  the Obsidian vault and were invisible before. */
+async function resolveRoots(): Promise<RootDef[]> {
+  const roots: RootDef[] = [];
+  const vault = await findVault();
+  if (vault) roots.push({ id: 'vault', label: 'Vault', path: resolve(vault) });
+  for (const raw of config.notes.roots) {
+    if (!raw || typeof raw.path !== 'string' || typeof raw.id !== 'string') continue;
+    const id = raw.id.trim();
+    if (!id || id === 'vault' || !/^[\w-]+$/.test(id)) continue;
+    const path = resolve(expandHome(raw.path));
+    try {
+      if (!(await stat(path)).isDirectory()) continue;
+    } catch {
+      continue; // configured but absent — skip quietly, the roots list shows what's live
+    }
+    roots.push({ id, label: raw.label?.trim() || id, path });
+  }
+  return roots;
+}
+
+/** Walk one root for note files. Bounded twice — MAX_DEPTH dirs down and MAX_SCAN
+ *  candidates wide — and `truncated` reports either bound biting, including the depth
+ *  wall. A clipped subtree used to come back as a complete list, which is how the
+ *  Codex root read as "835 notes, nothing missing" while ~190 sat below the wall. */
+export async function walkNotes(root: RootDef): Promise<{ files: string[]; truncated: boolean }> {
   const found: string[] = [];
+  let truncated = false;
   async function rec(dir: string, depth: number): Promise<void> {
-    if (found.length >= MAX_FILES) return;
+    if (found.length >= MAX_SCAN) {
+      truncated = true;
+      return;
+    }
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -40,38 +87,51 @@ async function walkMd(root: string): Promise<string[]> {
       return; // unreadable dir: skip, keep walking elsewhere
     }
     for (const e of entries) {
-      if (found.length >= MAX_FILES) return;
+      if (found.length >= MAX_SCAN) {
+        truncated = true;
+        return;
+      }
       if (e.isDirectory()) {
-        // 'memory' holds a live SurrealKV datastore — never descend into it
-        if (e.name.startsWith('.') || e.name === 'memory') continue;
+        // hidden dirs never; 'memory' holds a live SurrealKV datastore in the vault
+        if (e.name.startsWith('.') || (root.id === 'vault' && e.name === 'memory')) continue;
         if (depth < MAX_DEPTH) await rec(join(dir, e.name), depth + 1);
-      } else if (e.isFile() && e.name.endsWith('.md')) {
+        else truncated = true; // a subtree we refuse to enter may hold notes — say so
+      } else if (e.isFile() && NOTE_EXT.test(e.name)) {
         found.push(join(dir, e.name));
       }
     }
   }
-  await rec(root, 0);
-  return found;
+  await rec(root.path, 0);
+  return { files: found, truncated };
 }
 
-/** Resolve a caller-supplied relative path against the live vault root and apply
- *  the lexical guards shared by read + write: stay under the vault, .md only, no
- *  memory/ dir. Returns the vault root and the resolved absolute path. Throws on
- *  any violation — routes map that to a 400 (a 'conflict:' prefix maps to 409). */
-async function resolveInVault(rel: string): Promise<{ root: string; abs: string; relPath: string }> {
-  if (!rel) throw new Error('missing note path');
-  const vault = await findVault();
-  if (!vault) throw new Error('no obsidian vault found');
+/** Newest-first selection under the per-root budget. The cap keeps one huge pile from
+ *  crowding the other roots out of the snapshot; recency decides who survives it,
+ *  because directory order is arbitrary and the note touched today is the one wanted
+ *  back. Sorting here also feeds the global newest-first order in run(). */
+export function selectNewest<T extends { mtimeMs: number }>(entries: T[], limit = KEEP_PER_ROOT): T[] {
+  return [...entries].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, Math.max(0, limit));
+}
 
-  // lexical containment: resolve and require the result to stay under the vault
-  const root = resolve(vault);
+/** Resolve a caller-supplied (rootId, relative path) against the live roots and
+ *  apply the lexical guards shared by read + write: stay under the root, .md/.txt
+ *  only, no memory/ dir in the vault. Returns the root and the resolved absolute
+ *  path. Throws on any violation — routes map that to a 400 ('conflict:' → 409). */
+async function resolveInRoot(rootId: string, rel: string): Promise<{ root: string; abs: string; relPath: string }> {
+  if (!rel) throw new Error('missing note path');
+  const roots = await resolveRoots();
+  const picked = roots.find((r) => r.id === (rootId || 'vault'));
+  if (!picked) throw new Error(rootId && rootId !== 'vault' ? `unknown notes root: ${rootId}` : 'no obsidian vault found');
+
+  // lexical containment: resolve and require the result to stay under the root
+  const root = picked.path;
   const abs = resolve(root, rel);
-  if (!abs.startsWith(root + sep)) throw new Error('path escapes the vault');
-  if (!abs.endsWith('.md')) throw new Error('only .md notes are allowed');
+  if (!abs.startsWith(root + sep)) throw new Error('path escapes the notes root');
+  if (!NOTE_EXT.test(abs)) throw new Error('only .md/.txt notes are allowed');
 
   const relPath = relative(root, abs);
   // 'memory' holds a live SurrealKV datastore — never follow into it (same rule as the walker)
-  if (relPath.split(sep).includes('memory')) throw new Error('memory/ is off limits');
+  if (picked.id === 'vault' && relPath.split(sep).includes('memory')) throw new Error('memory/ is off limits');
 
   return { root, abs, relPath };
 }
@@ -92,13 +152,14 @@ async function assertRealInVault(root: string, target: string, missingMsg: strin
   return real;
 }
 
-/** Read one note from the vault for the in-app reader (GET /api/notes/read).
- *  Shares findVault() with the collector so both resolve the same root. Throws
- *  on any violation — the route maps that to a 400. */
+/** Read one note for the in-app reader (GET /api/notes/read?root=&path=).
+ *  Shares resolveRoots() with the collector so both resolve the same roots.
+ *  Throws on any violation — the route maps that to a 400. */
 export async function readNote(
   rel: string,
-): Promise<{ path: string; title: string; content: string; modifiedAt: string }> {
-  const { root, abs, relPath } = await resolveInVault(rel);
+  rootId = 'vault',
+): Promise<{ root: string; path: string; title: string; content: string; modifiedAt: string }> {
+  const { root, abs, relPath } = await resolveInRoot(rootId, rel);
 
   // physical containment: a symlink inside the vault must not lead outside it
   const real = await assertRealInVault(root, abs, 'note not found');
@@ -121,8 +182,9 @@ export async function readNote(
   }
 
   return {
+    root: rootId || 'vault',
     path: relPath,
-    title: relPath.split(sep).pop()!.replace(/\.md$/, ''),
+    title: relPath.split(sep).pop()!.replace(NOTE_EXT, ''),
     content,
     modifiedAt: iso(st.mtimeMs),
   };
@@ -143,6 +205,7 @@ export async function writeNote(
   const rel = body?.path;
   const content = body?.content;
   const baseModifiedAt = body?.baseModifiedAt;
+  const rootId = typeof body?.root === 'string' && body.root ? body.root : 'vault';
   if (typeof rel !== 'string' || !rel) throw new Error('missing note path');
   if (typeof content !== 'string') throw new Error('missing note content');
   // size cap on the bytes we actually write, not the JS string length
@@ -150,7 +213,7 @@ export async function writeNote(
     throw new Error('note too large (512KB max)');
   }
 
-  const { root, abs } = await resolveInVault(rel);
+  const { root, abs } = await resolveInRoot(rootId, rel);
 
   // physical containment. The file may not exist yet (a new note), in which case the
   // parent dir must already exist and resolve inside the vault — we never mkdir new
@@ -205,36 +268,58 @@ export async function writeNote(
 }
 
 async function run(): Promise<void> {
-  const state: NotesState = { updatedAt: iso(), vaultPath: null, recent: [], error: null };
+  const state: NotesState = { updatedAt: iso(), vaultPath: null, roots: [], notes: [], recent: [], error: null };
 
   try {
-    const vault = await findVault();
-    if (!vault) {
-      state.error = 'no obsidian vault found';
+    const roots = await resolveRoots();
+    if (roots.length === 0) {
+      state.error = 'no obsidian vault found and no notes.roots configured';
       store.setSection('notes', state);
       return;
     }
-    state.vaultPath = vault;
+    state.vaultPath = roots.find((r) => r.id === 'vault')?.path ?? null;
 
-    const files = await walkMd(vault);
-    const stats = await Promise.all(
-      files.map(async (abs) => {
-        try {
-          return { abs, mtimeMs: (await stat(abs)).mtimeMs };
-        } catch {
-          return null; // deleted mid-walk
-        }
-      }),
-    );
-    state.recent = stats
-      .filter((s): s is NonNullable<typeof s> => s !== null)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    const all: Array<NoteEntry & { mtimeMs: number }> = [];
+    for (const root of roots) {
+      const { files, truncated } = await walkNotes(root);
+      const stats = await Promise.all(
+        files.map(async (abs) => {
+          try {
+            return { abs, mtimeMs: (await stat(abs)).mtimeMs };
+          } catch {
+            return null; // deleted mid-walk
+          }
+        }),
+      );
+      const entries = stats
+        .filter((s): s is NonNullable<typeof s> => s !== null)
+        .map((s) => ({
+          root: root.id,
+          path: relative(root.path, s.abs),
+          title: s.abs.split('/').pop()!.replace(NOTE_EXT, ''),
+          modifiedAt: iso(s.mtimeMs),
+          mtimeMs: s.mtimeMs,
+        }));
+      const kept = selectNewest(entries);
+      all.push(...kept);
+      const rootInfo: NotesRoot = {
+        id: root.id,
+        path: root.path,
+        label: root.label,
+        count: kept.length,
+        // either bound bit: the walk stopped early, or the budget dropped older notes
+        truncated: truncated || kept.length < entries.length,
+      };
+      state.roots.push(rootInfo);
+    }
+
+    all.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    state.notes = all.map(({ mtimeMs: _unused, ...entry }) => entry);
+    // legacy slice for an older web bundle: vault-only, 15 newest
+    state.recent = state.notes
+      .filter((n) => n.root === 'vault')
       .slice(0, 15)
-      .map((s) => ({
-        path: relative(vault, s.abs),
-        title: s.abs.split('/').pop()!.replace(/\.md$/, ''),
-        modifiedAt: iso(s.mtimeMs),
-      }));
+      .map((n) => ({ path: n.path, title: n.title, modifiedAt: n.modifiedAt }));
   } catch (err) {
     state.error = err instanceof Error ? err.message : String(err);
   }

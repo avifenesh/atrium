@@ -13,6 +13,7 @@ import type {
   ReentryResumeTarget,
 } from '../../shared/types.js';
 import { config } from './config.js';
+import { splitOwnerDeclined } from './declined-work.js';
 import { store } from './state.js';
 import { iso, readJson, sh, shTry, userSystemdEnv } from './util.js';
 
@@ -463,6 +464,17 @@ function contextProject(path: string): string {
   return rel.split('/')[0] || basename(path);
 }
 
+let withheldNote = '';
+
+/** Filtering is never silent: the withheld ids stay in the journal so a wrong match
+ *  is findable. Logged only when the set changes — evidence is rebuilt every poll. */
+function noteWithheld(items: { id: string }[]): void {
+  const ids = items.map((item) => item.id).sort().join(', ');
+  if (ids === withheldNote) return;
+  withheldNote = ids;
+  if (ids) console.log(`[reentry] withholding declined GitHub work from the status evidence: ${ids}`);
+}
+
 export const reentry = {
   async load(): Promise<void> {
     try {
@@ -568,6 +580,12 @@ export const reentry = {
 
   buildEvidence(): ReentryEvidence {
     const snapshot = store.get();
+    // Work the owner declined, or wrote an avoid rule about, is not next work.
+    // Re-offering it every poll is the fastest way to make this brief untrustworthy.
+    const decisions = { offers: snapshot.helper.offers, preferences: snapshot.helper.preferences };
+    const actNow = splitOwnerDeclined(snapshot.github.actNow, decisions);
+    const peopleWaiting = splitOwnerDeclined(snapshot.github.orgQueue, decisions);
+    noteWithheld([...actNow.declined, ...peopleWaiting.declined]);
     const liveContexts = contexts
       .filter((item) => item.state !== 'done')
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -607,9 +625,14 @@ export const reentry = {
             }
           : null,
       })),
-      repos: snapshot.repos.repos.slice(0, 80),
+      // real repos lead; lane working copies (wt-*/lane/*) trail so a fleet of agent
+      // lanes can't crowd the evidence window the brief is built from
+      repos: [
+        ...snapshot.repos.repos.filter((repo) => !repo.isLane),
+        ...snapshot.repos.repos.filter((repo) => repo.isLane),
+      ].slice(0, 80),
       agentSessions,
-      peopleWaiting: snapshot.github.orgQueue.slice(0, 30).map((item) => ({
+      peopleWaiting: peopleWaiting.kept.slice(0, 30).map((item) => ({
         id: item.id,
         repo: item.repo,
         title: item.title,
@@ -618,7 +641,7 @@ export const reentry = {
         lane: item.lane,
         updatedAt: item.updatedAt,
       })),
-      actNow: snapshot.github.actNow.slice(0, 30).map((item) => ({
+      actNow: actNow.kept.slice(0, 30).map((item) => ({
         id: item.id,
         repo: item.repo,
         title: item.title,

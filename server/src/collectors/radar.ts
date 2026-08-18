@@ -19,9 +19,10 @@
 // Everything here is a public, unauthenticated endpoint. No token, no account.
 
 import { config } from '../config.js';
+import { signals } from '../signals.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
-import type { ExtraRow, Flag } from '../../../shared/types.js';
+import type { Flag, SignalItem } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
 
 const API = 'https://huggingface.co/api';
@@ -54,11 +55,13 @@ interface RadarConfig {
 
 function radarConfig(): RadarConfig {
   const raw = (config as unknown as { radar?: Partial<RadarConfig> }).radar ?? {};
+  // the watch list and keywords come from the runtime-editable signals watch file,
+  // so the UI can change them without a code change or restart; thresholds stay in
+  // config.json (they are policy, not portfolio)
+  const watch = signals.watch();
   return {
-    watch: Array.isArray(raw.watch) ? raw.watch : [],
-    demandKeywords: Array.isArray(raw.demandKeywords) && raw.demandKeywords.length
-      ? raw.demandKeywords.map((k) => k.toLowerCase())
-      : ['gguf', 'nvfp4', 'fp8', 'quant', 'mtp', 'speculative', 'draft', 'blackwell', '5090'],
+    watch: watch.radarWatch,
+    demandKeywords: watch.demandKeywords.map((k) => k.toLowerCase()),
     freshHours: typeof raw.freshHours === 'number' ? raw.freshHours : 48,
     reactionAlert: typeof raw.reactionAlert === 'number' ? raw.reactionAlert : 3,
   };
@@ -140,25 +143,16 @@ const collector: Collector = {
 
     if (settings.watch.length === 0) {
       // Not an error: an unconfigured radar is the default state of a fresh install.
-      store.setExtra('radar', {
-        title: 'radar',
-        updatedAt: iso(),
-        up: true,
-        rows: [{ label: 'watchlist', value: 'empty — set radar.watch in config.json', tone: 'warn' }],
-        error: null,
-      });
+      await signals.publish('hf-hub', [], null);
       store.setFlags('radar', []);
       return;
     }
 
-    const rows: ExtraRow[] = [];
+    const items: Array<Omit<SignalItem, 'firstSeenAt'>> = [];
     const flags: Flag[] = [];
-    const raw: unknown[] = [];
     const failures: string[] = [];
 
     for (const entry of settings.watch) {
-      const label = entry.status ? `${entry.family} · ${entry.status}` : entry.family;
-
       let newest: HubModel | null = null;
       let derivatives: { count: number; capped: boolean } | null = null;
       const threads: Array<HubDiscussion & { repo: string }> = [];
@@ -187,19 +181,27 @@ const collector: Collector = {
 
       const age = ageHours(newest?.createdAt);
       const fresh = age !== null && age <= settings.freshHours;
-      rows.push({
-        label,
-        value: newest
-          ? `${newest.id.split('/').pop()} ${age === null ? '' : shortAge(age)}${
-              derivatives ? ` · ${derivatives.count}${derivatives.capped ? '+' : ''} derivatives` : ''
-            }`
-          : 'no release data',
-        tone: fresh ? 'err' : derivatives && derivatives.count === 0 ? 'ok' : undefined,
-        href: newest ? `https://huggingface.co/${newest.id}` : undefined,
-      });
+      if (newest) {
+        items.push({
+          id: `hf-hub:release:${newest.id}`,
+          source: 'hf-hub',
+          kind: 'release',
+          entity: entry.status ? `${entry.family} · ${entry.status}` : entry.family,
+          title: `${newest.id.split('/').pop()}${age === null ? '' : ` — ${shortAge(age)}`}`,
+          detail: derivatives
+            ? `${derivatives.count}${derivatives.capped ? '+' : ''} derivatives exist so far`
+            : null,
+          url: `https://huggingface.co/${newest.id}`,
+          count: derivatives?.count ?? null,
+          delta: null,
+          occurredAt: newest.createdAt ?? null,
+        });
+      }
 
       // A checkpoint inside the fresh window is the whole point of the radar, so it
-      // is the one thing here allowed to reach the phone.
+      // is the one thing here allowed to reach the phone. Demand threads are rows on
+      // the signals view with a NEW marker — they used to be info flags, which buried
+      // the flag strip in unactionable noise until the whole source got muted.
       if (fresh && newest && age !== null) {
         flags.push({
           // Keyed on the model, not on the family: a mute should silence THIS release
@@ -216,40 +218,24 @@ const collector: Collector = {
       }
 
       for (const thread of threads.sort((a, b) => b.numReactionUsers - a.numReactionUsers)) {
-        const threadAge = ageHours(thread.createdAt);
-        rows.push({
-          label: `  ↳ ${thread.repo.split('/').pop()} #${thread.num}`,
-          value: `${thread.title.slice(0, 72)} · ${thread.numReactionUsers}❤ ${thread.numComments}💬${
-            threadAge === null ? '' : ` · ${shortAge(threadAge)}`
-          }`,
-          tone: thread.numReactionUsers >= settings.reactionAlert ? 'warn' : undefined,
-          href: `https://huggingface.co/${thread.repo}/discussions/${thread.num}`,
+        items.push({
+          id: `hf-hub:thread:${thread.repo}#${thread.num}`,
+          source: 'hf-hub',
+          kind: 'demand-thread',
+          entity: entry.family,
+          title: thread.title.slice(0, 120),
+          detail: `${thread.repo.split('/').pop()} #${thread.num} · ${thread.numComments} comments`,
+          url: `https://huggingface.co/${thread.repo}/discussions/${thread.num}`,
+          count: thread.numReactionUsers,
+          delta: null,
+          occurredAt: thread.createdAt ?? null,
         });
-        if (thread.numReactionUsers >= settings.reactionAlert) {
-          flags.push({
-            id: `radar:thread:${thread.repo}#${thread.num}`,
-            severity: 'info',
-            title: `${thread.numReactionUsers} people want this: ${thread.repo.split('/').pop()} #${thread.num}`,
-            detail: `${thread.title.slice(0, 120)} — https://huggingface.co/${thread.repo}/discussions/${thread.num}`,
-            source: 'radar',
-            raisedAt: iso(),
-          });
-        }
       }
-
-      raw.push({ family: entry.family, org: entry.org, newest, derivatives, threads });
     }
 
-    store.setExtra('radar', {
-      title: 'radar',
-      updatedAt: iso(),
-      // Partial data is still useful, so one dead endpoint does not mark the whole
-      // section down; it shows in `error` and the rest of the rows stand.
-      up: failures.length < settings.watch.length,
-      rows,
-      error: failures.length ? failures.slice(0, 3).join(' | ') : null,
-      data: { watch: raw, freshHours: settings.freshHours },
-    });
+    // Partial data is still useful, so one dead endpoint does not drop the section;
+    // the failure list rides along and the rest of the items stand.
+    await signals.publish('hf-hub', items, failures.length ? failures.slice(0, 3).join(' | ') : null);
     store.setFlags('radar', flags);
   },
 };

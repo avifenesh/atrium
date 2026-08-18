@@ -248,6 +248,7 @@ export function MuteButton({
   className = '',
   label = 'quiet',
   untilActivity = false,
+  untilClear = false,
 }: {
   kind: MuteKind;
   target: string;
@@ -256,6 +257,8 @@ export function MuteButton({
   label?: string;
   /** github-item only: quiet auto-lifts when the item moves (new comment/push) */
   untilActivity?: boolean;
+  /** flag only: quiet auto-lifts when the flag clears — the next failure alerts again */
+  untilClear?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -268,7 +271,9 @@ export function MuteButton({
           ? `quiet ${target} (pauses the source)`
           : untilActivity
             ? `quiet ${target} — comes back on new activity`
-            : `quiet ${target}`
+            : untilClear
+              ? `quiet ${target} — re-alerts on the next failure`
+              : `quiet ${target}`
       }
       disabled={busy}
       onClick={async (e) => {
@@ -282,7 +287,13 @@ export function MuteButton({
         setArmed(false);
         setBusy(true);
         try {
-          await addMute({ kind, target, enforce, ...(untilActivity ? { untilActivity: true } : {}) });
+          await addMute({
+            kind,
+            target,
+            enforce,
+            ...(untilActivity ? { untilActivity: true } : {}),
+            ...(untilClear ? { untilClear: true } : {}),
+          });
           setFailed(false);
         } catch {
           setFailed(true);
