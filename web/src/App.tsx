@@ -4,8 +4,7 @@ import { isMuted, useSnapshot } from './api';
 import { recordSystemSample, useNow, useScrollLock } from './hooks';
 import NowView from './panels/NowView';
 import TasksPanel from './panels/TasksPanel';
-import HelperPanel from './panels/HelperPanel';
-import ReentryPanel from './panels/ReentryPanel';
+import ForYouPanel from './panels/ForYouPanel';
 import AgentsPanel from './panels/AgentsPanel';
 import RevutoPanel from './panels/RevutoPanel';
 import SystemPanel from './panels/SystemPanel';
@@ -512,18 +511,7 @@ export default function App() {
             <NowView snapshot={snapshot} onNavigate={navigate} onOpenQuiet={openQuiet} onOpenItem={openItem} />
           )}
           {activeView === 'tasks' && <TasksPanel snapshot={snapshot} onOpenQuiet={openQuiet} onOpenItem={openItem} />}
-          {activeView === 'foryou' && (
-            <div>
-              <div className="mb-3 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">
-                Pick up where you left
-              </div>
-              <ReentryPanel snapshot={snapshot} />
-              <div className="mb-3 mt-10 px-1 font-mono text-[10px] uppercase tracking-[0.18em] text-mist-faint">
-                Offers from the scout
-              </div>
-              <HelperPanel snapshot={snapshot} />
-            </div>
-          )}
+          {activeView === 'foryou' && <ForYouPanel snapshot={snapshot} />}
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}

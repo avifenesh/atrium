@@ -1,8 +1,7 @@
-import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { config } from './config.js';
-import { claudeModelName, claudeRuntimeEnv } from './core/itch-agent.js';
+import { runClaudeStructured, structuredModelRuntime } from './core/itch-agent.js';
 import {
   HELPER_FORCE_SCAN_FILE,
   HELPER_SCOUT_PROMPT_FILE,
@@ -27,6 +26,7 @@ interface WorkerState {
 }
 
 const API = `http://${config.host}:${config.port}`;
+const SCOUT_RUNTIME = structuredModelRuntime(config.helper.model);
 const EVIDENCE_FILE = join(config.helper.runtimeDir, 'evidence.json');
 const REQUEST_FILE = join(config.helper.runtimeDir, 'request.txt');
 const SESSION_DIGEST_CACHE_FILE = join(config.helper.runtimeDir, 'session-digests.json');
@@ -228,65 +228,15 @@ function runClaude(
   schema: string,
   options: { effort: 'low' | 'medium' | 'high'; timeoutMs: number; label: string },
 ): Promise<string> {
-  const env = claudeRuntimeEnv(process.env);
-  const model = claudeModelName('opus', env);
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      config.paths.claudeBin,
-      [
-        '--safe-mode',
-        '-p',
-        '--model', model,
-        '--effort', options.effort,
-        '--permission-mode', 'auto',
-        '--tools', '',
-        '--strict-mcp-config',
-        '--mcp-config', '{"mcpServers":{}}',
-        '--no-session-persistence',
-        '--output-format', 'json',
-        '--json-schema', schema,
-        '--system-prompt-file', systemPromptPath,
-      ],
-      { cwd: config.helper.runtimeDir, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] },
-    );
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(stdout);
-    };
-    const timer = setTimeout(() => {
-      try {
-        if (child.pid) process.kill(-child.pid, 'SIGTERM');
-      } catch {
-        child.kill('SIGTERM');
-      }
-      finish(new Error(`${options.label} timed out after ${Math.round(options.timeoutMs / 60_000)} minutes`));
-    }, options.timeoutMs);
-    timer.unref();
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      stdout = (stdout + chunk).slice(-12 * 1024 * 1024);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr = (stderr + chunk).slice(-2 * 1024 * 1024);
-    });
-    child.once('error', (error) => finish(error));
-    child.once('close', (code, signal) => {
-      if (code === 0) finish();
-      else {
-        const diagnostic = cleanError(stderr.trim() || stdout.trim());
-        finish(new Error(
-          `${options.label} exited ${code ?? signal ?? 'unknown'}${diagnostic ? `: ${diagnostic}` : ''}`,
-        ));
-      }
-    });
-    child.stdin.end(prompt);
+  return runClaudeStructured({
+    ...options,
+    bin: config.paths.claudeBin,
+    cwd: config.helper.runtimeDir,
+    model: SCOUT_RUNTIME.model,
+    env: SCOUT_RUNTIME.env,
+    prompt,
+    systemPromptPath,
+    schema,
   });
 }
 
@@ -343,7 +293,7 @@ async function distillSessionBatchOnce(batch: HelperSessionEvidence[]): Promise<
   const stdout = await runClaude(prompt, SESSION_DISTILLER_PROMPT_FILE, SESSION_DIGEST_SCHEMA, {
     effort: 'low',
     timeoutMs: 12 * 60_000,
-    label: 'Claude Code Opus 5 session distillation',
+    label: 'GLM 5.3 session distillation',
   });
   const result = parseClaudeStructuredOutput(stdout);
   const rows = Array.isArray(result.digests) ? result.digests : [];
@@ -527,7 +477,7 @@ async function main(): Promise<void> {
     const stdout = await runClaude(prompt, HELPER_SCOUT_PROMPT_FILE, RESULT_SCHEMA, {
       effort: 'high',
       timeoutMs: 25 * 60_000,
-      label: 'Claude Code Opus 5 offer scan',
+      label: 'GLM 5.3 offer scan',
     });
     const result = parseHelperAgentOutput(stdout);
     const applied = await apiJson('/api/helper/agent-result', {

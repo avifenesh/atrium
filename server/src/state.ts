@@ -113,7 +113,7 @@ export function emptySnapshot(): Snapshot {
       settings: { intervalMs: 3 * 60 * 60 * 1_000, defaultExecutor: 'claude' },
       agent: {
         status: 'idle',
-        model: 'claude:opus',
+        model: 'glm:glm-5.3',
         lastCheckedAt: null,
         lastOfferedAt: null,
         lastError: null,

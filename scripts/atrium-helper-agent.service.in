@@ -1,5 +1,5 @@
 [Unit]
-Description=Atrium proactive offer scout (Claude Code Opus 5)
+Description=Atrium proactive offer scout (GLM 5.3 via Claude Code)
 After=atrium.service network-online.target
 Wants=network-online.target
 

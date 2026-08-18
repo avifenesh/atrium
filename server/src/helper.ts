@@ -768,7 +768,7 @@ export const helper = {
     }
     if (raw.offers.length > 0 && added === 0 && updated === 0) {
       const hadKnownKeys = raw.offers.some((item) => existingByKey.has(offerKey((item as any)?.key)));
-      if (!hadKnownKeys) throw new Error('Opus returned offers that failed validation');
+      if (!hadKnownKeys) throw new Error('The scout returned offers that failed validation');
     }
     applyPreferenceUpdates(raw.preferenceUpdates);
     await applySkillUpdates(raw.skillUpdates);

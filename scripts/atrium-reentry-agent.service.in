@@ -1,5 +1,5 @@
 [Unit]
-Description=Atrium Re-entry status preparation (Grok 4.6)
+Description=Atrium Re-entry status preparation (GLM 5.3, Grok fallback)
 After=atrium.service network-online.target
 Wants=network-online.target
 

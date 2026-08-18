@@ -35,8 +35,9 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Model ids carry a provider prefix (`glm:glm-5.3`, `grok:grok-4.6`). */
 export function providerOf(model: string): string {
-  return model.split('/')[0] || model;
+  return model.split(/[/:]/)[0] || model;
 }
 
 export function isRateLimitError(message: string): boolean {
@@ -91,6 +92,15 @@ export function parseGrokOutput(output: string): { text: string; sessionIds: str
   return { text: trimmed, sessionIds: [], error: null };
 }
 
+export function validateAgentObject(object: Record<string, unknown>): Record<string, unknown> {
+  if (typeof object.headline !== 'string' || !object.headline.trim()) throw new Error('model result has no headline');
+  if (typeof object.summary !== 'string' || !object.summary.trim()) throw new Error('model result has no summary');
+  if (!Array.isArray(object.focus) || !Array.isArray(object.looseEnds) || !Array.isArray(object.contexts)) {
+    throw new Error('model result is missing required arrays');
+  }
+  return object;
+}
+
 export function parseAgentJson(text: string): Record<string, unknown> {
   const unfenced = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   const start = unfenced.indexOf('{');
@@ -98,13 +108,7 @@ export function parseAgentJson(text: string): Record<string, unknown> {
   if (start < 0 || end <= start) throw new Error('model returned no JSON object');
   const parsed = JSON.parse(unfenced.slice(start, end + 1)) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('model result must be a JSON object');
-  const object = parsed as Record<string, unknown>;
-  if (typeof object.headline !== 'string' || !object.headline.trim()) throw new Error('model result has no headline');
-  if (typeof object.summary !== 'string' || !object.summary.trim()) throw new Error('model result has no summary');
-  if (!Array.isArray(object.focus) || !Array.isArray(object.looseEnds) || !Array.isArray(object.contexts)) {
-    throw new Error('model result is missing required arrays');
-  }
-  return object;
+  return validateAgentObject(parsed as Record<string, unknown>);
 }
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`): string {

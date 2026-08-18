@@ -197,15 +197,16 @@ export const defaults = {
   },
 
   reentry: {
-    /** Grok CLI model order. Headless `grok -m` ids, not OpenCode provider routes. */
-    models: ['grok-4.6'] as string[],
+    /** Briefing model order. `glm:` ids run headless on Claude Code against the
+     *  z.ai coding-plan endpoint; `grok:` ids run on the Grok CLI as fallback. */
+    models: ['glm:glm-5.3', 'grok:grok-4.6'] as string[],
     runtimeDir: join(HOME, '.config', 'atrium', 'reentry-agent'),
     maxContexts: 32,
   },
 
   helper: {
-    /** The scout is intentionally fixed to Claude Code + Opus 5. */
-    model: 'claude:opus',
+    /** The scout is intentionally fixed to GLM 5.3 via Claude Code (z.ai plan). */
+    model: 'glm:glm-5.3',
     runtimeDir: join(HOME, '.config', 'atrium', 'helper-agent'),
     skillsDir: join(HOME, '.config', 'atrium', 'helper-skills'),
     defaultIntervalMs: 3 * 60 * 60 * 1_000,

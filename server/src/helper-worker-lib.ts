@@ -48,10 +48,10 @@ function parseJsonObject(text: string): Record<string, unknown> {
   const unfenced = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   const start = unfenced.indexOf('{');
   const end = unfenced.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('Opus returned no JSON object');
+  if (start < 0 || end <= start) throw new Error('agent returned no JSON object');
   const value = JSON.parse(unfenced.slice(start, end + 1)) as unknown;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Opus result must be a JSON object');
+    throw new Error('agent result must be a JSON object');
   }
   return value as Record<string, unknown>;
 }
@@ -71,7 +71,7 @@ export function parseClaudeStructuredOutput(stdout: string): Record<string, unkn
 export function parseHelperAgentOutput(stdout: string): Record<string, unknown> {
   const outer = parseClaudeStructuredOutput(stdout);
   if (Array.isArray(outer.offers)) return outer;
-  throw new Error('Opus result did not contain structured offers');
+  throw new Error('scout result did not contain structured offers');
 }
 
 export function normalizeHelperInterval(value: unknown): number {

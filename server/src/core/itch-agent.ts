@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { redactSecrets } from '../util.js';
 
 export const ITCH_MODELS = [
   // Automation preference: GPT-5.6 Sol first (stronger + cheaper than Opus 5).
@@ -84,13 +85,34 @@ function hermesEnvVar(name: string): string | null {
   }
 }
 
+function opencodeAuthKey(id: string): string | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(homedir(), '.local', 'share', 'opencode', 'auth.json'), 'utf8'));
+    const key = raw?.[id]?.key;
+    return typeof key === 'string' && key ? key : null;
+  } catch {
+    return null;
+  }
+}
+
 function glmEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
     ANTHROPIC_BASE_URL: base.ITCH_GLM_ANTHROPIC_BASE_URL || base.ZAI_ANTHROPIC_BASE_URL || 'https://api.z.ai/api/anthropic',
     API_TIMEOUT_MS: base.API_TIMEOUT_MS || '3000000',
+    // The user's ~/.claude/settings.json pins Claude Code to Bedrock; a GLM
+    // run must never inherit that routing.
+    CLAUDE_CODE_USE_BEDROCK: '0',
   };
-  const token = base.ITCH_GLM_ANTHROPIC_AUTH_TOKEN || base.ZAI_API_KEY || base.Z_AI_API_KEY || base.GLM_API_KEY || hermesEnvVar('GLM_API_KEY') || base.BIGMODEL_API_KEY || base.ANTHROPIC_AUTH_TOKEN;
+  const token = base.ITCH_GLM_ANTHROPIC_AUTH_TOKEN
+    || base.ZAI_CODING_PLAN_API_KEY
+    || opencodeAuthKey('zai-coding-plan')
+    || base.ZAI_API_KEY
+    || base.Z_AI_API_KEY
+    || base.GLM_API_KEY
+    || hermesEnvVar('GLM_API_KEY')
+    || base.BIGMODEL_API_KEY
+    || base.ANTHROPIC_AUTH_TOKEN;
   if (token) env.ANTHROPIC_AUTH_TOKEN = token;
   return env;
 }
@@ -134,6 +156,103 @@ export function claudeModelName(model: string, env: NodeJS.ProcessEnv): string {
   if (model === 'fable') return 'claude-fable-5';
   if (model === 'haiku') return 'claude-haiku-4-5';
   return model;
+}
+
+/** Resolve a `glm:` / `claude:` model id to the concrete CLI model name plus the
+ *  runtime env that routes Claude Code at the right provider — the z.ai coding
+ *  plan endpoint for glm, the ~/.claude/settings.json provider for claude. */
+export function structuredModelRuntime(
+  model: string,
+  base: NodeJS.ProcessEnv = process.env,
+): { model: string; env: NodeJS.ProcessEnv } {
+  if (model.startsWith('glm:')) {
+    const env = glmEnv(base);
+    const id = model.slice('glm:'.length);
+    if (id.includes('[1m]')) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '1000000';
+    return { model: id, env };
+  }
+  const env = claudeRuntimeEnv(base);
+  const idx = model.indexOf(':');
+  return { model: claudeModelName(idx > 0 ? model.slice(idx + 1) : model, env), env };
+}
+
+/** Headless, tool-free Claude Code run that must return JSON matching `schema`.
+ *  Shared by the helper scout and the re-entry brief so both workers get the
+ *  same hardening: safe mode, no tools, no MCP, no session persistence. */
+export function runClaudeStructured(options: {
+  bin: string;
+  cwd: string;
+  model: string;
+  env: NodeJS.ProcessEnv;
+  prompt: string;
+  systemPromptPath: string;
+  schema: string;
+  effort: 'low' | 'medium' | 'high';
+  timeoutMs: number;
+  label: string;
+}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      options.bin,
+      [
+        '--safe-mode',
+        '-p',
+        // Skip ~/.claude/settings.json: its env (e.g. a Bedrock pin) must not
+        // override the provider routing this worker passes explicitly. The
+        // claude backend gets the same vars merged via claudeRuntimeEnv.
+        '--setting-sources', '',
+        '--model', options.model,
+        '--effort', options.effort,
+        '--permission-mode', 'auto',
+        '--tools', '',
+        '--strict-mcp-config',
+        '--mcp-config', '{"mcpServers":{}}',
+        '--no-session-persistence',
+        '--output-format', 'json',
+        '--json-schema', options.schema,
+        '--system-prompt-file', options.systemPromptPath,
+      ],
+      { cwd: options.cwd, env: options.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(stdout);
+    };
+    const timer = setTimeout(() => {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        child.kill('SIGTERM');
+      }
+      finish(new Error(`${options.label} timed out after ${Math.round(options.timeoutMs / 60_000)} minutes`));
+    }, options.timeoutMs);
+    timer.unref();
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout = (stdout + chunk).slice(-12 * 1024 * 1024);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr = (stderr + chunk).slice(-2 * 1024 * 1024);
+    });
+    child.once('error', (error) => finish(error));
+    child.once('close', (code, signal) => {
+      if (code === 0) finish();
+      else {
+        const diagnostic = redactSecrets(stderr.trim() || stdout.trim()).replace(/[\r\n]+/g, ' ').trim().slice(0, 800);
+        finish(new Error(
+          `${options.label} exited ${code ?? signal ?? 'unknown'}${diagnostic ? `: ${diagnostic}` : ''}`,
+        ));
+      }
+    });
+    child.stdin.end(options.prompt);
+  });
 }
 
 export function buildItchAgentCommand(model: string, cwd: string): ItchAgentCommand {
