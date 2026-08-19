@@ -319,7 +319,7 @@ function OfferCard({
     onBusy(`launch:${offer.id}`);
     try {
       await launchHelperOffer(offer.id, executor, prompt);
-      onNotice(`Opened ${offer.title} in Kitty with ${executor === 'claude' ? 'Claude Code Opus 5' : 'Codex'}.`);
+      onNotice(`Opened ${offer.title} in tmux with ${executor === 'claude' ? 'Claude Code Opus 5' : 'Codex'}.`);
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error), true);
     } finally {

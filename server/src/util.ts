@@ -28,6 +28,34 @@ export async function shTry(cmd: string, args: string[], opts: { timeoutMs?: num
   }
 }
 
+export function sanitizeTmuxName(raw: string): string {
+  const cleaned = raw.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  return cleaned || 'atrium';
+}
+
+/** Detached session on the default tmux socket (tmux-server.service / phone bridge). */
+export async function launchTmuxSession(opts: {
+  name: string;
+  cwd: string;
+  command?: string | null;
+  title?: string;
+}): Promise<string> {
+  const name = sanitizeTmuxName(opts.name);
+  const env = { ...process.env };
+  delete env.TMUX;
+  const tmux = (args: string[], timeoutMs = 5_000) => sh('tmux', args, { timeoutMs, env });
+  const exists = await shTry('tmux', ['has-session', '-t', '=' + name], { timeoutMs: 2_000 });
+  if (exists !== null) {
+    await shTry('tmux', ['kill-session', '-t', '=' + name], { timeoutMs: 2_000 });
+  }
+  const args = ['new-session', '-d', '-s', name, '-c', opts.cwd];
+  if (opts.title) args.push('-n', opts.title.slice(0, 80));
+  if (opts.command) args.push(opts.command);
+  await tmux(args);
+  return name;
+}
+
+
 export function userSystemdEnv(): NodeJS.ProcessEnv {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   const runtimeDir = process.env.XDG_RUNTIME_DIR ?? (uid === null ? undefined : `/run/user/${uid}`);

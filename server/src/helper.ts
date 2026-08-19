@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import type {
   HelperAgentStatus,
   HelperEvidenceRef,
@@ -23,7 +22,7 @@ import {
   systemdInterval,
 } from './helper-worker-lib.js';
 import { store } from './state.js';
-import { iso, readJson, sh, tailLines, userSystemdEnv } from './util.js';
+import { iso, readJson, sh, tailLines, userSystemdEnv, launchTmuxSession } from './util.js';
 
 const STATE_FILE = resolve(config.configDir, 'helper.json');
 export const HELPER_WORKER_STATE_FILE = resolve(config.configDir, 'helper-worker.json');
@@ -512,19 +511,12 @@ async function writeLaunchFiles(offer: HelperOffer, executor: HelperExecutor, pr
   return scriptPath;
 }
 
-async function launchKitty(path: string, title: string, script: string): Promise<void> {
-  const kitty = await availableBinary(config.paths.kittyBin, 'kitty');
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn(
-      kitty,
-      ['--detach', '--hold', '--directory', path, '-T', `Atrium · ${title}`, script],
-      { detached: true, stdio: 'ignore', env: process.env },
-    );
-    child.once('spawn', () => {
-      child.unref();
-      resolvePromise();
-    });
-    child.once('error', reject);
+async function launchHelperTmux(path: string, title: string, script: string, offerId: string): Promise<string> {
+  return launchTmuxSession({
+    name: 'atrium-h-' + offerId,
+    cwd: path,
+    command: script,
+    title: 'Atrium · ' + title,
   });
 }
 
@@ -863,7 +855,7 @@ export const helper = {
     if (prompt.length < 80) throw new Error('the handoff prompt is too short');
     const path = await requireProjectPath(offer.path);
     const script = await writeLaunchFiles(offer, executor, prompt, path);
-    await launchKitty(path, offer.title, script);
+    await launchHelperTmux(path, offer.title, script, offer.id);
     const now = iso();
     const next: HelperOffer = {
       ...offer,

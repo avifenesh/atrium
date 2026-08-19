@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { access, mkdir, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import type {
   ReentryAgentStatus,
   ReentryBriefing,
@@ -15,7 +14,7 @@ import type {
 import { config } from './config.js';
 import { splitOwnerDeclined } from './declined-work.js';
 import { store } from './state.js';
-import { iso, readJson, sh, shTry, userSystemdEnv } from './util.js';
+import { iso, launchTmuxSession, readJson, sh, shTry, userSystemdEnv } from './util.js';
 
 const STATE_FILE = resolve(config.configDir, 'reentry.json');
 export const WORKER_STATE_FILE = resolve(config.configDir, 'reentry-worker.json');
@@ -342,18 +341,6 @@ async function captureResumeTarget(path: string): Promise<ReentryResumeTarget> {
   return id ? { kind: 'claude', id, capturedAt } : { kind: 'shell', id: null, capturedAt };
 }
 
-async function terminalBinary(): Promise<string | null> {
-  for (const candidate of ['/usr/bin/ptyxis', '/usr/bin/kgx', '/usr/bin/gnome-terminal']) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      /* try the next installed terminal */
-    }
-  }
-  return null;
-}
-
 async function claudeBinary(): Promise<string | null> {
   try {
     await access(config.paths.claudeBin);
@@ -403,12 +390,6 @@ export function composeResumePrompt(context: ReentryContext): string {
   return lines.join('\n').slice(0, 4_000);
 }
 
-function launchDetached(command: string, args: string[]): void {
-  const child = spawn(command, args, { detached: true, stdio: 'ignore', env: process.env });
-  child.on('error', (err) => console.error('[reentry] terminal launch failed:', err.message));
-  child.unref();
-}
-
 async function writeLaunchScript(context: ReentryContext, claude: string, args: string[]): Promise<string> {
   const dir = join(config.configDir, 'reentry-launches');
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -433,29 +414,28 @@ async function writeLaunchScript(context: ReentryContext, claude: string, args: 
 async function launchContext(
   context: ReentryContext,
 ): Promise<{ launched: boolean; via: string; sessionId: string | null }> {
-  const terminal = await terminalBinary();
-  if (!terminal) return { launched: false, via: 'no supported terminal found', sessionId: null };
-
   const claude = await claudeBinary();
   const storedId = context.resumeTarget.kind === 'claude' ? context.resumeTarget.id : null;
   const sessionId = (await matchingClaude(context.path)) ?? storedId;
   const plan = claude
     ? resolveClaudeLaunch(context, sessionId)
     : { args: [] as string[], via: 'shell' };
-  const via = claude ? plan.via : 'shell';
   const runner = claude ? await writeLaunchScript(context, claude, plan.args) : null;
-
-  const name = basename(terminal);
-  if (name === 'ptyxis') {
-    const args = ['--standalone', '--new-window', '-d', context.path, '-T', context.title];
-    if (runner) args.push('-x', runner);
-    launchDetached(terminal, args);
-  } else {
-    const args = ['--working-directory', context.path];
-    if (runner) args.push('--', runner);
-    launchDetached(terminal, args);
+  let tmuxName: string;
+  try {
+    tmuxName = await launchTmuxSession({
+      name: 'atrium-re-' + context.id,
+      cwd: context.path,
+      command: runner,
+      title: context.title,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[reentry] tmux launch failed:', message);
+    return { launched: false, via: message, sessionId: null };
   }
-  console.log(`[reentry] launch via=${via} cwd=${context.path} session=${sessionId ?? 'new'} runner=${runner ?? 'shell'}`);
+  const via = 'tmux:' + tmuxName;
+  console.log('[reentry] launch via=' + via + ' cwd=' + context.path + ' session=' + (sessionId ?? 'new') + ' runner=' + (runner ?? 'shell'));
   return { launched: true, via, sessionId };
 }
 
