@@ -48,6 +48,7 @@ interface WatchEntry {
 interface RadarConfig {
   watch: WatchEntry[];
   demandKeywords: string[];
+  prospectKeywords: string[];
   freshHours: number;
   /** A matching thread this popular is worth interrupting for. */
   reactionAlert: number;
@@ -62,6 +63,7 @@ function radarConfig(): RadarConfig {
   return {
     watch: watch.radarWatch,
     demandKeywords: watch.demandKeywords.map((k) => k.toLowerCase()),
+    prospectKeywords: (watch.prospectKeywords ?? []).map((k) => k.toLowerCase()),
     freshHours: typeof raw.freshHours === 'number' ? raw.freshHours : 48,
     reactionAlert: typeof raw.reactionAlert === 'number' ? raw.reactionAlert : 3,
   };
@@ -123,15 +125,23 @@ async function derivativeCount(baseModel: string): Promise<{ count: number; capp
   return { count: results.length, capped: results.length >= 100 };
 }
 
-/** Open, non-PR threads whose title asks for something we could ship. */
-async function demandThreads(repo: string, keywords: string[]): Promise<HubDiscussion[]> {
+/** Open, non-PR threads whose title asks for something we could ship, or shows a
+ *  buyer failing to run the model. Prospect keywords win the tie: someone whose
+ *  title says "OOM" is a hosted-inference prospect even if it also says "gguf". */
+async function matchingThreads(
+  repo: string,
+  demand: string[],
+  prospect: string[],
+): Promise<Array<HubDiscussion & { threadKind: 'demand-thread' | 'prospect-thread' }>> {
   const payload = await getJson<{ discussions: HubDiscussion[] }>(`${API}/models/${repo}/discussions?p=0`);
-  return (payload.discussions ?? []).filter(
-    (thread) =>
-      !thread.isPullRequest &&
-      thread.status === 'open' &&
-      keywords.some((word) => thread.title.toLowerCase().includes(word)),
-  );
+  const out: Array<HubDiscussion & { threadKind: 'demand-thread' | 'prospect-thread' }> = [];
+  for (const thread of payload.discussions ?? []) {
+    if (thread.isPullRequest || thread.status !== 'open') continue;
+    const title = thread.title.toLowerCase();
+    if (prospect.some((word) => title.includes(word))) out.push({ ...thread, threadKind: 'prospect-thread' });
+    else if (demand.some((word) => title.includes(word))) out.push({ ...thread, threadKind: 'demand-thread' });
+  }
+  return out;
 }
 
 const collector: Collector = {
@@ -155,7 +165,7 @@ const collector: Collector = {
     for (const entry of settings.watch) {
       let newest: HubModel | null = null;
       let derivatives: { count: number; capped: boolean } | null = null;
-      const threads: Array<HubDiscussion & { repo: string }> = [];
+      const threads: Array<HubDiscussion & { repo: string; threadKind: 'demand-thread' | 'prospect-thread' }> = [];
 
       try {
         newest = await newestRelease(entry.org, entry.match);
@@ -171,7 +181,7 @@ const collector: Collector = {
       }
       for (const mirror of entry.mirrors ?? []) {
         try {
-          for (const thread of await demandThreads(mirror, settings.demandKeywords)) {
+          for (const thread of await matchingThreads(mirror, settings.demandKeywords, settings.prospectKeywords)) {
             threads.push({ ...thread, repo: mirror });
           }
         } catch (error) {
@@ -221,7 +231,7 @@ const collector: Collector = {
         items.push({
           id: `hf-hub:thread:${thread.repo}#${thread.num}`,
           source: 'hf-hub',
-          kind: 'demand-thread',
+          kind: thread.threadKind,
           entity: entry.family,
           title: thread.title.slice(0, 120),
           detail: `${thread.repo.split('/').pop()} #${thread.num} · ${thread.numComments} comments`,

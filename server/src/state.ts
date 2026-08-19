@@ -126,7 +126,7 @@ export function emptySnapshot(): Snapshot {
     signals: {
       updatedAt: null,
       items: [],
-      watch: { terms: [], radarWatch: [], demandKeywords: [], repos: [], hfModels: [], crates: [] },
+      watch: { terms: [], radarWatch: [], demandKeywords: [], prospectKeywords: [], repos: [], hfModels: [], crates: [] },
       lastReviewedAt: null,
       sources: [],
       error: null,

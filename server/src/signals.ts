@@ -55,6 +55,13 @@ function defaultWatch(): SignalsWatch {
     demandKeywords: Array.isArray(radar.demandKeywords) && radar.demandKeywords.length
       ? radar.demandKeywords
       : ['gguf', 'nvfp4', 'fp8', 'quant', 'mtp', 'speculative', 'draft', 'blackwell', '5090'],
+    // buyer-pain vocabulary: someone failing to run/serve the model is a prospect
+    // for hosted inference, not a quant request — kept separate so the UI can rank
+    // prospects above artifact demand
+    prospectKeywords: [
+      'api', 'endpoint', 'host', 'serve', 'serving', 'provider', 'oom', 'out of memory',
+      'vram', 'watchdog', 'sigabrt', 'crash', 'too slow', 'tok/s', 'openrouter', 'inference',
+    ],
     // seeds mirror the retired darklanes snapshot constants — the business
     // portfolio lives here now, edited from the UI like everything else
     repos: ['avifenesh/memra'],
@@ -118,6 +125,7 @@ export const signals = {
           terms: Array.isArray(w?.terms) ? w.terms : def.terms,
           radarWatch: Array.isArray(w?.radarWatch) ? w.radarWatch : def.radarWatch,
           demandKeywords: Array.isArray(w?.demandKeywords) ? w.demandKeywords : def.demandKeywords,
+          prospectKeywords: Array.isArray(w?.prospectKeywords) ? w.prospectKeywords : def.prospectKeywords,
           repos: Array.isArray(w?.repos) ? w.repos : def.repos,
           hfModels: Array.isArray(w?.hfModels) ? w.hfModels : def.hfModels,
           crates: Array.isArray(w?.crates) ? w.crates : def.crates,
@@ -150,6 +158,12 @@ export const signals = {
         throw new Error('demandKeywords must be an array of strings');
       }
       next.demandKeywords = patch.demandKeywords.map((t) => t.trim().toLowerCase()).filter(Boolean);
+    }
+    if (patch.prospectKeywords !== undefined) {
+      if (!Array.isArray(patch.prospectKeywords) || patch.prospectKeywords.some((t) => typeof t !== 'string')) {
+        throw new Error('prospectKeywords must be an array of strings');
+      }
+      next.prospectKeywords = patch.prospectKeywords.map((t) => t.trim().toLowerCase()).filter(Boolean);
     }
     if (patch.radarWatch !== undefined) {
       if (!Array.isArray(patch.radarWatch) || patch.radarWatch.some((e) => !e || typeof e.family !== 'string' || typeof e.org !== 'string')) {

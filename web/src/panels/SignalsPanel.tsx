@@ -110,12 +110,13 @@ export function MentionRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
 
 export function DemandRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
   const dimmed = s.lead?.status === 'dismissed';
+  const isThread = s.kind === 'demand-thread' || s.kind === 'prospect-thread';
   return (
     <Row href={s.url ?? undefined} title={s.title} className="flex-wrap sm:flex-nowrap">
       <NewDot show={isNew && !s.lead} />
       <SourceChip>{s.kind === 'release' ? `release · ${s.entity}` : s.entity}</SourceChip>
       <span className={`min-w-0 flex-1 truncate text-sm ${dimmed ? 'text-mist-faint' : 'text-mist'}`}>{s.title}</span>
-      {s.kind === 'demand-thread' && s.count !== null && (
+      {isThread && s.count !== null && (
         <span className="shrink-0 font-mono text-xs tabular-nums text-amber" title={`${s.count} reactions`}>
           {s.count}❤
         </span>
@@ -125,7 +126,7 @@ export function DemandRow({ s, isNew }: { s: SignalItem; isNew: boolean }) {
           {s.detail}
         </span>
       )}
-      {s.kind === 'demand-thread' && <LeadButtons s={s} />}
+      {isThread && <LeadButtons s={s} />}
       <RelTime iso={s.occurredAt ?? s.firstSeenAt} />
     </Row>
   );
@@ -158,6 +159,7 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
   const watch = snapshot.signals.watch;
   const [terms, setTerms] = useState(watch.terms.join('\n'));
   const [keywords, setKeywords] = useState(watch.demandKeywords.join('\n'));
+  const [prospectKw, setProspectKw] = useState((watch.prospectKeywords ?? []).join('\n'));
   const [radar, setRadar] = useState(JSON.stringify(watch.radarWatch, null, 2));
   const [repos, setRepos] = useState((watch.repos ?? []).join('\n'));
   const [hfModels, setHfModels] = useState((watch.hfModels ?? []).join('\n'));
@@ -181,6 +183,7 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
       await saveSignalsWatch({
         terms: lines(terms),
         demandKeywords: lines(keywords),
+        prospectKeywords: lines(prospectKw),
         radarWatch,
         repos: lines(repos),
         hfModels: lines(hfModels),
@@ -218,6 +221,18 @@ function WatchEditor({ snapshot, onClose }: { snapshot: Snapshot; onClose: () =>
             className={FIELD}
             value={keywords}
             onChange={(e) => setKeywords(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={LABEL} htmlFor="signals-prospect-keywords">
+            prospect keywords (buyer pain, one per line)
+          </label>
+          <textarea
+            id="signals-prospect-keywords"
+            rows={10}
+            className={FIELD}
+            value={prospectKw}
+            onChange={(e) => setProspectKw(e.target.value)}
           />
         </div>
         <div>
@@ -280,18 +295,20 @@ export default function SignalsPanel({ snapshot }: { snapshot: Snapshot }) {
   const reviewedAt = sig.lastReviewedAt;
   const isNew = (s: SignalItem) => !reviewedAt || s.firstSeenAt > reviewedAt;
 
-  const { mentions, demand, counters, newCount, engagedCount } = useMemo(() => {
+  const { prospects, mentions, demand, counters, newCount, engagedCount } = useMemo(() => {
+    const prospects = sig.items.filter((s) => s.kind === 'prospect-thread');
     const mentions = sig.items.filter((s) => s.kind === 'mention');
     const demand = sig.items.filter((s) => s.kind === 'release' || s.kind === 'demand-thread');
     const counters = sig.items.filter((s) => s.kind === 'counter');
     const newCount = sig.items.filter((s) => isNew(s) && !s.lead).length;
     const engagedCount = sig.items.filter((s) => s.lead?.status === 'engaged').length;
-    return { mentions, demand, counters, newCount, engagedCount };
+    return { prospects, mentions, demand, counters, newCount, engagedCount };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig.items, reviewedAt]);
 
   const inMode = (s: SignalItem) =>
     mode === 'all' ? true : mode === 'engaged' ? s.lead?.status === 'engaged' : isNew(s) && !s.lead;
+  const shownProspects = prospects.filter(inMode);
   const shownMentions = mentions.filter(inMode);
   const shownDemand = demand.filter(inMode);
 
@@ -358,6 +375,31 @@ export default function SignalsPanel({ snapshot }: { snapshot: Snapshot }) {
       </header>
 
       {editing && <WatchEditor snapshot={snapshot} onClose={() => setEditing(false)} />}
+
+      <Panel
+        title="Prospects — hosting pain on watched models"
+        riseIndex={0}
+        className="col-span-12"
+        right={
+          shownProspects.length > 0 ? (
+            <span className="font-mono text-xs tabular-nums text-amber">{shownProspects.length}</span>
+          ) : undefined
+        }
+      >
+        {shownProspects.length === 0 ? (
+          <EmptyState>
+            {mode !== 'all'
+              ? `Nothing ${mode === 'new' ? 'new since the last review' : 'engaged yet'}.`
+              : 'No open threads matching prospect keywords. Quiet is allowed.'}
+          </EmptyState>
+        ) : (
+          <div className="max-h-[20rem] space-y-0.5 overflow-y-auto">
+            {shownProspects.map((s) => (
+              <DemandRow key={s.id} s={s} isNew={isNew(s)} />
+            ))}
+          </div>
+        )}
+      </Panel>
 
       <Panel
         title="Mentions"

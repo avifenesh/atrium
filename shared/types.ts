@@ -610,7 +610,7 @@ export interface ReposState {
 
 // ---------- signals (external attention on the business — leads, demand, counters) ----------
 
-export type SignalKind = 'mention' | 'release' | 'demand-thread' | 'counter';
+export type SignalKind = 'mention' | 'release' | 'demand-thread' | 'prospect-thread' | 'counter';
 
 /** Lead lifecycle on a signal: mentions and demand threads are places to go comment
  *  and win a user — 'engaged' = commented/answered, 'dismissed' = not worth it. */
@@ -662,6 +662,9 @@ export interface SignalsWatch {
   }>;
   /** thread-title keywords that count as shippable demand */
   demandKeywords: string[];
+  /** thread-title keywords that mark a BUYER in pain (hosting/serving trouble) —
+   *  these become prospect-thread signals, ranked above artifact demand */
+  prospectKeywords: string[];
   /** exposure counters portfolio — snapshotted daily because the upstream windows expire */
   repos: string[];
   hfModels: string[];
