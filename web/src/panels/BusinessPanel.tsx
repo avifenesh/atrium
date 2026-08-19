@@ -20,7 +20,7 @@ interface TiyuvtaData {
     totals: { requests: number; cachedPromptTokens: number; promptTokens: number };
     promo: { claimed: number; seats: number; remaining: number };
     books: { outOfBalance: number };
-    top?: Array<{ email: string; tenantId: string; creditedMicro: number; spentMicro: number; requests: number; paid: boolean; suspended: boolean; enrolled: boolean; createdAt?: number; lastActiveDay?: number | string | null }>;
+    top?: Array<{ email: string; tenantId: string; creditedMicro: number; spentMicro: number; requests: number; paid: boolean; suspended: boolean; enrolled: boolean; internal?: boolean; createdAt?: number; lastActiveDay?: number | string | null }>;
   } | null;
   api: { surfaces: Array<{ path: string; state: string }>; models: string[] } | null;
   webhookFailures: unknown[] | null;
@@ -116,7 +116,8 @@ export default function BusinessPanel({
   // activation — the accounts we already acquired, ranked coldest first.
   // A signup that never made a second request is the cheapest revenue there is.
   const topAccounts = dash?.top ?? [];
-  const silent = topAccounts.filter((a) => a.requests <= 1);
+  // Owner-internal accounts are not leads: a silent bench account needs no email.
+  const silent = topAccounts.filter((a) => a.requests <= 1 && !a.internal);
   const distributionRows = (snapshot.extra?.distribution?.rows ?? []) as ExtraRow[];
 
 
@@ -131,7 +132,7 @@ export default function BusinessPanel({
           <>
             <Stat value={usd(dash.money.outstandingMicro)} label="Credit outstanding" onClick={() => onNavigate('tiyuvta')} />
             <Stat value={usd(dash.money.spentMicro)} label="Spend metered" onClick={() => onNavigate('tiyuvta')} />
-            <Stat value={String(dash.totals.requests)} label="Requests" onClick={() => onNavigate('tiyuvta')} />
+            <Stat value={String(dash.totals.requests)} label="Customer requests" onClick={() => onNavigate('tiyuvta')} />
             <Stat
               value={`${dash.accounts.total}`}
               label={`Accounts · +${dash.accounts.new7d} this week`}
@@ -298,6 +299,7 @@ export default function BusinessPanel({
                       </span>
                       <span className="shrink-0 font-mono text-xs tabular-nums text-mist-faint">{usd(a.spentMicro)}</span>
                       <span className="shrink-0 font-mono text-[10px] tabular-nums text-mist-faint">{ageOf(a.lastActiveDay)}</span>
+                      {a.internal && <span className="shrink-0 font-mono text-[10px] text-mist-faint">internal</span>}
                       {a.paid && <span className="shrink-0 font-mono text-[10px] text-jade">paid</span>}
                       {!a.enrolled && <span className="shrink-0 font-mono text-[10px] text-coral">unenrolled</span>}
                     </Row>

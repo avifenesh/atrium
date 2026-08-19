@@ -81,7 +81,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 }
 
 export interface AdminDashboard {
-  accounts: { total: number; enrolled: number; suspended: number; withPurchase: number; consented: number; newToday: number; new7d: number };
+  accounts: { total: number; enrolled: number; suspended: number; withPurchase: number; consented: number; internal?: number; newToday: number; new7d: number };
   money: {
     creditedMicro: number;
     purchasedMicro: number;
@@ -92,10 +92,12 @@ export interface AdminDashboard {
     purchases?: number;
     pendingPurchases?: number;
   };
+  /** External (customer) traffic only; the owner's own accounts report under `internal`. */
   totals: { requests: number; promptTokens: number; cachedPromptTokens: number; completionTokens: number; debitedMicro: number };
+  internal?: { totals: { requests: number; promptTokens: number; cachedPromptTokens: number; completionTokens: number; debitedMicro: number } };
   promo: { claimed: number; seats: number; remaining: number };
   books: { outOfBalance: number; lastPassAt: number | null; restatedDays: number };
-  top: Array<{ email: string; tenantId: string; creditedMicro: number; spentMicro: number; requests: number; paid: boolean; suspended: boolean; enrolled: boolean }>;
+  top: Array<{ email: string; tenantId: string; creditedMicro: number; spentMicro: number; requests: number; paid: boolean; suspended: boolean; enrolled: boolean; internal?: boolean }>;
 }
 
 export interface AdminTraffic {
@@ -182,6 +184,10 @@ export const ACTIONS = {
   enroll: { method: 'POST', path: '/admin/accounts/{tenant}/enroll', label: 'Enroll with the engine', needsTenant: true },
   suspend: { method: 'POST', path: '/admin/accounts/{tenant}/suspend', label: 'Suspend account', needsTenant: true },
   restore: { method: 'POST', path: '/admin/accounts/{tenant}/restore', label: 'Restore account', needsTenant: true },
+  // Owner-traffic labelling: the dashboard splits usage on this flag so bench and
+  // smoke traffic stops reading as customer demand. No effect on keys or billing.
+  'mark-internal': { method: 'POST', path: '/admin/accounts/{tenant}/mark-internal', label: 'Mark account as owner-internal', needsTenant: true },
+  'mark-external': { method: 'POST', path: '/admin/accounts/{tenant}/mark-external', label: 'Unmark owner-internal account', needsTenant: true },
 } as const;
 
 export type ActionName = keyof typeof ACTIONS;

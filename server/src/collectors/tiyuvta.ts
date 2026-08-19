@@ -47,7 +47,14 @@ const collector: Collector = {
         { label: 'accounts', value: `${count(accounts.total)} · ${count(accounts.withPurchase)} paying · ${count(accounts.newToday)} today`, href: 'https://inference.tiyuvta.ai/app/admin' },
         { label: 'outstanding credit', value: `${money(m.outstandingMicro)} of ${money(m.creditedMicro)} credited` },
         { label: 'purchased / granted', value: `${money(m.purchasedMicro)} / ${money(m.grantedMicro)}` },
-        { label: 'spent', value: `${money(m.spentMicro)} · ${count(totals.requests)} metered requests` },
+        {
+          label: 'spent',
+          // totals is customer traffic only; the owner's own bench/smoke accounts
+          // report under dashboard.internal so usage stops overstating traction.
+          value: `${money(m.spentMicro)} · ${count(totals.requests)} customer requests${
+            dashboard.internal?.totals.requests ? ` · ${count(dashboard.internal.totals.requests)} internal` : ''
+          }`,
+        },
         { label: 'cache hit rate', value: `${hitRate.toFixed(1)}% of input tokens`, tone: hitRate >= 50 ? 'ok' : undefined },
         { label: 'promo seats', value: `${count(promo.claimed)}/${count(promo.seats)} claimed · ${count(promo.remaining)} left`, tone: promo.remaining <= 5 ? 'warn' : undefined },
         {
