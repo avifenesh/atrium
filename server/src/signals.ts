@@ -185,6 +185,11 @@ export const signals = {
     return next;
   },
 
+  /** Lead state for one signal id — untouched signals return undefined. */
+  lead(id: string): SignalLead | undefined {
+    return persisted.leads[id];
+  },
+
   /** Record what happened with a lead (engaged = commented/answered, dismissed =
    *  not worth it); null status clears it back to untouched. */
   async setLead(id: string, status: SignalLeadStatus | null, note?: string): Promise<void> {

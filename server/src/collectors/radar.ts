@@ -52,6 +52,9 @@ interface RadarConfig {
   freshHours: number;
   /** A matching thread this popular is worth interrupting for. */
   reactionAlert: number;
+  /** Hub username whose comments mean "already engaged" — auto-marks the lead so
+   *  answered threads leave the action queue on their own. Unset disables it. */
+  selfUser: string | null;
 }
 
 function radarConfig(): RadarConfig {
@@ -66,6 +69,7 @@ function radarConfig(): RadarConfig {
     prospectKeywords: (watch.prospectKeywords ?? []).map((k) => k.toLowerCase()),
     freshHours: typeof raw.freshHours === 'number' ? raw.freshHours : 48,
     reactionAlert: typeof raw.reactionAlert === 'number' ? raw.reactionAlert : 3,
+    selfUser: typeof raw.selfUser === 'string' && raw.selfUser.trim() ? raw.selfUser.trim() : null,
   };
 }
 
@@ -142,6 +146,18 @@ async function matchingThreads(
     else if (demand.some((word) => title.includes(word))) out.push({ ...thread, threadKind: 'demand-thread' });
   }
   return out;
+}
+
+/** True when `user` has already commented in the thread. One unauthenticated request
+ *  per NEW matching thread; already-marked leads are skipped by the caller, so steady
+ *  state costs nothing. */
+async function selfCommented(repo: string, num: number, user: string): Promise<boolean> {
+  const payload = await getJson<{ events?: Array<{ type: string; author?: { name?: string } }> }>(
+    `${API}/models/${repo}/discussions/${num}`,
+  );
+  return (payload.events ?? []).some(
+    (e) => e.type === 'comment' && e.author?.name?.toLowerCase() === user.toLowerCase(),
+  );
 }
 
 const collector: Collector = {
@@ -228,8 +244,21 @@ const collector: Collector = {
       }
 
       for (const thread of threads.sort((a, b) => b.numReactionUsers - a.numReactionUsers)) {
+        const id = `hf-hub:thread:${thread.repo}#${thread.num}`;
+        // Self-comment detection: a thread the owner already answered is engaged, not
+        // an action item. Checked once per untouched thread (existing lead = skip),
+        // so the extra request cost is bounded to genuinely new matches.
+        if (settings.selfUser && !signals.lead(id)) {
+          try {
+            if (await selfCommented(thread.repo, thread.num, settings.selfUser)) {
+              await signals.setLead(id, 'engaged', `auto: ${settings.selfUser} commented`);
+            }
+          } catch (error) {
+            failures.push(`${thread.repo}#${thread.num}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
         items.push({
-          id: `hf-hub:thread:${thread.repo}#${thread.num}`,
+          id,
           source: 'hf-hub',
           kind: thread.threadKind,
           entity: entry.family,
