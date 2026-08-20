@@ -17,6 +17,8 @@ import { readNote } from './collectors/notes.js';
 import { reentry } from './reentry.js';
 import { helper } from './helper.js';
 import { signals } from './signals.js';
+import { crm } from './crm.js';
+import { verifyAccessJwt } from './access-auth.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -122,10 +124,16 @@ const ALLOWED_ORIGIN_HOSTS = new Set([...ALLOWED_HOSTS, '127.0.0.1:5173', 'local
 const TAILNET_HOST = 'avifenesh.tail2582b9.ts.net';
 const TAILNET_ORIGIN = `https://${TAILNET_HOST}`;
 
+// The CRM public surface (Cloudflare tunnel + Access) — empty host = disabled.
+// A request carrying this Host is authenticated per-request (Access JWT, verified
+// here, not just at the edge) and confined to the CRM routes + built assets.
+const CRM_HOST = config.crm.host.toLowerCase();
+const CRM_ORIGIN = CRM_HOST ? `https://${CRM_HOST}` : '';
+
 function hostAllowed(host: string | undefined): boolean {
   if (!host) return false;
   const h = host.toLowerCase();
-  return ALLOWED_HOSTS.has(h) || h === TAILNET_HOST;
+  return ALLOWED_HOSTS.has(h) || h === TAILNET_HOST || (CRM_HOST !== '' && h === CRM_HOST);
 }
 
 function originAllowed(origin: string | undefined): boolean {
@@ -134,10 +142,19 @@ function originAllowed(origin: string | undefined): boolean {
     const u = new URL(origin);
     const h = u.host.toLowerCase();
     if (ALLOWED_ORIGIN_HOSTS.has(h)) return true;
-    return origin.toLowerCase() === TAILNET_ORIGIN;
+    const o = origin.toLowerCase();
+    return o === TAILNET_ORIGIN || (CRM_ORIGIN !== '' && o === CRM_ORIGIN);
   } catch {
     return false; // includes Origin: null
   }
+}
+
+/** What the CRM host may reach: its own API, and GETs for the built web app.
+ *  Everything else on atrium — snapshot, stream, agent dispatch, notes, proxies —
+ *  stays machine-only even if the tunnel forwards the request. */
+function crmPathAllowed(method: string, path: string): boolean {
+  if (path.startsWith('/api/')) return path.startsWith('/api/crm/');
+  return method === 'GET' || method === 'HEAD';
 }
 
 const server = createServer(async (req, res) => {
@@ -148,6 +165,21 @@ const server = createServer(async (req, res) => {
   if (!hostAllowed(req.headers.host)) return json(res, 403, { error: 'forbidden host' });
   if (method !== 'GET' && method !== 'HEAD' && !originAllowed(req.headers.origin)) {
     return json(res, 403, { error: 'cross-origin request rejected' });
+  }
+
+  // Public CRM surface: authenticate EVERY request on this host, then confine it.
+  // cloudflared connects from loopback, so the Host header is what identifies
+  // tunnel traffic — and a spoofed local Host header just buys stricter rules.
+  const isCrmHost = CRM_HOST !== '' && (req.headers.host ?? '').toLowerCase() === CRM_HOST;
+  if (isCrmHost) {
+    const token = req.headers['cf-access-jwt-assertion'];
+    try {
+      await verifyAccessJwt(typeof token === 'string' ? token : '', config.crm);
+    } catch (err) {
+      console.error('[crm] access denied:', err instanceof Error ? err.message : err);
+      return json(res, 403, { error: 'access denied' });
+    }
+    if (!crmPathAllowed(method, path)) return json(res, 404, { error: 'not found' });
   }
 
   try {
@@ -432,6 +464,39 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // crm — pipeline over signals + tiyuvta accounts; the one surface the
+    // public CRM host may reach (see crmPathAllowed)
+    if (method === 'GET' && path === '/api/crm/pipeline') {
+      return json(res, 200, crm.pipeline());
+    }
+
+    if (method === 'POST' && path === '/api/crm/entry') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, { ok: true, entry: await crm.update(body?.id, body) });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/crm/note') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, { ok: true, note: await crm.addNote(body?.id, body?.text) });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/crm/contact') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, { ok: true, contact: await crm.addContact(body?.id, body?.channel, body?.summary) });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     // signals — the "outside world noticed my work" section
     if (method === 'POST' && path === '/api/signals/reviewed') {
       return json(res, 200, { ok: true, lastReviewedAt: await signals.markReviewed() });
@@ -508,9 +573,10 @@ const server = createServer(async (req, res) => {
       return serveWikiViewer(res, method === 'HEAD');
     }
 
-    // static web ui (built assets), if present
+    // static web ui (built assets), if present. The CRM host lands on the
+    // standalone CRM page, not the full dashboard SPA.
     if (method === 'GET' && !path.startsWith('/api/')) {
-      const served = await serveStatic(path, res);
+      const served = await serveStatic(path, res, isCrmHost ? 'crm.html' : 'index.html');
       if (served) return;
     }
 
@@ -545,18 +611,19 @@ async function findWebDist(): Promise<string | null> {
   return null;
 }
 
-async function serveStatic(path: string, res: ServerResponse): Promise<boolean> {
+async function serveStatic(path: string, res: ServerResponse, fallback = 'index.html'): Promise<boolean> {
   const { readFile } = await import('node:fs/promises');
   const { join, extname, normalize } = await import('node:path');
   const webDist = await findWebDist();
   if (!webDist) return false;
-  const rel = normalize(path === '/' ? 'index.html' : path.replace(/^\//, ''));
+  const rel = normalize(path === '/' ? fallback : path.replace(/^\//, ''));
   if (rel.startsWith('..')) return false;
   const types: Record<string, string> = {
     '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
     '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.json': 'application/json',
+    '.webmanifest': 'application/manifest+json',
   };
-  for (const candidate of [join(webDist, rel), join(webDist, 'index.html')]) {
+  for (const candidate of [join(webDist, rel), join(webDist, fallback)]) {
     try {
       const data = await readFile(candidate);
       const ext = extname(candidate);
@@ -579,6 +646,7 @@ await reentry.load();
 await helper.load();
 await mutes.load();
 await signals.load();
+await crm.load();
 await loadMetricHistory();
 
 // Loopback is a hard invariant, not a default: there is no auth layer, and

@@ -4,6 +4,13 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      // two pages, one bundle pipeline: the dashboard SPA and the standalone CRM
+      // (the only page the public crm host serves)
+      input: { main: 'index.html', crm: 'crm.html' },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

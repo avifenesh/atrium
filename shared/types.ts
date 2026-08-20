@@ -687,6 +687,71 @@ export interface SignalsState {
   error: string | null;
 }
 
+// ---------- crm (the business pipeline: leads and accounts through stages) ----------
+
+/** One funnel for both kinds: a lead (thread/mention worth winning) walks
+ *  new → contacted → replied and becomes an account (signed-up → active → paying);
+ *  'lost' is terminal for either. Order matters — it is the board's column order.
+ *  This file stays types-only (its .js compiles CJS under the root package but
+ *  loads inside the server's ESM scope), so the runtime array lives in
+ *  server/src/crm.ts and web/src/crm/stages.ts, each type-checked against this. */
+export type CrmStage = 'new' | 'contacted' | 'replied' | 'signed-up' | 'active' | 'paying' | 'lost';
+
+export interface CrmNote {
+  at: string;
+  text: string;
+}
+
+/** One touch in the contact log — where and what, so the next touch has context. */
+export interface CrmContact {
+  at: string;
+  /** free text: 'email', 'gh-comment', 'hf-thread', 'reddit', ... */
+  channel: string;
+  summary: string;
+}
+
+/** Owner-written CRM state for one pipeline item, keyed by the item id
+ *  (signal id for leads, `tenant:<id>` for console accounts). Everything
+ *  derivable from live sources stays OUT of here. */
+export interface CrmEntry {
+  id: string;
+  /** manual stage override; null = derived from the live sources */
+  stage: CrmStage | null;
+  notes: CrmNote[];
+  contacts: CrmContact[];
+  followUpAt: string | null;
+  updatedAt: string;
+}
+
+/** Assembled pipeline item: live source merged with the owner's CRM state. */
+export interface CrmItem {
+  id: string;
+  kind: 'lead' | 'account';
+  title: string;
+  subtitle: string | null;
+  url: string | null;
+  stage: CrmStage;
+  /** what the sources say on their own — shown when a manual override diverges */
+  derivedStage: CrmStage;
+  overridden: boolean;
+  followUpAt: string | null;
+  followUpDue: boolean;
+  notes: CrmNote[];
+  contacts: CrmContact[];
+  /** accounts only */
+  metrics: { requests: number; spentMicro: number; paid: boolean } | null;
+  /** newest activity timestamp the sources know for sorting */
+  activityAt: string | null;
+}
+
+export interface CrmPipeline {
+  updatedAt: string;
+  stages: readonly CrmStage[];
+  items: CrmItem[];
+  /** ids with CRM state whose live source has vanished — still shown, flagged stale */
+  orphaned: string[];
+}
+
 // ---------- re-entry (durable context parking + background status brief) ----------
 
 export type ReentryEnergy = 'light' | 'medium' | 'deep';

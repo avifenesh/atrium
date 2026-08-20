@@ -292,6 +292,21 @@ export const defaults = {
     // See examples/notify/ for ready-to-copy scripts.
     sendCmd: [] as string[],
   },
+
+  /** CRM public surface — the ONE part of atrium reachable off the machine, via a
+   *  Cloudflare tunnel + Access. Empty host = disabled (default), and the daemon
+   *  behaves exactly as before. When set, requests arriving with this Host header
+   *  are (1) required to carry a valid Cloudflare Access JWT for `aud`, verified
+   *  against `teamDomain`'s public keys, and (2) confined to the CRM routes and the
+   *  built web assets — never the snapshot, agent dispatch, notes, or proxies.
+   *  allowEmails narrows further to the listed identities (empty = any identity
+   *  the Access policy admits). */
+  crm: {
+    host: '',
+    teamDomain: '', // e.g. 'https://myteam.cloudflareaccess.com'
+    aud: '',
+    allowEmails: [] as string[],
+  },
 };
 
 export type Config = typeof defaults;
