@@ -160,6 +160,8 @@ interface XHit {
   text?: string;
   family?: string;
   foundAt?: string;
+  /** 'mention' = talks about memra/tiyuvta themselves; anything else = seeker */
+  kind?: string;
 }
 
 /** X hits arrive pre-qualified — the grok prompt only returns people looking for
@@ -188,7 +190,7 @@ async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
     out.push({
       id: `x:${statusId}`,
       source: 'x',
-      kind: 'prospect-thread',
+      kind: hit.kind === 'mention' ? 'mention' : 'prospect-thread',
       entity: hit.family ?? 'inference',
       title: hit.text.replace(/\s+/g, ' ').slice(0, 160),
       detail: hit.author ?? null,

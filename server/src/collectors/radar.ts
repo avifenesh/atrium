@@ -47,6 +47,8 @@ interface WatchEntry {
 
 interface RadarConfig {
   watch: WatchEntry[];
+  /** our own Hub cards (watch.hfModels) — every open thread there is inbound */
+  ownCards: string[];
   demandKeywords: string[];
   prospectKeywords: string[];
   freshHours: number;
@@ -65,6 +67,7 @@ function radarConfig(): RadarConfig {
   const watch = signals.watch();
   return {
     watch: watch.radarWatch,
+    ownCards: watch.hfModels ?? [],
     demandKeywords: watch.demandKeywords.map((k) => k.toLowerCase()),
     prospectKeywords: (watch.prospectKeywords ?? []).map((k) => k.toLowerCase()),
     freshHours: typeof raw.freshHours === 'number' ? raw.freshHours : 48,
@@ -118,15 +121,21 @@ async function newestRelease(org: string, match?: string): Promise<HubModel | nu
   return models[0] ?? null;
 }
 
-/** How many derivatives of this checkpoint already exist — the race counter.
+/** How many derivatives of this checkpoint already exist — the race counter —
+ *  plus the most-downloaded ones, whose discussion tabs are where the family's
+ *  demand actually lives (a hand-picked mirror list always lags the ecosystem).
  *  Capped: the exact number stops mattering above a page of results, and the Hub
- *  returns no total count for this query, so paging it would cost requests to learn
- *  nothing new. */
-async function derivativeCount(baseModel: string): Promise<{ count: number; capped: boolean }> {
+ *  returns no total count for this query, so paging it would cost requests to
+ *  learn nothing new. */
+async function derivatives(baseModel: string): Promise<{ count: number; capped: boolean; top: string[] }> {
   const results = await getJson<HubModel[]>(
     `${API}/models?filter=${encodeURIComponent(`base_model:quantized:${baseModel}`)}&limit=100&full=false`,
   );
-  return { count: results.length, capped: results.length >= 100 };
+  const top = [...results]
+    .sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0))
+    .slice(0, 4)
+    .map((m) => m.id);
+  return { count: results.length, capped: results.length >= 100, top };
 }
 
 /** Open, non-PR threads whose title asks for something we could ship, or shows a
@@ -180,7 +189,7 @@ const collector: Collector = {
 
     for (const entry of settings.watch) {
       let newest: HubModel | null = null;
-      let derivatives: { count: number; capped: boolean } | null = null;
+      let derived: { count: number; capped: boolean; top: string[] } | null = null;
       const threads: Array<HubDiscussion & { repo: string; threadKind: 'demand-thread' | 'prospect-thread' }> = [];
 
       try {
@@ -190,12 +199,15 @@ const collector: Collector = {
       }
       if (entry.baseModel) {
         try {
-          derivatives = await derivativeCount(entry.baseModel);
+          derived = await derivatives(entry.baseModel);
         } catch (error) {
           failures.push(`${entry.baseModel}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      for (const mirror of entry.mirrors ?? []) {
+      // hand-picked mirrors plus the family's most-downloaded derivative repos —
+      // the cards where the ecosystem actually talks, discovered per poll
+      const mirrors = [...new Set([...(entry.mirrors ?? []), ...(derived?.top ?? [])])];
+      for (const mirror of mirrors) {
         try {
           for (const thread of await matchingThreads(mirror, settings.demandKeywords, settings.prospectKeywords)) {
             threads.push({ ...thread, repo: mirror });
@@ -214,11 +226,11 @@ const collector: Collector = {
           kind: 'release',
           entity: entry.status ? `${entry.family} · ${entry.status}` : entry.family,
           title: `${newest.id.split('/').pop()}${age === null ? '' : ` — ${shortAge(age)}`}`,
-          detail: derivatives
-            ? `${derivatives.count}${derivatives.capped ? '+' : ''} derivatives exist so far`
+          detail: derived
+            ? `${derived.count}${derived.capped ? '+' : ''} derivatives exist so far`
             : null,
           url: `https://huggingface.co/${newest.id}`,
-          count: derivatives?.count ?? null,
+          count: derived?.count ?? null,
           delta: null,
           occurredAt: newest.createdAt ?? null,
         });
@@ -236,7 +248,7 @@ const collector: Collector = {
           severity: age <= 6 ? 'crit' : 'warn',
           title: `${entry.org} released ${newest.id.split('/').pop()}`,
           detail: `published ${shortAge(age)}${
-            derivatives ? ` — ${derivatives.count} derivative${derivatives.count === 1 ? '' : 's'} exist so far` : ''
+             derived ? ` — ${derived.count} derivative${derived.count === 1 ? '' : 's'} exist so far` : ''
           }. https://huggingface.co/${newest.id}`,
           source: 'radar',
           raisedAt: iso(),
@@ -269,6 +281,48 @@ const collector: Collector = {
           delta: null,
           occurredAt: thread.createdAt ?? null,
         });
+      }
+    }
+
+    // Our own model cards: EVERY open thread is inbound — the author already
+    // holds our artifact. Keyword matches keep their demand/prospect kind; the
+    // rest surface as 'mention' so no question on our own cards goes unseen.
+    for (const own of settings.ownCards) {
+      try {
+        const payload = await getJson<{ discussions: HubDiscussion[] }>(`${API}/models/${own}/discussions?p=0`);
+        for (const thread of payload.discussions ?? []) {
+          if (thread.isPullRequest || thread.status !== 'open') continue;
+          const title = thread.title.toLowerCase();
+          const kind = settings.prospectKeywords.some((w) => title.includes(w))
+            ? ('prospect-thread' as const)
+            : settings.demandKeywords.some((w) => title.includes(w))
+              ? ('demand-thread' as const)
+              : ('mention' as const);
+          const id = `hf-hub:thread:${own}#${thread.num}`;
+          if (settings.selfUser && !signals.lead(id)) {
+            try {
+              if (await selfCommented(own, thread.num, settings.selfUser)) {
+                await signals.setLead(id, 'engaged', `auto: ${settings.selfUser} commented`);
+              }
+            } catch (error) {
+              failures.push(`${own}#${thread.num}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+          items.push({
+            id,
+            source: 'hf-hub',
+            kind,
+            entity: `own card · ${own.split('/').pop()}`,
+            title: thread.title.slice(0, 120),
+            detail: `${own.split('/').pop()} #${thread.num} · ${thread.numComments} comments`,
+            url: `https://huggingface.co/${own}/discussions/${thread.num}`,
+            count: thread.numReactionUsers,
+            delta: null,
+            occurredAt: thread.createdAt ?? null,
+          });
+        }
+      } catch (error) {
+        failures.push(`${own}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
