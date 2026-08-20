@@ -43,6 +43,8 @@ export function Overview({ data }: { data: CrmOverview }) {
   const requests7d = sum(usageDays, (d) => d.requests);
   const internal7d = sum(internalDays, (d) => d.requests);
   const tokens7d = sum(usageDays, (d) => d.promptTokens + d.completionTokens);
+  const prompt7d = sum(usageDays, (d) => d.promptTokens);
+  const cached7d = sum(usageDays, (d) => d.cachedPromptTokens);
   const today = usageDays[usageDays.length - 1];
 
   const visitorDays = (() => {
@@ -97,6 +99,21 @@ export function Overview({ data }: { data: CrmOverview }) {
           value={visitors7d == null ? '—' : String(visitors7d)}
           sub={visitors ? visitors.totals.map((t) => `${t.site} ${t.views}`).join(' · ') : null}
           spark={<Bars values={visitorDays} tone="fill-amber/70" />}
+        />
+        <Stat
+          label="cache hit rate 7d"
+          value={prompt7d > 0 ? `${((cached7d / prompt7d) * 100).toFixed(1)}%` : '—'}
+          sub={
+            today && today.promptTokens > 0
+              ? `today ${((today.cachedPromptTokens / today.promptTokens) * 100).toFixed(1)}% · ${(cached7d / 1_000_000).toFixed(1)}M of ${(prompt7d / 1_000_000).toFixed(1)}M cached`
+              : null
+          }
+          spark={
+            <Bars
+              values={usageDays.map((d) => (d.promptTokens > 0 ? d.cachedPromptTokens / d.promptTokens : 0))}
+              tone="fill-slate-glow/70"
+            />
+          }
         />
         {exposure && exposure.repos[0] && (
           <Stat

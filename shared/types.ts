@@ -828,6 +828,8 @@ export interface CrmUsageDay {
   day: string;
   requests: number;
   promptTokens: number;
+  /** prompt tokens served from prefix cache — hit rate = cached / prompt */
+  cachedPromptTokens: number;
   completionTokens: number;
   debitedMicro: number;
 }

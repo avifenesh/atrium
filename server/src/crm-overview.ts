@@ -91,6 +91,7 @@ function usageDays(rows: Array<Partial<CrmUsageDay>> | undefined): CrmUsageDay[]
       day: r.day,
       requests: r.requests ?? 0,
       promptTokens: r.promptTokens ?? 0,
+      cachedPromptTokens: r.cachedPromptTokens ?? 0,
       completionTokens: r.completionTokens ?? 0,
       debitedMicro: r.debitedMicro ?? 0,
     }))
