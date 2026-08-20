@@ -3,8 +3,12 @@
 //
 // Deliberately self-contained: it talks ONLY to /api/crm/* — the snapshot, the
 // SSE stream and every other atrium API are blocked on the public host, so this
-// page must not want them. Phone-first: one column, thumb-sized targets, the
-// due-follow-ups on top.
+// page must not want them. The business overview (/api/crm/overview) is
+// aggregated server-side for the same reason.
+//
+// Desktop-first, phone-capable: ≥lg the pipeline is a kanban board (a column
+// per stage) under the numbers band; below lg it collapses to the filterable
+// list with the same detail sheet.
 //
 // Three item kinds, three jobs: directions (the seller hunt's new ways to sell —
 // decide, then act), leads (people publicly failing to run a model — answer
@@ -12,7 +16,9 @@
 // screen by job; the stage row and search cut within one.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CrmItem, CrmPipeline, CrmStage } from '../../../shared/types';
+import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
+import { Board } from './Board';
+import { Overview } from './Overview';
 import { CRM_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
 
 const POLL_MS = 60_000;
@@ -298,6 +304,9 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
 type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
+const matches = (i: CrmItem, needle: string) =>
+  `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''}`.toLowerCase().includes(needle);
+
 const chipClass = (active: boolean, extra = '') =>
   `shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
     active ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
@@ -305,6 +314,7 @@ const chipClass = (active: boolean, extra = '') =>
 
 export function CrmApp() {
   const [pipeline, setPipeline] = useState<CrmPipeline | null>(null);
+  const [overview, setOverview] = useState<CrmOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<KindFilter>('all');
   const [stage, setStage] = useState<StageFilter>('any');
@@ -313,7 +323,12 @@ export function CrmApp() {
 
   const refresh = useCallback(async () => {
     try {
-      setPipeline(await api<CrmPipeline>('/api/crm/pipeline'));
+      const [nextPipeline, nextOverview] = await Promise.all([
+        api<CrmPipeline>('/api/crm/pipeline'),
+        api<CrmOverview>('/api/crm/overview'),
+      ]);
+      setPipeline(nextPipeline);
+      setOverview(nextOverview);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -347,16 +362,12 @@ export function CrmApp() {
   const visible = inKind.filter((i) => {
     if (stage === 'due' && !i.followUpDue) return false;
     if (stage !== 'any' && stage !== 'due' && i.stage !== stage) return false;
-    if (needle) {
-      const hay = `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''}`.toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    return true;
+    return !needle || matches(i, needle);
   });
   const open = openId ? items.find((i) => i.id === openId) ?? null : null;
 
   return (
-    <div className="mx-auto max-w-2xl px-3 pb-16 pt-4 sm:px-5">
+    <div className="mx-auto max-w-7xl px-3 pb-16 pt-4 sm:px-5">
       <header className="mb-3 flex items-baseline gap-3">
         <h1 className="font-display text-2xl text-mist">
           tiyuvta <span className="italic text-mist-dim">crm</span>
@@ -368,6 +379,14 @@ export function CrmApp() {
           <span className="ml-auto font-mono text-[10px] text-mist-faint">{pipeline.updatedAt.slice(11, 16)}Z</span>
         )}
       </header>
+
+      {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
+
+      {overview && (
+        <div className="mb-4">
+          <Overview data={overview} />
+        </div>
+      )}
 
       {/* kind row — which job am I doing right now */}
       <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
@@ -384,6 +403,15 @@ export function CrmApp() {
             {KIND_LABEL[k]} {kindCounts.get(k) ?? 0}
           </button>
         ))}
+        {due.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
+            className={chipClass(stage === 'due', 'text-amber')}
+          >
+            ⏰ due {due.length}
+          </button>
+        )}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -392,17 +420,11 @@ export function CrmApp() {
         />
       </div>
 
-      {/* stage row — where in the funnel, within the chosen kind */}
-      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+      {/* stage row — the funnel cut for the phone list; the board already
+          shows every stage as a column, so this row hides on desktop */}
+      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
         <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
           any stage
-        </button>
-        <button
-          type="button"
-          onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
-          className={chipClass(stage === 'due', due.length > 0 ? 'text-amber' : '')}
-        >
-          due {due.length}
         </button>
         {CRM_STAGES.map((s) => (
           <button
@@ -416,9 +438,17 @@ export function CrmApp() {
         ))}
       </div>
 
-      {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
+      {/* desktop: kanban board over the kind/search-filtered items (stage
+          filter does not apply — every stage is its own column) */}
+      <div className="hidden lg:block">
+        <Board
+          items={stage === 'due' ? visible : inKind.filter((i) => !needle || matches(i, needle))}
+          onOpen={setOpenId}
+        />
+      </div>
 
-      <div className="space-y-1.5">
+      {/* phone: flat list, due-first sort from the server */}
+      <div className="space-y-1.5 lg:hidden">
         {visible.map((item) => (
           <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
         ))}
@@ -427,12 +457,12 @@ export function CrmApp() {
             nothing here
           </div>
         )}
-        {!pipeline && !error && (
-          <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
-            loading…
-          </div>
-        )}
       </div>
+      {!pipeline && !error && (
+        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
+          loading…
+        </div>
+      )}
 
       {open && <Detail item={open} onClose={() => setOpenId(null)} onChanged={refresh} />}
     </div>

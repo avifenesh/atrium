@@ -18,6 +18,7 @@ import { reentry } from './reentry.js';
 import { helper } from './helper.js';
 import { signals } from './signals.js';
 import { crm } from './crm.js';
+import { crmOverview } from './crm-overview.js';
 import { verifyAccessJwt } from './access-auth.js';
 import type { MuteRequest } from '../../shared/types.js';
 
@@ -39,6 +40,8 @@ import reentryCollector from './collectors/reentry.js';
 import helperCollector from './collectors/helper.js';
 import radarCollector from './collectors/radar.js';
 import demandCollector from './collectors/demand.js';
+import vastCollector from './collectors/vast.js';
+import endpointCollector from './collectors/endpoint.js';
 import tiyuvtaCollector from './collectors/tiyuvta.js';
 import distributionCollector from './collectors/distribution.js';
 import exposureCollector from './collectors/exposure.js';
@@ -67,6 +70,8 @@ for (const c of [
   mentionsCollector,
   radarCollector,
   demandCollector,
+  vastCollector,
+  endpointCollector,
   tiyuvtaCollector,
   distributionCollector,
   exposureCollector,
@@ -470,6 +475,12 @@ const server = createServer(async (req, res) => {
     // public CRM host may reach (see crmPathAllowed)
     if (method === 'GET' && path === '/api/crm/pipeline') {
       return json(res, 200, crm.pipeline());
+    }
+
+    // the business numbers above the pipeline — aggregated server-side so the
+    // public host reads one endpoint instead of the machine-wide snapshot
+    if (method === 'GET' && path === '/api/crm/overview') {
+      return json(res, 200, crmOverview());
     }
 
     if (method === 'POST' && path === '/api/crm/entry') {

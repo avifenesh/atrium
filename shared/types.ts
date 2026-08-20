@@ -757,6 +757,66 @@ export interface CrmPipeline {
   orphaned: string[];
 }
 
+/** The business overview the CRM page shows above the pipeline — every number
+ *  the collectors already hold, aggregated once server-side so the public CRM
+ *  host needs exactly one extra GET and no access to the raw snapshot. */
+export interface CrmOverview {
+  updatedAt: string;
+  /** micro-dollars, from the console dashboard */
+  money: {
+    purchasedMicro: number;
+    grantedMicro: number;
+    spentMicro: number;
+    outstandingMicro: number;
+    purchases: number;
+  } | null;
+  accounts: {
+    total: number;
+    withPurchase: number;
+    suspended: number;
+    internal: number;
+    newWeek: number;
+  } | null;
+  /** last-7-day rows, oldest→newest; internal (owner/bench) traffic separate */
+  usageDays: CrmUsageDay[];
+  internalDays: CrmUsageDay[];
+  visitors: {
+    totals: Array<{ site: string; views: number }>;
+    daily: Array<{ day: string; site: string; views: number }>;
+    topPaths: Array<{ site: string; path: string; views: number }>;
+  } | null;
+  endpoint: {
+    models: Array<{
+      model: string;
+      ok: boolean;
+      ttftMs: number | null;
+      p50TtftMs: number | null;
+      uptimePct: number;
+      checkedAt: string;
+    }>;
+  } | null;
+  expenses: {
+    burnPerHour: number;
+    creditUsd: number | null;
+    instances: Array<{
+      label: string | null;
+      gpuName: string | null;
+      numGpus: number | null;
+      dphTotal: number | null;
+      status: string | null;
+    }>;
+  } | null;
+  models: string[];
+}
+
+export interface CrmUsageDay {
+  day: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  debitedMicro: number;
+}
+
 /** One direction file under ~/.config/atrium/directions/ — written by the hermes
  *  seller profile's scheduled hunt, read into the pipeline as kind 'direction'.
  *  A direction is a NEW way to sell (channel, segment, integration, partnership,
