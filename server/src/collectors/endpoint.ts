@@ -50,7 +50,18 @@ export interface EndpointModelHealth {
 }
 
 let history: Probe[] = [];
+/** probes fired per UTC day — the ledger counts probe requests as (internal)
+ *  usage, so the CRM overview subtracts these to show real internal traffic.
+ *  Kept beyond the 24h probe window because the usage stats cover 7 days. */
+let dayCounts: Record<string, number> = {};
 let historyLoaded = false;
+
+function pruneDayCounts(): void {
+  const cutoff = new Date(Date.now() - 8 * 24 * 3_600_000).toISOString().slice(0, 10);
+  for (const day of Object.keys(dayCounts)) {
+    if (day < cutoff) delete dayCounts[day];
+  }
+}
 
 async function creds(): Promise<{ base: string; key: string } | null> {
   try {
@@ -133,8 +144,19 @@ const collector: Collector = {
   async run() {
     if (!historyLoaded) {
       historyLoaded = true;
-      const saved = await readJson<{ probes?: Probe[] }>(HISTORY_FILE);
+      const saved = await readJson<{ probes?: Probe[]; dayCounts?: Record<string, number> }>(HISTORY_FILE);
       if (Array.isArray(saved?.probes)) history = saved.probes;
+      if (saved?.dayCounts && typeof saved.dayCounts === 'object') dayCounts = saved.dayCounts;
+      // the tally is newer than the probe log — rebuild recent days from the log
+      // so probes fired before the tally existed still get subtracted upstream
+      const rebuilt: Record<string, number> = {};
+      for (const p of history) {
+        const day = p.at.slice(0, 10);
+        rebuilt[day] = (rebuilt[day] ?? 0) + 1;
+      }
+      for (const [day, n] of Object.entries(rebuilt)) {
+        dayCounts[day] = Math.max(dayCounts[day] ?? 0, n);
+      }
     }
 
     const auth = await creds();
@@ -145,17 +167,21 @@ const collector: Collector = {
         updatedAt: iso(),
         up: false,
         error: !auth ? `no TIYUVTA_API_KEY in ${ENV_FILE}` : 'no served models known yet (tiyuvta collector warming)',
-        data: { models: [] },
+        data: { models: [], probesPerDay: dayCounts },
       });
       return;
     }
 
     for (const model of models) {
-      history.push(await probe(auth.base, auth.key, model));
+      const result = await probe(auth.base, auth.key, model);
+      history.push(result);
+      const day = result.at.slice(0, 10);
+      dayCounts[day] = (dayCounts[day] ?? 0) + 1;
     }
     const now = Date.now();
     history = history.filter((p) => now - Date.parse(p.at) <= WINDOW_MS);
-    await atomicWriteJson(HISTORY_FILE, { probes: history });
+    pruneDayCounts();
+    await atomicWriteJson(HISTORY_FILE, { probes: history, dayCounts });
 
     const summary = summarize(now);
     const allOk = summary.every((m) => m.ok);
@@ -168,7 +194,7 @@ const collector: Collector = {
         label: m.model.split('/').pop() ?? m.model,
         value: `${m.ok ? 'up' : 'DOWN'} · ttft ${m.ttftMs ?? '—'}ms · p50 ${m.p50TtftMs ?? '—'}ms · ${m.uptimePct}% 24h`,
       })),
-      data: { models: summary },
+      data: { models: summary, probesPerDay: dayCounts },
     });
   },
 };

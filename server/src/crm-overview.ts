@@ -105,7 +105,9 @@ export async function crmOverview(): Promise<CrmOverview> {
   const dashboard = tiyuvta?.dashboard;
 
   const web = extra['webtraffic']?.data as CrmOverview['visitors'] | undefined;
-  const endpoint = extra['endpoint']?.data as CrmOverview['endpoint'] | undefined;
+  const endpoint = extra['endpoint']?.data as
+    | (NonNullable<CrmOverview['endpoint']> & { probesPerDay?: Record<string, number> })
+    | undefined;
   const vast = extra['vast']?.data as
     | {
         burnPerHour?: number;
@@ -141,7 +143,13 @@ export async function crmOverview(): Promise<CrmOverview> {
         }
       : null,
     usageDays: usageDays(dashboard?.usage),
-    internalDays: usageDays(dashboard?.internal?.usage),
+    // internal traffic minus the endpoint collector's own 5-minute TTFT probes —
+    // ~576 requests/day of synthetic pings would otherwise drown the number that
+    // is supposed to mean "the owner's real bench/test usage"
+    internalDays: usageDays(dashboard?.internal?.usage).map((row) => ({
+      ...row,
+      requests: Math.max(0, row.requests - (endpoint?.probesPerDay?.[row.day] ?? 0)),
+    })),
     visitors: web && Array.isArray(web.daily)
       ? { totals: web.totals ?? [], daily: web.daily, topPaths: (web.topPaths ?? []).slice(0, 10) }
       : null,
