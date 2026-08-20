@@ -90,7 +90,9 @@ async function probe(base: string, key: string, model: string): Promise<Probe> {
   try {
     const response = await fetch(`${base}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      // the router skips real-user metrics for marked probes — synthetic pings
+      // must not count as customer latency/error data
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}`, 'x-tiyuvta-probe': '1' },
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: 'ping' }],
@@ -189,6 +191,9 @@ const collector: Collector = {
         error: !auth ? `no TIYUVTA_API_KEY in ${ENV_FILE}` : 'no served models known yet (tiyuvta collector warming)',
         data: { models: [], probesPerDay: dayCounts },
       });
+      // startup race with the tiyuvta surface scan — retry shortly rather than
+      // leaving a 5-minute hole in the uptime record after every restart
+      if (auth) setTimeout(() => void collector.run().catch(() => {}), 60_000).unref();
       return;
     }
 

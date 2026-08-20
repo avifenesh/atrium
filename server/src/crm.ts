@@ -56,11 +56,14 @@ interface DashboardAccount {
   tenantId: string;
   requests: number;
   spentMicro: number;
+  creditedMicro?: number;
   paid: boolean;
   enrolled: boolean;
   suspended: boolean;
   internal?: boolean;
   lastActiveDay?: string | number | null;
+  signupRef?: string | null;
+  recent?: Array<{ day: string; requests: number; debitedMicro: number }>;
 }
 
 let persisted: PersistedCrm = { entries: {} };
@@ -244,7 +247,14 @@ function assemble(): CrmPipeline {
         detail: [
           account.paid ? 'paid' : 'free',
           account.enrolled ? null : 'unenrolled',
+          account.signupRef ? `via ${account.signupRef}` : null,
+          account.creditedMicro != null
+            ? `balance $${((account.creditedMicro - account.spentMicro) / 1_000_000).toFixed(2)}`
+            : null,
           typeof account.lastActiveDay === 'string' ? `last active ${account.lastActiveDay}` : null,
+          account.recent?.length
+            ? `7d: ${account.recent.map((r) => `${r.day.slice(8)}=${r.requests}`).join(' ')}`
+            : null,
         ].filter(Boolean).join(' · '),
         url: null,
         metrics: { requests: account.requests, spentMicro: account.spentMicro, paid: account.paid },
@@ -285,6 +295,52 @@ function assemble(): CrmPipeline {
 
 // --- follow-up flags ----------------------------------------------------------
 
+/** An active or paying account that stops calling is churning — worth more
+ *  attention than ten new leads. Quiet = no activity for this many days. */
+const QUIET_DAYS = 3;
+
+function quietAccountFlags(now: string): Flag[] {
+  const today = now.slice(0, 10);
+  const flags: Flag[] = [];
+  for (const account of accountsFromStore()) {
+    const stage = derivedAccountStage(account);
+    if (stage !== 'active' && stage !== 'paying') continue;
+    const last = typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null;
+    if (!last) continue;
+    const silentDays = Math.floor((Date.parse(today) - Date.parse(last)) / 86_400_000);
+    if (silentDays < QUIET_DAYS) continue;
+    flags.push({
+      id: `crm:quiet:tenant:${account.tenantId}`,
+      severity: 'warn',
+      title: `customer gone quiet: ${account.email}`,
+      detail: `${stage} account, ${account.requests} requests lifetime — last active ${last} (${silentDays}d ago)`,
+      source: 'crm',
+      raisedAt: now,
+    });
+  }
+  return flags;
+}
+
+/** Fresh leads rot: a demand thread answered by someone else stops being a
+ *  lead. One AGGREGATE flag (not per lead — the strip is not a lead list). */
+const STALE_LEAD_HOURS = 24;
+
+function staleLeadFlag(items: CrmItem[], now: string): Flag[] {
+  const cutoff = Date.parse(now) - STALE_LEAD_HOURS * 3_600_000;
+  const stale = items.filter(
+    (i) => i.kind === 'lead' && i.stage === 'new' && i.activityAt != null && Date.parse(i.activityAt) < cutoff,
+  );
+  if (stale.length === 0) return [];
+  return [{
+    id: 'crm:stale-leads',
+    severity: 'warn',
+    title: `${stale.length} new lead${stale.length === 1 ? '' : 's'} older than ${STALE_LEAD_HOURS}h`,
+    detail: `unanswered demand rots — oldest: ${stale[stale.length - 1]?.title.slice(0, 80)}`,
+    source: 'crm',
+    raisedAt: now,
+  }];
+}
+
 function raiseFollowUpFlags(): void {
   const now = iso();
   const flags: Flag[] = [];
@@ -300,6 +356,8 @@ function raiseFollowUpFlags(): void {
       });
     }
   }
+  flags.push(...quietAccountFlags(now));
+  flags.push(...staleLeadFlag(assemble().items, now));
   store.setFlags('crm', flags);
 }
 

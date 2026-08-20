@@ -806,6 +806,31 @@ export interface CrmOverview {
       status: string | null;
     }>;
   } | null;
+  /** the business number: usage revenue minus GPU burn, per day. Burn comes
+   *  from the vast collector's sampled history, so days before it existed are
+   *  omitted rather than shown as revenue-only lies. */
+  pnl: Array<{ day: string; revenueUsd: number; burnUsd: number; netUsd: number }>;
+  /** outbound funnel: how the seller's drafts are converting, per lead source */
+  outbound: {
+    drafted: number;
+    contacted: number;
+    replied: number;
+    bySource: Array<{ source: string; drafted: number; contacted: number; replied: number }>;
+  };
+  /** what real customers experienced through the router, last 24h (probes excluded) */
+  realUsage: Array<{ model: string; requests24h: number; errorPct: number; avgMs: number | null }> | null;
+  /** OpenRouter provider landscape per served model — the outreach-timing watch */
+  competitors: Array<{
+    model: string;
+    providers: number;
+    cheapestInUsd: number | null;
+    cheapestOutUsd: number | null;
+    minUptimePct: number | null;
+    oursInUsd: number | null;
+    oursOutUsd: number | null;
+  }> | null;
+  /** signups by the ?ref= they carried in — which channel actually converts */
+  signupSources: Array<{ source: string; count: number }>;
   /** project reach, from the newest daily exposure snapshot: GitHub repo
    *  traffic, HF model downloads, crates installs — the top of the funnel */
   exposure: {

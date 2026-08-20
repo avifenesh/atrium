@@ -9,15 +9,49 @@
 // Read-only by design: this collector must never start/stop/modify an instance
 // — the accelerator lanes belong to the owner (see the lane law in CLAUDE.md).
 
-import { readFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { config } from '../config.js';
 import { store } from '../state.js';
-import { iso } from '../util.js';
+import { iso, readJson } from '../util.js';
 import type { Collector } from './registry.js';
 
 const KEY_FILE = join(homedir(), '.config', 'vastai', 'vast_api_key');
 const API = 'https://console.vast.ai/api';
+const BURN_FILE = join(config.configDir, 'vast-burn.json');
+
+/** $/hr samples averaged per UTC day — the P&L needs burn HISTORY, and vast
+ *  only tells you the current rate. 10-minute samples, mean per day, 60 days. */
+let burnDays: Record<string, { sum: number; n: number }> = {};
+let burnLoaded = false;
+
+async function recordBurn(perHour: number): Promise<void> {
+  if (!burnLoaded) {
+    burnLoaded = true;
+    const saved = await readJson<Record<string, { sum: number; n: number }>>(BURN_FILE);
+    if (saved && typeof saved === 'object') burnDays = saved;
+  }
+  const day = iso().slice(0, 10);
+  const entry = burnDays[day] ?? { sum: 0, n: 0 };
+  burnDays[day] = { sum: entry.sum + perHour, n: entry.n + 1 };
+  const cutoff = new Date(Date.now() - 60 * 24 * 3_600_000).toISOString().slice(0, 10);
+  for (const d of Object.keys(burnDays)) if (d < cutoff) delete burnDays[d];
+  try {
+    const tmp = `${BURN_FILE}.tmp-${process.pid}`;
+    await writeFile(tmp, JSON.stringify(burnDays), 'utf8');
+    await rename(tmp, BURN_FILE);
+  } catch (err) {
+    console.error('[vast] burn persist failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+/** day → mean $/hr, for the overview's P&L rows */
+export function burnPerDay(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [day, { sum, n }] of Object.entries(burnDays)) out[day] = n > 0 ? sum / n : 0;
+  return out;
+}
 
 export interface VastInstance {
   id: number;
@@ -98,6 +132,8 @@ const collector: Collector = {
     } catch (error) {
       state.error = state.error ?? (error instanceof Error ? error.message : String(error));
     }
+
+    if (state.error == null) await recordBurn(state.burnPerHour);
 
     store.setExtra('vast', {
       title: 'vast.ai',

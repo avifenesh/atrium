@@ -37,7 +37,10 @@ function Stat({ label, value, sub, spark }: { label: string; value: string; sub?
 const sum = (days: CrmUsageDay[], pick: (d: CrmUsageDay) => number) => days.reduce((a, d) => a + pick(d), 0);
 
 export function Overview({ data }: { data: CrmOverview }) {
-  const { money, accounts, usageDays, internalDays, visitors, endpoint, expenses, exposure } = data;
+  const { money, accounts, usageDays, internalDays, visitors, endpoint, expenses, exposure, pnl, outbound, competitors, signupSources, realUsage } = data;
+
+  const pnlToday = pnl[pnl.length - 1] ?? null;
+  const pnl7d = pnl.reduce((a, d) => a + d.netUsd, 0);
 
   const revenue7d = sum(usageDays, (d) => d.debitedMicro);
   const requests7d = sum(usageDays, (d) => d.requests);
@@ -61,6 +64,15 @@ export function Overview({ data }: { data: CrmOverview }) {
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <Stat
+          label="p&l"
+          value={pnlToday ? `${pnlToday.netUsd < 0 ? '−' : '+'}$${Math.abs(pnlToday.netUsd).toFixed(0)}/day` : '—'}
+          sub={
+            pnlToday
+              ? `rev $${pnlToday.revenueUsd.toFixed(2)} − gpu $${pnlToday.burnUsd.toFixed(0)} · ${pnl.length}d net ${pnl7d < 0 ? '−' : '+'}$${Math.abs(pnl7d).toFixed(0)}`
+              : 'burn history warming'
+          }
+        />
         <Stat
           label="income"
           value={money ? usd(money.purchasedMicro) : '—'}
@@ -148,7 +160,51 @@ export function Overview({ data }: { data: CrmOverview }) {
               .join(' · ')}
           />
         )}
+        <Stat
+          label="outbound funnel"
+          value={`${outbound.drafted} → ${outbound.contacted} → ${outbound.replied}`}
+          sub={
+            outbound.bySource.length
+              ? outbound.bySource
+                  .slice(0, 3)
+                  .map((s) => `${s.source} ${s.drafted}/${s.contacted}/${s.replied}`)
+                  .join(' · ')
+              : 'drafted → sent → replied'
+          }
+        />
+        <Stat
+          label="signups by channel"
+          value={signupSources[0] ? `${signupSources[0].source} ${signupSources[0].count}` : '—'}
+          sub={signupSources
+            .slice(1, 5)
+            .map((s) => `${s.source} ${s.count}`)
+            .join(' · ') || 'tag links with ?ref= to attribute'}
+        />
       </div>
+
+      {/* competitor strip — the outreach-timing watch */}
+      {competitors && competitors.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {competitors.map((c) => {
+            const window =
+              c.providers <= 1 ||
+              (c.minUptimePct != null && c.minUptimePct < 95) ||
+              (c.oursOutUsd != null && c.cheapestOutUsd != null && c.cheapestOutUsd > c.oursOutUsd * 1.5);
+            return (
+              <span
+                key={c.model}
+                className={`rounded-full border px-2.5 py-1 font-mono text-[10px] ${
+                  window ? 'border-amber/40 text-amber' : 'border-white/10 text-mist-dim'
+                }`}
+              >
+                OR · {c.model.split('/').pop()}: {c.providers} providers · ${c.cheapestInUsd ?? '?'}/{c.cheapestOutUsd ?? '?'} vs
+                ours ${c.oursInUsd ?? '?'}/{c.oursOutUsd ?? '?'} · min {c.minUptimePct ?? '?'}%
+                {window && ' · WINDOW'}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {/* endpoint health + accounts — one thin strip, phone wraps */}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -169,6 +225,17 @@ export function Overview({ data }: { data: CrmOverview }) {
             endpoint probes warming up
           </span>
         )}
+        {(realUsage ?? []).map((m) => (
+          <span
+            key={`real-${m.model}`}
+            className={`rounded-full border px-2.5 py-1 font-mono text-[10px] ${
+              m.errorPct > 1 ? 'border-coral/50 text-coral' : 'border-white/10 text-mist-dim'
+            }`}
+            title="real customer traffic through the router, last 24h (probes excluded)"
+          >
+            real · {m.model.split('/').pop()}: {m.requests24h} req · {m.errorPct}% err · {m.avgMs ?? '—'}ms
+          </span>
+        ))}
         {accounts && (
           <span className="ml-auto rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] text-mist-dim">
             {accounts.total} accounts · {accounts.withPurchase} paying · +{accounts.newWeek} this week

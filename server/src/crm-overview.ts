@@ -9,10 +9,12 @@
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { burnPerDay } from './collectors/vast.js';
 import { config } from './config.js';
+import { crm } from './crm.js';
 import { store } from './state.js';
 import { iso, readJson } from './util.js';
-import type { CrmOverview, CrmUsageDay } from '../../shared/types.js';
+import type { CrmItem, CrmOverview, CrmUsageDay } from '../../shared/types.js';
 
 const DAYS = 7;
 
@@ -98,6 +100,46 @@ function usageDays(rows: Array<Partial<CrmUsageDay>> | undefined): CrmUsageDay[]
     .sort((a, b) => a.day.localeCompare(b.day));
 }
 
+/** Post-draft stages, in "did the outreach work" order. */
+const REPLIED_STAGES = new Set(['replied', 'signed-up', 'active', 'paying']);
+
+function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {
+  const bySource = new Map<string, { source: string; drafted: number; contacted: number; replied: number }>();
+  const totals = { drafted: 0, contacted: 0, replied: 0, bySource: [] as CrmOverview['outbound']['bySource'] };
+  for (const item of items) {
+    if (item.kind !== 'lead') continue;
+    if (!item.notes.some((n) => n.text.startsWith('outreach draft'))) continue;
+    const key = item.source ?? '?';
+    const row = bySource.get(key) ?? { source: key, drafted: 0, contacted: 0, replied: 0 };
+    row.drafted += 1;
+    totals.drafted += 1;
+    // "contacted" = the owner actually sent something: a logged touch, or the
+    // stage moved past new (contact-log auto-advance sets contacted)
+    if (item.contacts.length > 0 || item.stage !== 'new') {
+      row.contacted += 1;
+      totals.contacted += 1;
+    }
+    if (REPLIED_STAGES.has(item.stage)) {
+      row.replied += 1;
+      totals.replied += 1;
+    }
+    bySource.set(key, row);
+  }
+  totals.bySource = [...bySource.values()].sort((a, b) => b.drafted - a.drafted);
+  return totals;
+}
+
+function pnl(days: CrmUsageDay[]): CrmOverview['pnl'] {
+  const burn = burnPerDay();
+  return days
+    .filter((d) => burn[d.day] != null)
+    .map((d) => {
+      const revenueUsd = d.debitedMicro / 1_000_000;
+      const burnUsd = burn[d.day] * 24;
+      return { day: d.day, revenueUsd, burnUsd, netUsd: revenueUsd - burnUsd };
+    });
+}
+
 export async function crmOverview(): Promise<CrmOverview> {
   const extra = store.get().extra;
 
@@ -142,6 +184,8 @@ export async function crmOverview(): Promise<CrmOverview> {
           newWeek: dashboard.accounts.new7d ?? 0,
         }
       : null,
+    pnl: pnl(usageDays(dashboard?.usage)),
+    outbound: outboundFunnel(crm.pipeline().items),
     usageDays: usageDays(dashboard?.usage),
     // internal traffic minus the endpoint collector's own 5-minute TTFT probes —
     // ~576 requests/day of synthetic pings would otherwise drown the number that
@@ -167,6 +211,25 @@ export async function crmOverview(): Promise<CrmOverview> {
           })),
         }
       : null,
+    realUsage: (() => {
+      const metrics = extra['apimetrics']?.data as { models?: CrmOverview['realUsage'] } | undefined;
+      return metrics?.models ?? null;
+    })(),
+    competitors: (() => {
+      const or = extra['openrouter']?.data as { models?: CrmOverview['competitors'] } | undefined;
+      return or?.models ?? null;
+    })(),
+    signupSources: (() => {
+      const counts = new Map<string, number>();
+      for (const account of dashboard && Array.isArray((dashboard as { top?: unknown }).top)
+        ? ((dashboard as unknown as { top: Array<{ signupRef?: string | null; internal?: boolean }> }).top)
+        : []) {
+        if (account.internal) continue;
+        const key = account.signupRef ?? 'organic';
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      return [...counts.entries()].map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
+    })(),
     exposure: await exposure(),
     models: tiyuvta?.api?.models ?? [],
   };
