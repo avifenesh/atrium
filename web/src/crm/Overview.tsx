@@ -37,7 +37,7 @@ function Stat({ label, value, sub, spark }: { label: string; value: string; sub?
 const sum = (days: CrmUsageDay[], pick: (d: CrmUsageDay) => number) => days.reduce((a, d) => a + pick(d), 0);
 
 export function Overview({ data }: { data: CrmOverview }) {
-  const { money, accounts, usageDays, internalDays, visitors, endpoint, expenses } = data;
+  const { money, accounts, usageDays, internalDays, visitors, endpoint, expenses, exposure } = data;
 
   const revenue7d = sum(usageDays, (d) => d.debitedMicro);
   const requests7d = sum(usageDays, (d) => d.requests);
@@ -98,6 +98,39 @@ export function Overview({ data }: { data: CrmOverview }) {
           sub={visitors ? visitors.totals.map((t) => `${t.site} ${t.views}`).join(' · ') : null}
           spark={<Bars values={visitorDays} tone="fill-amber/70" />}
         />
+        {exposure && exposure.repos[0] && (
+          <Stat
+            label={`github · ${exposure.repos[0].repo.split('/').pop()}`}
+            value={`★${exposure.repos[0].stars}`}
+            sub={`${exposure.repos[0].views14d} views 14d (${exposure.repos[0].uniques14d} uniq) · ${exposure.repos[0].clones14d} clones`}
+          />
+        )}
+        {exposure && exposure.huggingface.length > 0 && (
+          <Stat
+            label="hf downloads 30d"
+            value={String(exposure.huggingface.reduce((a, h) => a + h.downloads30d, 0))}
+            sub={exposure.huggingface
+              .map((h) => `${h.id.split('/').pop()?.slice(0, 18)} ${h.downloads30d}`)
+              .join(' · ')}
+          />
+        )}
+        {exposure && exposure.crates.length > 0 && (
+          <Stat
+            label="crates installs"
+            value={String(exposure.crates.reduce((a, c) => a + c.recentDownloads, 0))}
+            sub={exposure.crates.map((c) => `${c.name} ${c.recentDownloads}`).join(' · ')}
+          />
+        )}
+        {exposure && exposure.referrers.length > 0 && (
+          <Stat
+            label="gh referrers 14d"
+            value={exposure.referrers[0]?.referrer ?? '—'}
+            sub={exposure.referrers
+              .slice(0, 4)
+              .map((r) => `${r.referrer} ${r.count}`)
+              .join(' · ')}
+          />
+        )}
       </div>
 
       {/* endpoint health + accounts — one thin strip, phone wraps */}

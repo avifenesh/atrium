@@ -806,6 +806,21 @@ export interface CrmOverview {
       status: string | null;
     }>;
   } | null;
+  /** project reach, from the newest daily exposure snapshot: GitHub repo
+   *  traffic, HF model downloads, crates installs — the top of the funnel */
+  exposure: {
+    date: string;
+    repos: Array<{
+      repo: string;
+      stars: number;
+      views14d: number;
+      uniques14d: number;
+      clones14d: number;
+    }>;
+    referrers: Array<{ referrer: string; count: number }>;
+    huggingface: Array<{ id: string; downloads30d: number; likes: number }>;
+    crates: Array<{ name: string; recentDownloads: number; version: string }>;
+  } | null;
   models: string[];
 }
 

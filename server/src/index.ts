@@ -480,7 +480,7 @@ const server = createServer(async (req, res) => {
     // the business numbers above the pipeline — aggregated server-side so the
     // public host reads one endpoint instead of the machine-wide snapshot
     if (method === 'GET' && path === '/api/crm/overview') {
-      return json(res, 200, crmOverview());
+      return json(res, 200, await crmOverview());
     }
 
     if (method === 'POST' && path === '/api/crm/entry') {

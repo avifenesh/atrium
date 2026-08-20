@@ -7,11 +7,74 @@
 // whole machine (agents, repos, comms). This module copies out ONLY the
 // business slice, so widening the CRM's data never means widening its surface.
 
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { config } from './config.js';
 import { store } from './state.js';
-import { iso } from './util.js';
+import { iso, readJson } from './util.js';
 import type { CrmOverview, CrmUsageDay } from '../../shared/types.js';
 
 const DAYS = 7;
+
+// --- exposure snapshot --------------------------------------------------------
+//
+// The exposure collector writes one date-named JSON per day (GitHub traffic,
+// HF downloads, crates). The overview reads the newest one — cached for five
+// minutes, since the file changes a handful of times a day.
+
+interface SnapshotShape {
+  date?: string;
+  repos?: Array<{
+    repo?: string;
+    stars?: number;
+    traffic?: { views14d?: { total?: number; uniques?: number }; clones14d?: { total?: number } };
+  }>;
+  traffic?: { referrers?: Array<{ referrer?: string; count?: number }> };
+  huggingface?: Array<{ id?: string; downloads30d?: number; likes?: number }>;
+  crates?: Array<{ name?: string; recentDownloads?: number; version?: string }>;
+}
+
+let exposureCache: { at: number; value: CrmOverview['exposure'] } = { at: 0, value: null };
+
+async function exposure(): Promise<CrmOverview['exposure']> {
+  if (Date.now() - exposureCache.at < 300_000) return exposureCache.value;
+  exposureCache = { at: Date.now(), value: null };
+  const dir = (config as unknown as { exposure?: { snapshotDir?: string } }).exposure?.snapshotDir;
+  if (!dir) return null;
+  let newest: string | undefined;
+  try {
+    newest = (await readdir(dir)).filter((n) => /^\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort().pop();
+  } catch {
+    return null;
+  }
+  if (!newest) return null;
+  const snap = await readJson<SnapshotShape>(join(dir, newest));
+  if (!snap) return null;
+  exposureCache.value = {
+    date: snap.date ?? newest.replace('.json', ''),
+    repos: (snap.repos ?? []).map((r) => ({
+      repo: r.repo ?? '?',
+      stars: r.stars ?? 0,
+      views14d: r.traffic?.views14d?.total ?? 0,
+      uniques14d: r.traffic?.views14d?.uniques ?? 0,
+      clones14d: r.traffic?.clones14d?.total ?? 0,
+    })),
+    referrers: (snap.traffic?.referrers ?? [])
+      .filter((r): r is { referrer: string; count: number } => !!r.referrer && typeof r.count === 'number')
+      .slice(0, 6),
+    huggingface: (snap.huggingface ?? []).map((h) => ({
+      id: h.id ?? '?',
+      downloads30d: h.downloads30d ?? 0,
+      likes: h.likes ?? 0,
+    })),
+    crates: (snap.crates ?? []).map((c) => ({
+      name: c.name ?? '?',
+      recentDownloads: c.recentDownloads ?? 0,
+      version: c.version ?? '?',
+    })),
+  };
+  return exposureCache.value;
+}
 
 interface DashboardShape {
   accounts?: { total?: number; withPurchase?: number; suspended?: number; internal?: number; new7d?: number };
@@ -34,7 +97,7 @@ function usageDays(rows: Array<Partial<CrmUsageDay>> | undefined): CrmUsageDay[]
     .sort((a, b) => a.day.localeCompare(b.day));
 }
 
-export function crmOverview(): CrmOverview {
+export async function crmOverview(): Promise<CrmOverview> {
   const extra = store.get().extra;
 
   const tiyuvta = extra['tiyuvta']?.data as { dashboard?: DashboardShape; api?: { models?: string[] } } | undefined;
@@ -95,6 +158,7 @@ export function crmOverview(): CrmOverview {
           })),
         }
       : null,
+    exposure: await exposure(),
     models: tiyuvta?.api?.models ?? [],
   };
 }
