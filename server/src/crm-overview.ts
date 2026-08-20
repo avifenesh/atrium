@@ -108,24 +108,31 @@ function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {
   const totals = { drafted: 0, contacted: 0, replied: 0, bySource: [] as CrmOverview['outbound']['bySource'] };
   for (const item of items) {
     if (item.kind !== 'lead') continue;
-    if (!item.notes.some((n) => n.text.startsWith('outreach draft'))) continue;
+    const drafted = item.notes.some((n) => n.text.startsWith('outreach draft'));
+    // "contacted" = ANY outreach happened: the owner's own posted reply
+    // (self-comment auto-mark), a logged touch, or a manual stage move. The
+    // first cut only counted seller-drafted leads, which erased the owner's
+    // real activity — most outreach is his own comments, not drafts.
+    const contacted = item.contacts.length > 0 || (item.stage !== 'new' && item.stage !== 'lost');
+    const replied = REPLIED_STAGES.has(item.stage);
+    if (!drafted && !contacted) continue;
     const key = item.source ?? '?';
     const row = bySource.get(key) ?? { source: key, drafted: 0, contacted: 0, replied: 0 };
-    row.drafted += 1;
-    totals.drafted += 1;
-    // "contacted" = the owner actually sent something: a logged touch, or the
-    // stage moved past new (contact-log auto-advance sets contacted)
-    if (item.contacts.length > 0 || item.stage !== 'new') {
+    if (drafted) {
+      row.drafted += 1;
+      totals.drafted += 1;
+    }
+    if (contacted) {
       row.contacted += 1;
       totals.contacted += 1;
     }
-    if (REPLIED_STAGES.has(item.stage)) {
+    if (replied) {
       row.replied += 1;
       totals.replied += 1;
     }
     bySource.set(key, row);
   }
-  totals.bySource = [...bySource.values()].sort((a, b) => b.drafted - a.drafted);
+  totals.bySource = [...bySource.values()].sort((a, b) => b.contacted - a.contacted || b.drafted - a.drafted);
   return totals;
 }
 

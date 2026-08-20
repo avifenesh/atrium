@@ -157,9 +157,7 @@ async function matchingThreads(
   return out;
 }
 
-/** True when `user` has already commented in the thread. One unauthenticated request
- *  per NEW matching thread; already-marked leads are skipped by the caller, so steady
- *  state costs nothing. */
+/** True when `user` has already commented in the thread. */
 async function selfCommented(repo: string, num: number, user: string): Promise<boolean> {
   const payload = await getJson<{ events?: Array<{ type: string; author?: { name?: string } }> }>(
     `${API}/models/${repo}/discussions/${num}`,
@@ -167,6 +165,22 @@ async function selfCommented(repo: string, num: number, user: string): Promise<b
   return (payload.events ?? []).some(
     (e) => e.type === 'comment' && e.author?.name?.toLowerCase() === user.toLowerCase(),
   );
+}
+
+/** When each thread was last checked for a self-comment. Checking only NEW
+ *  threads missed the normal case — the owner answers a thread hours after the
+ *  radar found it — so unanswered threads are RE-checked on a slow clock:
+ *  fresh threads never wait long, and the request cost stays bounded. */
+const selfCheckAt = new Map<string, number>();
+const SELF_RECHECK_MS = 2 * 3_600_000;
+
+function shouldSelfCheck(id: string): boolean {
+  const lead = signals.lead(id);
+  if (lead?.status === 'engaged' || lead?.status === 'dismissed') return false; // settled
+  const last = selfCheckAt.get(id);
+  if (last != null && Date.now() - last < SELF_RECHECK_MS) return false;
+  selfCheckAt.set(id, Date.now());
+  return true;
 }
 
 const collector: Collector = {
@@ -260,7 +274,7 @@ const collector: Collector = {
         // Self-comment detection: a thread the owner already answered is engaged, not
         // an action item. Checked once per untouched thread (existing lead = skip),
         // so the extra request cost is bounded to genuinely new matches.
-        if (settings.selfUser && !signals.lead(id)) {
+        if (settings.selfUser && shouldSelfCheck(id)) {
           try {
             if (await selfCommented(thread.repo, thread.num, settings.selfUser)) {
               await signals.setLead(id, 'engaged', `auto: ${settings.selfUser} commented`);
@@ -299,7 +313,7 @@ const collector: Collector = {
               ? ('demand-thread' as const)
               : ('mention' as const);
           const id = `hf-hub:thread:${own}#${thread.num}`;
-          if (settings.selfUser && !signals.lead(id)) {
+          if (settings.selfUser && shouldSelfCheck(id)) {
             try {
               if (await selfCommented(own, thread.num, settings.selfUser)) {
                 await signals.setLead(id, 'engaged', `auto: ${settings.selfUser} commented`);

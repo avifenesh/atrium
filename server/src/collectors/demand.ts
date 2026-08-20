@@ -235,6 +235,34 @@ async function fetchGithubIssues(query: string, token: string | null, excludeOwn
     }));
 }
 
+// --- self-comment detection ------------------------------------------------
+//
+// Same contract as the HF radar's: a thread the owner already answered is
+// engaged, not an action item — and the owner answers AFTER the lead appears,
+// so unanswered issues are re-checked on a slow clock, not just once.
+
+const selfCheckAt = new Map<string, number>();
+const SELF_RECHECK_MS = 2 * 3_600_000;
+
+function shouldSelfCheck(id: string): boolean {
+  const lead = signals.lead(id);
+  if (lead?.status === 'engaged' || lead?.status === 'dismissed') return false;
+  const last = selfCheckAt.get(id);
+  if (last != null && Date.now() - last < SELF_RECHECK_MS) return false;
+  selfCheckAt.set(id, Date.now());
+  return true;
+}
+
+/** id shape: gh-issue:<owner>/<repo>/issues/<num> */
+async function ghSelfCommented(id: string, login: string, token: string | null): Promise<boolean> {
+  const path = id.slice('gh-issue:'.length);
+  const comments = await getJson<Array<{ user?: { login?: string } }>>(
+    `https://api.github.com/repos/${path}/comments?per_page=100`,
+    token ? { authorization: `Bearer ${token}` } : {},
+  );
+  return comments.some((c) => c.user?.login?.toLowerCase() === login.toLowerCase());
+}
+
 // --- collector -----------------------------------------------------------------
 
 const collector: Collector = {
@@ -308,6 +336,21 @@ const collector: Collector = {
       if (seen.has(hit.id)) continue;
       seen.add(hit.id);
       items.push(hit);
+    }
+
+    // the owner's own replies mark gh-issue leads engaged, exactly like the HF
+    // radar's self-comment detection — bounded by the 2h recheck clock
+    if (gh.login) {
+      for (const item of items) {
+        if (!item.id.startsWith('gh-issue:') || !shouldSelfCheck(item.id)) continue;
+        try {
+          if (await ghSelfCommented(item.id, gh.login, token)) {
+            await signals.setLead(item.id, 'engaged', `auto: ${gh.login} commented`);
+          }
+        } catch (error) {
+          failures.push(`self-check ${item.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     }
 
     await signals.publish('demand', items, failures.length ? failures.slice(0, 3).join(' | ') : null);
