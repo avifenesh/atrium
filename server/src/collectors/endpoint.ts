@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { store } from '../state.js';
 import { config } from '../config.js';
 import { iso, readJson } from '../util.js';
+import type { Flag } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {
@@ -137,6 +138,25 @@ function summarize(now: number): EndpointModelHealth[] {
   return out.sort((a, b) => a.model.localeCompare(b.model));
 }
 
+/** A model whose LAST probe failed has failed twice in a row (run() retries a
+ *  failure in-run before recording it), so a flag here means a real outage, not
+ *  a blip. Crit flags ride the normal notify pipe to the phone; the stable id
+ *  makes recovery send a matching [clear]. */
+export function downFlags(summary: EndpointModelHealth[]): Flag[] {
+  return summary
+    .filter((m) => !m.ok)
+    .map((m) => ({
+      id: `endpoint:down:${m.model}`,
+      severity: 'crit' as const,
+      title: `${m.model} not answering on api.tiyuvta.ai`,
+      detail: `probe failed twice in a row at ${m.checkedAt} · ${m.uptimePct}% uptime over 24h`,
+      source: 'endpoint',
+      raisedAt: m.checkedAt,
+    }));
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const collector: Collector = {
   name: 'endpoint',
   intervalMs: 5 * 60_000,
@@ -173,10 +193,17 @@ const collector: Collector = {
     }
 
     for (const model of models) {
-      const result = await probe(auth.base, auth.key, model);
+      let result = await probe(auth.base, auth.key, model);
       history.push(result);
-      const day = result.at.slice(0, 10);
-      dayCounts[day] = (dayCounts[day] ?? 0) + 1;
+      dayCounts[result.at.slice(0, 10)] = (dayCounts[result.at.slice(0, 10)] ?? 0) + 1;
+      if (!result.ok) {
+        // one in-run retry after a pause: a single dropped stream must not page
+        // the phone, a still-dead endpoint must page within this run
+        await sleep(15_000);
+        result = await probe(auth.base, auth.key, model);
+        history.push(result);
+        dayCounts[result.at.slice(0, 10)] = (dayCounts[result.at.slice(0, 10)] ?? 0) + 1;
+      }
     }
     const now = Date.now();
     history = history.filter((p) => now - Date.parse(p.at) <= WINDOW_MS);
@@ -196,6 +223,7 @@ const collector: Collector = {
       })),
       data: { models: summary, probesPerDay: dayCounts },
     });
+    store.setFlags('endpoint', downFlags(summary));
   },
 };
 
