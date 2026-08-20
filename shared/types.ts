@@ -726,9 +726,14 @@ export interface CrmEntry {
 /** Assembled pipeline item: live source merged with the owner's CRM state. */
 export interface CrmItem {
   id: string;
-  kind: 'lead' | 'account';
+  kind: 'lead' | 'account' | 'direction';
   title: string;
   subtitle: string | null;
+  /** where the item came from: signal source for leads ('hf-hub', 'hn', 'reddit',
+   *  'gh-issue', ...), 'console' for accounts, 'seller' for directions */
+  source: string | null;
+  /** longer free text: thread stats for leads, why + first action for directions */
+  detail: string | null;
   url: string | null;
   stage: CrmStage;
   /** what the sources say on their own — shown when a manual override diverges */
@@ -750,6 +755,22 @@ export interface CrmPipeline {
   items: CrmItem[];
   /** ids with CRM state whose live source has vanished — still shown, flagged stale */
   orphaned: string[];
+}
+
+/** One direction file under ~/.config/atrium/directions/ — written by the hermes
+ *  seller profile's scheduled hunt, read into the pipeline as kind 'direction'.
+ *  A direction is a NEW way to sell (channel, segment, integration, partnership,
+ *  content surface), never another comment on an existing thread. */
+export interface CrmDirection {
+  slug: string;
+  title: string;
+  /** evidence: why this is worth an hour */
+  why: string;
+  /** the single concrete first move */
+  firstAction: string;
+  segment: string | null;
+  urls: string[];
+  createdAt: string;
 }
 
 // ---------- re-entry (durable context parking + background status brief) ----------

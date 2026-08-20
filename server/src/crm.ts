@@ -16,13 +16,14 @@
 // Follow-ups raise flags through the normal flag pipe, so a due follow-up pings
 // the phone like any other crit/warn and shows on every panel with a FlagStrip.
 
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from './config.js';
 import { store } from './state.js';
 import { iso, readJson } from './util.js';
 import type {
   CrmContact,
+  CrmDirection,
   CrmEntry,
   CrmItem,
   CrmNote,
@@ -40,6 +41,7 @@ const _complete: _Complete = true;
 void _complete;
 
 let file = join(config.configDir, 'crm.json');
+let directionsDir = join(config.configDir, 'directions');
 const NOTE_CAP = 200;
 const CONTACT_CAP = 200;
 const TEXT_CAP = 4000;
@@ -101,6 +103,45 @@ function cleanText(value: unknown, field: string): string {
   return value.trim().slice(0, TEXT_CAP);
 }
 
+// --- directions ---------------------------------------------------------------
+//
+// One JSON file per direction under ~/.config/atrium/directions/, written by the
+// hermes seller profile's scheduled hunt (and by hand when the owner has an idea).
+// Files are the seam on purpose: the hunter needs no atrium API, atrium needs no
+// hermes API, and a direction survives either process being down.
+
+let directions: CrmDirection[] = [];
+
+function validDirection(raw: unknown): CrmDirection | null {
+  const d = raw as Partial<CrmDirection> | null;
+  if (!d || typeof d.slug !== 'string' || !d.slug || typeof d.title !== 'string' || !d.title) return null;
+  return {
+    slug: d.slug,
+    title: d.title.slice(0, 200),
+    why: typeof d.why === 'string' ? d.why.slice(0, TEXT_CAP) : '',
+    firstAction: typeof d.firstAction === 'string' ? d.firstAction.slice(0, TEXT_CAP) : '',
+    segment: typeof d.segment === 'string' ? d.segment.slice(0, 120) : null,
+    urls: Array.isArray(d.urls) ? d.urls.filter((u): u is string => typeof u === 'string').slice(0, 8) : [],
+    createdAt: typeof d.createdAt === 'string' ? d.createdAt : iso(),
+  };
+}
+
+async function refreshDirections(): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = (await readdir(directionsDir)).filter((n) => n.endsWith('.json'));
+  } catch {
+    directions = []; // no dir yet = no directions, not an error
+    return;
+  }
+  const loaded: CrmDirection[] = [];
+  for (const name of names) {
+    const parsed = validDirection(await readJson<unknown>(join(directionsDir, name)));
+    if (parsed) loaded.push(parsed);
+  }
+  directions = loaded.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 // --- pipeline assembly -------------------------------------------------------
 
 /** Leads are the actionable signal kinds — a thread or mention is somewhere a
@@ -131,7 +172,7 @@ function toItem(
   id: string,
   kind: CrmItem['kind'],
   derivedStage: CrmStage,
-  base: Pick<CrmItem, 'title' | 'subtitle' | 'url' | 'metrics' | 'activityAt'>,
+  base: Pick<CrmItem, 'title' | 'subtitle' | 'source' | 'detail' | 'url' | 'metrics' | 'activityAt'>,
   now: string,
 ): CrmItem {
   const entry = persisted.entries[id];
@@ -156,13 +197,35 @@ function assemble(): CrmPipeline {
   const items: CrmItem[] = [];
   const liveIds = new Set<string>();
 
+  for (const direction of directions) {
+    const id = `direction:${direction.slug}`;
+    liveIds.add(id);
+    items.push(
+      toItem(id, 'direction', 'new', {
+        title: direction.title,
+        subtitle: direction.segment,
+        source: 'seller',
+        detail: [direction.why, direction.firstAction && `→ ${direction.firstAction}`]
+          .filter(Boolean)
+          .join('\n') || null,
+        url: direction.urls[0] ?? null,
+        metrics: null,
+        activityAt: direction.createdAt,
+      }, now),
+    );
+  }
+
   for (const signal of store.get().signals.items) {
     if (!LEAD_KINDS.has(signal.kind)) continue;
     liveIds.add(signal.id);
     items.push(
       toItem(signal.id, 'lead', derivedLeadStage(signal), {
         title: signal.title,
-        subtitle: [signal.entity, signal.source].filter(Boolean).join(' · ') || null,
+        subtitle: signal.entity || null,
+        source: signal.source,
+        detail: [signal.detail, signal.count != null ? `${signal.count} reactions` : null]
+          .filter(Boolean)
+          .join(' · ') || null,
         url: signal.url,
         metrics: null,
         activityAt: signal.occurredAt ?? signal.firstSeenAt,
@@ -177,6 +240,12 @@ function assemble(): CrmPipeline {
       toItem(id, 'account', derivedAccountStage(account), {
         title: account.email,
         subtitle: `${account.requests} req · $${(account.spentMicro / 1_000_000).toFixed(2)}`,
+        source: 'console',
+        detail: [
+          account.paid ? 'paid' : 'free',
+          account.enrolled ? null : 'unenrolled',
+          typeof account.lastActiveDay === 'string' ? `last active ${account.lastActiveDay}` : null,
+        ].filter(Boolean).join(' · '),
         url: null,
         metrics: { requests: account.requests, spentMicro: account.spentMicro, paid: account.paid },
         activityAt: typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null,
@@ -191,10 +260,13 @@ function assemble(): CrmPipeline {
   for (const entry of Object.values(persisted.entries)) {
     if (liveIds.has(entry.id)) continue;
     orphaned.push(entry.id);
+    const kind = entry.id.startsWith('tenant:') ? 'account' : entry.id.startsWith('direction:') ? 'direction' : 'lead';
     items.push(
-      toItem(entry.id, entry.id.startsWith('tenant:') ? 'account' : 'lead', 'new', {
+      toItem(entry.id, kind, 'new', {
         title: entry.id,
         subtitle: 'source item no longer reported',
+        source: null,
+        detail: null,
         url: null,
         metrics: null,
         activityAt: entry.updatedAt,
@@ -242,6 +314,9 @@ export const crm = {
     raiseFollowUpFlags();
     // an hourly re-check turns a future followUpAt into a flag without a write
     setInterval(raiseFollowUpFlags, 3_600_000).unref();
+    await refreshDirections();
+    // the seller hunt runs every 6h; a 5-minute re-read is generous
+    setInterval(() => void refreshDirections(), 300_000).unref();
   },
 
   pipeline(): CrmPipeline {
@@ -299,10 +374,17 @@ export const crm = {
     return contact;
   },
 
-  /** test hook: reset in-memory state and redirect the persist file */
-  _resetForTest(filePath?: string): void {
+  /** test hook: re-read the directions dir on demand */
+  async _refreshDirectionsForTest(): Promise<void> {
+    await refreshDirections();
+  },
+
+  /** test hook: reset in-memory state and redirect the persist file / directions dir */
+  _resetForTest(filePath?: string, dirPath?: string): void {
     persisted = { entries: {} };
+    directions = [];
     loaded = true;
     if (filePath) file = filePath;
+    if (dirPath) directionsDir = dirPath;
   },
 };

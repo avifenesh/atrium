@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crm } from './crm.js';
@@ -145,4 +145,38 @@ test('rejects garbage: unknown stage, bad date, empty note', async () => {
     await assert.rejects(() => crm.addNote('x', '   '), /note text/);
     await assert.rejects(() => crm.addContact('', 'email', 'hi'), /missing id/);
   });
+});
+
+test('directions: files become pipeline rows with detail, and overlay state sticks', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'atrium-crm-dirs-'));
+  crm._resetForTest(join(dir, 'crm.json'), dir);
+  try {
+    seedStore([], []);
+    await writeFile(join(dir, 'discord-llm-servers.json'), JSON.stringify({
+      slug: 'discord-llm-servers',
+      title: 'Answer capacity questions in LLM Discord servers',
+      why: 'three servers asked for Qwen3.8 hosts this week',
+      firstAction: 'join r/LocalLLaMA discord, watch #hosting for a day',
+      segment: 'hobbyist-to-paid',
+      urls: ['https://example.com/discord'],
+      createdAt: '2026-08-20T00:00:00Z',
+    }));
+    await writeFile(join(dir, 'broken.json'), '{"title":"no slug"}'); // must be skipped, not crash
+    await crm._refreshDirectionsForTest();
+
+    const pipeline = crm.pipeline();
+    const item = pipeline.items.find((i) => i.id === 'direction:discord-llm-servers');
+    assert.equal(item?.kind, 'direction');
+    assert.equal(item?.source, 'seller');
+    assert.equal(item?.stage, 'new');
+    assert.match(item?.detail ?? '', /three servers/);
+    assert.match(item?.detail ?? '', /→ join/);
+    assert.equal(pipeline.items.some((i) => i.title === 'no slug'), false);
+
+    // owner overlay works on directions like any other id
+    await crm.addContact('direction:discord-llm-servers', 'discord', 'joined, watching');
+    assert.equal(crm.pipeline().items.find((i) => i.id === 'direction:discord-llm-servers')?.stage, 'contacted');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

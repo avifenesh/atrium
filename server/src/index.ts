@@ -38,6 +38,7 @@ import mentionsCollector from './collectors/mentions.js';
 import reentryCollector from './collectors/reentry.js';
 import helperCollector from './collectors/helper.js';
 import radarCollector from './collectors/radar.js';
+import demandCollector from './collectors/demand.js';
 import tiyuvtaCollector from './collectors/tiyuvta.js';
 import distributionCollector from './collectors/distribution.js';
 import exposureCollector from './collectors/exposure.js';
@@ -65,6 +66,7 @@ for (const c of [
   helperCollector,
   mentionsCollector,
   radarCollector,
+  demandCollector,
   tiyuvtaCollector,
   distributionCollector,
   exposureCollector,

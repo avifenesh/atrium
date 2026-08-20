@@ -5,12 +5,28 @@
 // SSE stream and every other atrium API are blocked on the public host, so this
 // page must not want them. Phone-first: one column, thumb-sized targets, the
 // due-follow-ups on top.
+//
+// Three item kinds, three jobs: directions (the seller hunt's new ways to sell —
+// decide, then act), leads (people publicly failing to run a model — answer
+// them), accounts (people already inside — keep them). The kind row splits the
+// screen by job; the stage row and search cut within one.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmItem, CrmPipeline, CrmStage } from '../../../shared/types';
 import { CRM_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
 
 const POLL_MS = 60_000;
+
+const KIND_LABEL: Record<CrmItem['kind'], string> = {
+  direction: 'directions',
+  lead: 'leads',
+  account: 'accounts',
+};
+const KIND_TONE: Record<CrmItem['kind'], string> = {
+  direction: 'text-amber',
+  lead: 'text-slate-glow',
+  account: 'text-jade',
+};
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -38,6 +54,15 @@ function relDay(iso: string | null): string {
   return `in ${days}d`;
 }
 
+function age(iso: string | null): string {
+  if (!iso) return '';
+  const hours = (Date.now() - Date.parse(iso)) / 3_600_000;
+  if (Number.isNaN(hours) || hours < 0) return '';
+  if (hours < 1) return `${Math.round(hours * 60)}m`;
+  if (hours < 48) return `${Math.round(hours)}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
 function StageBadge({ stage, overridden }: { stage: CrmStage; overridden: boolean }) {
   return (
     <span className={`shrink-0 rounded-full border border-white/10 px-2 py-0.5 font-mono text-[10px] ${STAGE_TONE[stage]}`}>
@@ -59,14 +84,20 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
         <StageBadge stage={item.stage} overridden={item.overridden} />
       </div>
       <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-mist-faint">
-        <span>{item.kind}</span>
+        <span className={KIND_TONE[item.kind]}>{item.kind}</span>
+        {item.source && item.source !== 'seller' && <span>{item.source}</span>}
         {item.subtitle && <span className="min-w-0 truncate">{item.subtitle}</span>}
-        {item.followUpAt && (
-          <span className={`ml-auto shrink-0 ${item.followUpDue ? 'text-amber' : ''}`}>
-            ⏰ {relDay(item.followUpAt)}
-          </span>
-        )}
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          {item.activityAt && !item.followUpAt && <span>{age(item.activityAt)}</span>}
+          {item.followUpAt && (
+            <span className={item.followUpDue ? 'text-amber' : ''}>⏰ {relDay(item.followUpAt)}</span>
+          )}
+        </span>
       </div>
+      {/* directions carry their pitch — a title alone is not enough to judge one */}
+      {item.kind === 'direction' && item.detail && (
+        <div className="mt-1.5 line-clamp-2 whitespace-pre-line text-xs text-mist-dim">{item.detail}</div>
+      )}
     </button>
   );
 }
@@ -104,8 +135,10 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
           <div className="min-w-0 flex-1">
             <div className="text-base text-mist">{item.title}</div>
             <div className="mt-0.5 font-mono text-[11px] text-mist-faint">
-              {item.kind}
+              <span className={KIND_TONE[item.kind]}>{item.kind}</span>
+              {item.source && ` · ${item.source}`}
               {item.subtitle && ` · ${item.subtitle}`}
+              {item.activityAt && ` · ${age(item.activityAt)} ago`}
             </div>
             {item.url && (
               <a href={item.url} target="_blank" rel="noreferrer" className="mt-1 block truncate font-mono text-[11px] text-slate-glow underline">
@@ -117,6 +150,12 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
             close
           </button>
         </div>
+
+        {item.detail && (
+          <div className="mt-3 whitespace-pre-line rounded-lg border border-white/8 px-3 py-2 text-xs text-mist-dim">
+            {item.detail}
+          </div>
+        )}
 
         {/* stage — one tap per column; tapping the derived stage clears the override */}
         <div className="mt-4">
@@ -256,12 +295,20 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
   );
 }
 
-type Filter = 'due' | 'all' | CrmStage;
+type KindFilter = 'all' | CrmItem['kind'];
+type StageFilter = 'any' | 'due' | CrmStage;
+
+const chipClass = (active: boolean, extra = '') =>
+  `shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
+    active ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
+  } ${extra}`;
 
 export function CrmApp() {
   const [pipeline, setPipeline] = useState<CrmPipeline | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>('all');
+  const [kind, setKind] = useState<KindFilter>('all');
+  const [stage, setStage] = useState<StageFilter>('any');
+  const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -281,12 +328,31 @@ export function CrmApp() {
 
   const items = pipeline?.items ?? [];
   const due = useMemo(() => items.filter((i) => i.followUpDue), [items]);
-  const counts = useMemo(() => {
-    const map = new Map<CrmStage, number>();
-    for (const item of items) map.set(item.stage, (map.get(item.stage) ?? 0) + 1);
+  const kindCounts = useMemo(() => {
+    const map = new Map<CrmItem['kind'], number>();
+    for (const item of items) map.set(item.kind, (map.get(item.kind) ?? 0) + 1);
     return map;
   }, [items]);
-  const visible = filter === 'all' ? items : filter === 'due' ? due : items.filter((i) => i.stage === filter);
+
+  // stage counts respect the kind filter, so "leads → new 12" answers the real
+  // question ("how many untouched leads"), not a blended number
+  const inKind = kind === 'all' ? items : items.filter((i) => i.kind === kind);
+  const stageCounts = useMemo(() => {
+    const map = new Map<CrmStage, number>();
+    for (const item of inKind) map.set(item.stage, (map.get(item.stage) ?? 0) + 1);
+    return map;
+  }, [inKind]);
+
+  const needle = query.trim().toLowerCase();
+  const visible = inKind.filter((i) => {
+    if (stage === 'due' && !i.followUpDue) return false;
+    if (stage !== 'any' && stage !== 'due' && i.stage !== stage) return false;
+    if (needle) {
+      const hay = `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''}`.toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
   const open = openId ? items.find((i) => i.id === openId) ?? null : null;
 
   return (
@@ -303,24 +369,51 @@ export function CrmApp() {
         )}
       </header>
 
-      {/* filter chips — horizontal thumb scroll on phones */}
+      {/* kind row — which job am I doing right now */}
+      <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
+        <button type="button" onClick={() => setKind('all')} className={chipClass(kind === 'all')}>
+          all {items.length}
+        </button>
+        {(['direction', 'lead', 'account'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setKind(kind === k ? 'all' : k)}
+            className={chipClass(kind === k, kind === k ? '' : KIND_TONE[k])}
+          >
+            {KIND_LABEL[k]} {kindCounts.get(k) ?? 0}
+          </button>
+        ))}
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="search"
+          className="ml-auto w-28 min-w-0 shrink rounded-full border border-white/10 bg-ink px-3 py-1.5 font-mono text-[11px] text-mist placeholder:text-mist-faint focus:w-44 focus:outline-none sm:w-40"
+        />
+      </div>
+
+      {/* stage row — where in the funnel, within the chosen kind */}
       <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
-        {(['all', 'due', ...CRM_STAGES] as Filter[]).map((f) => {
-          const count = f === 'all' ? items.length : f === 'due' ? due.length : counts.get(f) ?? 0;
-          const active = filter === f;
-          return (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={`shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
-                active ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
-              } ${f === 'due' && due.length > 0 ? 'text-amber' : ''}`}
-            >
-              {f === 'all' ? 'all' : f === 'due' ? 'due' : STAGE_LABEL[f as CrmStage]} {count}
-            </button>
-          );
-        })}
+        <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
+          any stage
+        </button>
+        <button
+          type="button"
+          onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
+          className={chipClass(stage === 'due', due.length > 0 ? 'text-amber' : '')}
+        >
+          due {due.length}
+        </button>
+        {CRM_STAGES.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setStage(stage === s ? 'any' : s)}
+            className={chipClass(stage === s)}
+          >
+            {STAGE_LABEL[s]} {stageCounts.get(s) ?? 0}
+          </button>
+        ))}
       </div>
 
       {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
