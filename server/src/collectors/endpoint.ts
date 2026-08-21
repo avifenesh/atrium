@@ -115,10 +115,15 @@ async function probe(base: string, key: string, model: string): Promise<Probe> {
   }
 }
 
-function summarize(now: number): EndpointModelHealth[] {
+function summarize(now: number, served: string[]): EndpointModelHealth[] {
+  // Only models the endpoint currently serves: a sunset model's probe history
+  // stays on disk as record, but must not render a DOWN row or page the phone
+  // for up to 24h after a deliberate removal (gemma sunset, 2026-08-21).
+  const servedSet = new Set(served);
   const byModel = new Map<string, Probe[]>();
   for (const p of history) {
     if (now - Date.parse(p.at) > WINDOW_MS) continue;
+    if (!servedSet.has(p.model)) continue;
     const list = byModel.get(p.model) ?? [];
     list.push(p);
     byModel.set(p.model, list);
@@ -215,7 +220,7 @@ const collector: Collector = {
     pruneDayCounts();
     await atomicWriteJson(HISTORY_FILE, { probes: history, dayCounts });
 
-    const summary = summarize(now);
+    const summary = summarize(now, models);
     const allOk = summary.every((m) => m.ok);
     store.setExtra('endpoint', {
       title: 'endpoint health',
