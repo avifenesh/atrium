@@ -103,18 +103,40 @@ function usageDays(rows: Array<Partial<CrmUsageDay>> | undefined): CrmUsageDay[]
 /** Post-draft stages, in "did the outreach work" order. */
 const REPLIED_STAGES = new Set(['replied', 'signed-up', 'active', 'paying']);
 
+/**
+ * Did our outreach do anything? Counts leads AND accounts.
+ *
+ * Accounts were excluded at first, on the assumption that outreach means cold
+ * contact and an account is already past that. That hid the highest-value touch
+ * we make: writing to a live user to ask why they stalled. Those emails simply
+ * did not appear in the funnel, so the numbers said we had contacted nobody who
+ * matters. An account is `contacted` when a touch is logged against it, and
+ * `replied` only on its own derived merit (active/paying), never because we
+ * pinned a stage by hand.
+ */
 function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {
   const bySource = new Map<string, { source: string; drafted: number; contacted: number; replied: number }>();
   const totals = { drafted: 0, contacted: 0, replied: 0, bySource: [] as CrmOverview['outbound']['bySource'] };
   for (const item of items) {
-    if (item.kind !== 'lead') continue;
+    if (item.kind !== 'lead' && item.kind !== 'account') continue;
     const drafted = item.notes.some((n) => n.text.startsWith('outreach draft'));
     // "contacted" = ANY outreach happened: the owner's own posted reply
     // (self-comment auto-mark), a logged touch, or a manual stage move. The
     // first cut only counted seller-drafted leads, which erased the owner's
     // real activity — most outreach is his own comments, not drafts.
-    const contacted = item.contacts.length > 0 || (item.stage !== 'new' && item.stage !== 'lost');
-    const replied = REPLIED_STAGES.has(item.stage);
+    // On an account a logged touch is the only honest signal: its stage is
+    // derived from console usage and would otherwise count every active user
+    // as "contacted" without anyone having written a word.
+    const contacted = item.kind === 'account'
+      ? item.contacts.length > 0
+      : item.contacts.length > 0 || (item.stage !== 'new' && item.stage !== 'lost');
+    // An account being `active` says nothing about our email: it was active
+    // before we wrote. Derived stages never yield 'replied', so on an account
+    // that value can only come from the owner pinning it after a real answer
+    // arrived — which is the only evidence of a reply this store holds.
+    const replied = item.kind === 'account'
+      ? item.stage === 'replied'
+      : REPLIED_STAGES.has(item.stage);
     if (!drafted && !contacted) continue;
     const key = item.source ?? '?';
     const row = bySource.get(key) ?? { source: key, drafted: 0, contacted: 0, replied: 0 };

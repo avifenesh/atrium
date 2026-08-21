@@ -147,6 +147,33 @@ test('rejects garbage: unknown stage, bad date, empty note', async () => {
   });
 });
 
+// The churn flag exists to say "an established customer stopped calling".
+// Emailing them is the response to it, so the flag has to stop firing once that
+// happened — a warn that survives the action it asked for is noise, and a strip
+// full of noise is a strip nobody reads.
+test('a quiet-customer flag clears once the customer has been contacted', async () => {
+  await withCrm(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const longAgo = new Date(Date.now() - 9 * 86_400_000).toISOString().slice(0, 10);
+    seedStore([], [account('t-quiet', { requests: 40, lastActiveDay: longAgo })]);
+
+    await crm.update('t-noop', { followUpAt: null }); // force a flag pass
+    assert.ok(
+      store.get().flags.some((f) => f.id === 'crm:quiet:tenant:t-quiet'),
+      'a customer silent for 9 days should raise the churn flag',
+    );
+
+    await crm.addContact('tenant:t-quiet', 'email', 'asked what made them stop');
+    await crm.update('t-noop', { followUpAt: null }); // re-run the flag pass
+    assert.equal(
+      store.get().flags.some((f) => f.id === 'crm:quiet:tenant:t-quiet'),
+      false,
+      'the ball is in their court now — the follow-up date is the nag, not the flag',
+    );
+    assert.notEqual(today, longAgo);
+  });
+});
+
 test('directions: files become pipeline rows with detail, and overlay state sticks', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'atrium-crm-dirs-'));
   crm._resetForTest(join(dir, 'crm.json'), dir);

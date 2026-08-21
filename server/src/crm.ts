@@ -157,6 +157,15 @@ function derivedLeadStage(signal: SignalItem): CrmStage {
   return 'new';
 }
 
+/**
+ * Accounts derive their stage from the console, and that derivation is the truth
+ * about the *relationship*: a paying account is paying whether or not anyone has
+ * written to it. Contacting someone is a thing WE did, not a stage they moved to,
+ * so it must never overwrite `active` or `paying` with `contacted` — the first cut
+ * did, which moved an account backwards out of `active` into an earlier column the
+ * moment it was emailed. Whether a touch happened is already carried by
+ * `contacts`, and is reported separately by the outbound funnel.
+ */
 function derivedAccountStage(account: DashboardAccount): CrmStage {
   if (account.suspended) return 'lost';
   if (account.paid) return 'paying';
@@ -309,6 +318,12 @@ function quietAccountFlags(now: string): Flag[] {
     if (!last) continue;
     const silentDays = Math.floor((Date.parse(today) - Date.parse(last)) / 86_400_000);
     if (silentDays < QUIET_DAYS) continue;
+    // Already chased since they went quiet: the ball is in their court, and a
+    // flag that keeps firing after the email was sent trains the owner to
+    // ignore the strip. A follow-up date is the right nag for that case.
+    const entry = persisted.entries[`tenant:${account.tenantId}`];
+    const lastTouch = entry?.contacts.at(-1)?.at ?? null;
+    if (lastTouch && lastTouch.slice(0, 10) >= last) continue;
     flags.push({
       id: `crm:quiet:tenant:${account.tenantId}`,
       severity: 'warn',
