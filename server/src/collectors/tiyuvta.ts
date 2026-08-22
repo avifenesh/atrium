@@ -9,7 +9,7 @@
 // failures are money problems and page; an unenrolled account cannot mint a key, which
 // is a customer sitting in a broken state, so it warns.
 
-import { readApiSurfaces, readCreditRequests, readDashboard, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
+import { readApiSurfaces, readCreditRequests, readDashboard, readGads, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
 import type { ExtraRow, Flag } from '../../../shared/types.js';
@@ -17,6 +17,33 @@ import type { Collector } from './registry.js';
 
 const money = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
 const count = (n: number): string => n.toLocaleString('en-US');
+
+// The ads account spends in ILS; the kill gate is in USD. ECB publishes one rate
+// a day, so a 12-hour cache is honest — and a fetch failure keeps the last rate
+// rather than dropping the ads rows, because a stale-by-a-day rate misstates
+// $/payer by less than hiding the spend does.
+const fxCache = new Map<string, { rate: number; at: number }>();
+async function usdRate(currency: string): Promise<number | null> {
+  if (currency === 'USD') return 1;
+  const cached = fxCache.get(currency);
+  if (cached && Date.now() - cached.at < 12 * 3_600_000) return cached.rate;
+  try {
+    const response = await fetch(`https://api.frankfurter.app/latest?from=${currency}&to=USD`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const rate = ((await response.json()) as { rates?: { USD?: number } }).rates?.USD;
+    if (typeof rate === 'number' && rate > 0) {
+      fxCache.set(currency, { rate, at: Date.now() });
+      return rate;
+    }
+  } catch {
+    /* fall through to the stale rate */
+  }
+  return cached?.rate ?? null;
+}
+
+/** The ads cell's kill gate (spec/gtm/ADS-PPC-CELL-20260822.md): >$150/payer, or $150 spent with none. */
+const KILL_GATE_USD_PER_PAYER = 150;
 
 const collector: Collector = {
   name: 'tiyuvta',
@@ -32,11 +59,12 @@ const collector: Collector = {
       // the other three are small and independent, so a failure in any one of them
       // must not cost the dashboard.
       const dashboard = await readDashboard();
-      const [traffic, webhooks, invoices, api] = await Promise.all([
+      const [traffic, webhooks, invoices, api, gads] = await Promise.all([
         readTraffic(7).catch(() => null),
         readWebhookFailures().catch(() => null),
         readCreditRequests().catch(() => null),
         readApiSurfaces().catch(() => null),
+        readGads(30).catch(() => null),
       ]);
 
       const { accounts, money: m, books, promo, totals } = dashboard;
@@ -113,6 +141,54 @@ const collector: Collector = {
         });
       }
 
+      // Ad spend against the funnel it bought — per ref, with the kill gate
+      // computed here instead of remembered. Spend is windowed 30d to match the
+      // cell; the funnel counts are all-time (payers never expire off their ref).
+      if (gads) {
+        const stampAge = gads.updatedAt ? Math.round((Date.now() - gads.updatedAt) / 3_600_000) : null;
+        if (gads.spend.length === 0) {
+          rows.push({
+            label: 'ads spend, 30d',
+            value: gads.updatedAt ? 'none recorded' : 'no push from the Ads Script yet',
+            tone: gads.updatedAt ? undefined : 'warn',
+          });
+        }
+        for (const ad of gads.spend) {
+          const rate = ad.currency ? await usdRate(ad.currency) : 1;
+          const usd = rate === null ? null : (ad.costMicros / 1e6) * rate;
+          const spent = usd === null ? `${(ad.costMicros / 1e6).toFixed(2)} ${ad.currency} (no fx rate)` : `$${usd.toFixed(2)}`;
+          const perPayer = usd !== null && ad.paid > 0 ? ` · $${(usd / ad.paid).toFixed(0)}/payer` : '';
+          rows.push({
+            label: `ads ${ad.ref}`,
+            value: `${spent} · ${count(ad.clicks)} clicks · ${count(ad.signups)} signups · ${count(ad.activated)} active · ${count(ad.paid)} paid${perPayer}`,
+            tone: ad.paid > 0 ? 'ok' : undefined,
+          });
+          const breached = usd !== null && (ad.paid > 0 ? usd / ad.paid > KILL_GATE_USD_PER_PAYER : usd > KILL_GATE_USD_PER_PAYER);
+          if (breached) {
+            flags.push({
+              id: `tiyuvta:ads-kill-gate:${ad.ref}`,
+              severity: 'warn',
+              title: `${ad.ref} is past the ads kill gate`,
+              detail: `$${usd.toFixed(2)} spent (30d) for ${ad.paid} payer(s) — the cell says >$${KILL_GATE_USD_PER_PAYER}/payer means pause it. spec/gtm/ADS-PPC-CELL-20260822.md.`,
+              source: 'tiyuvta',
+              raisedAt: now,
+            });
+          }
+        }
+        if (stampAge !== null && stampAge > 26) {
+          // The script runs hourly; a day of silence means the schedule or the
+          // token broke, and the spend rows above are quietly going stale.
+          flags.push({
+            id: 'tiyuvta:ads-push-stale',
+            severity: 'warn',
+            title: `Ads Script has not pushed for ${stampAge}h`,
+            detail: 'check the script history under Tools → Scripts in the Ads account, and the GADS_INGEST_TOKEN secret.',
+            source: 'tiyuvta',
+            raisedAt: now,
+          });
+        }
+      }
+
       if (traffic) {
         rows.push({
           label: 'site views, 7d',
@@ -176,7 +252,7 @@ const collector: Collector = {
         up: true,
         rows,
         error: null,
-        data: { dashboard, traffic, api, webhookFailures: webhooks?.data ?? null, creditRequests: invoices?.data ?? null },
+        data: { dashboard, traffic, api, gads, webhookFailures: webhooks?.data ?? null, creditRequests: invoices?.data ?? null },
       });
       store.setFlags('tiyuvta', flags);
     } catch (error) {

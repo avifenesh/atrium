@@ -109,7 +109,29 @@ export interface AdminTraffic {
   clicks: Array<Record<string, string | number | null>>;
 }
 
+/** GET /admin/gads — Google Ads spend (pushed by the scheduled Ads Script) joined with the signup funnel per ref. */
+export interface GadsReport {
+  days: number;
+  /** Epoch ms of the last ingest — how fresh the script's push is. Null before the first push. */
+  updatedAt: number | null;
+  spend: Array<{
+    ref: string;
+    costMicros: number;
+    /** Account currency (ILS) — convert where read, never where stored. */
+    currency: string | null;
+    clicks: number;
+    impressions: number;
+    signups: number;
+    activated: number;
+    paid: number;
+    usageMicro: number;
+    lastSpendDay: string | null;
+  }>;
+  unspentRefs: Array<{ ref: string; signups: number; activated: number; paid: number; usageMicro: number }>;
+}
+
 export const readDashboard = () => request<AdminDashboard>('GET', '/admin/dashboard');
+export const readGads = (days: 7 | 30 | 90 = 30) => request<GadsReport>('GET', `/admin/gads?days=${days}`);
 export const readTraffic = (days = 7) => request<AdminTraffic>('GET', `/admin/traffic?days=${days}`);
 export const readWebhookFailures = () => request<{ data: unknown[] }>('GET', '/admin/webhook-failures');
 export const readCreditRequests = () => request<{ data: unknown[] }>('GET', '/admin/credit-requests');
