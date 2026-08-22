@@ -228,12 +228,27 @@ const collector: Collector = {
           });
         }
       }
+      // The snapshot now carries EVERY card under the account. A row per card
+      // with movement; the quiet ones (0 downloads, 0 likes — training
+      // checkpoints mostly) collapse into a counted line instead of 12 zero
+      // rows, so nothing is dropped silently and nothing drowns the panel.
+      const quietCards: string[] = [];
       for (const model of snapshot.huggingface) {
+        if (!model.downloads30d && !model.likes) {
+          quietCards.push(model.id.split('/').pop() ?? model.id);
+          continue;
+        }
         const prev = previous?.huggingface.find((m) => m.id === model.id);
         counter(`hf:${model.id}`, model.id.split('/').pop() ?? model.id, 'downloads, 30d', model.downloads30d, prev?.downloads30d, {
           detail: `${model.likes ?? 0} likes`,
           url: `https://huggingface.co/${model.id}`,
           spark: series((s) => s.huggingface.find((m) => m.id === model.id)?.downloads30d),
+        });
+      }
+      if (quietCards.length) {
+        counter('hf:quiet', `hf: ${quietCards.length} card(s) with no downloads/likes`, 'tracked, quiet', quietCards.length, undefined, {
+          detail: quietCards.slice(0, 6).join(', ') + (quietCards.length > 6 ? ', …' : ''),
+          url: 'https://huggingface.co/Avifenesh',
         });
       }
       for (const crate of snapshot.crates) {
