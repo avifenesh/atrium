@@ -13,6 +13,8 @@
 // alarm at 3am.
 
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { store } from '../state.js';
@@ -20,7 +22,28 @@ import { iso } from '../util.js';
 import type { Flag } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
 
-const SERVICE_JSON = join(homedir(), 'projects', 'darklanes', 'site-inference', 'src', 'data', 'service.json');
+// Prices come from origin/main, NEVER the working tree: the shared darklanes
+// checkout is multi-agent and routinely sits days behind (2026-08-22 incident:
+// the panel showed the pre-reprice $2.9 output and a sunset model because the
+// checkout was at 2026-08-20). fetch is cheap at this collector's 1h cadence
+// and touches no working files; if git fails we fall back to the tree file.
+const DARKLANES = join(homedir(), 'projects', 'darklanes');
+const SERVICE_JSON = join(DARKLANES, 'site-inference', 'src', 'data', 'service.json');
+const SERVICE_JSON_REF = 'origin/main:site-inference/src/data/service.json';
+const run = promisify(execFile);
+
+async function serviceJsonText(): Promise<string> {
+  try {
+    await run('git', ['-C', DARKLANES, 'fetch', '--quiet', 'origin', 'main'], { timeout: 30_000 });
+    const { stdout } = await run('git', ['-C', DARKLANES, 'show', SERVICE_JSON_REF], {
+      timeout: 15_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return readFile(SERVICE_JSON, 'utf8');
+  }
+}
 const API = 'https://openrouter.ai/api/v1';
 
 export interface CompetitorModel {
@@ -45,7 +68,7 @@ interface OrEndpoint {
 async function ourPrices(): Promise<Map<string, { input: number; output: number }>> {
   const out = new Map<string, { input: number; output: number }>();
   try {
-    const service = JSON.parse(await readFile(SERVICE_JSON, 'utf8')) as {
+    const service = JSON.parse(await serviceJsonText()) as {
       models?: Array<{ id?: string; pricing?: { input?: number; output?: number } }>;
     };
     for (const m of service.models ?? []) {
