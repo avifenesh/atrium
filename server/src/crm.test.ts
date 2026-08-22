@@ -24,7 +24,8 @@ function signal(id: string, kind: SignalItem['kind'], lead?: SignalItem['lead'])
 function seedStore(items: SignalItem[], accounts: unknown[]): void {
   const signals: SignalsState = {
     updatedAt: null, items, lastReviewedAt: null, sources: [], error: null,
-    watch: { terms: [], radarWatch: [], demandKeywords: [], prospectKeywords: [], repos: [], hfModels: [], crates: [] },
+    watch: { terms: [], radarWatch: [], demandKeywords: [], prospectKeywords: [],
+    disqualifyKeywords: [], repos: [], hfModels: [], crates: [] },
   };
   store.setSection('signals', signals);
   store.setExtra('tiyuvta', { updatedAt: null, data: { dashboard: { top: accounts } } });
