@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { Board } from './Board';
-import { Overview } from './Overview';
+import { GrowthTab, HealthTab, MoneyTab, PulseStrip } from './Overview';
 import { CRM_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
 
 const POLL_MS = 60_000;
@@ -304,6 +304,14 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
 type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
+// Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
+const TABS = ['pipeline', 'money', 'growth', 'health'] as const;
+type Tab = (typeof TABS)[number];
+const readTab = (): Tab => {
+  const h = window.location.hash.replace('#', '');
+  return (TABS as readonly string[]).includes(h) ? (h as Tab) : 'pipeline';
+};
+
 const matches = (i: CrmItem, needle: string) =>
   `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''}`.toLowerCase().includes(needle);
 
@@ -320,6 +328,17 @@ export function CrmApp() {
   const [stage, setStage] = useState<StageFilter>('any');
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>(readTab);
+
+  useEffect(() => {
+    const onHash = () => setTab(readTab());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  const goTab = (next: Tab) => {
+    window.location.hash = next === 'pipeline' ? '' : next;
+    setTab(next);
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -382,9 +401,35 @@ export function CrmApp() {
 
       {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
 
+      {/* tab bar — one screen per question: work the pipeline, read the money,
+          read the growth, check the serving */}
+      <div className="mb-3 flex gap-1 border-b border-white/8">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => goTab(t)}
+            className={`cursor-pointer border-b-2 px-3 py-2 font-mono text-[12px] transition-colors ${
+              tab === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab !== 'pipeline' && !overview && !error && (
+        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+      )}
+      {tab === 'money' && overview && <MoneyTab data={overview} />}
+      {tab === 'growth' && overview && <GrowthTab data={overview} />}
+      {tab === 'health' && overview && <HealthTab data={overview} />}
+
+      {tab === 'pipeline' && (
+        <>
       {overview && (
-        <div className="mb-4">
-          <Overview data={overview} />
+        <div className="mb-3">
+          <PulseStrip data={overview} dueCount={due.length} />
         </div>
       )}
 
@@ -462,6 +507,8 @@ export function CrmApp() {
         <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
           loading…
         </div>
+      )}
+        </>
       )}
 
       {open && <Detail item={open} onClose={() => setOpenId(null)} onChanged={refresh} />}
