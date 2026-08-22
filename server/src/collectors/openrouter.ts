@@ -56,6 +56,10 @@ export interface CompetitorModel {
   minUptimePct: number | null;
   oursInUsd: number | null;
   oursOutUsd: number | null;
+  /** set when the board is a stand-in class, not the model itself (e.g. Ornith
+   *  has no OpenRouter listing — we are the only provider — so its row compares
+   *  the base-class board). Render MUST say so or the row lies. */
+  comparedTo: string | null;
 }
 
 interface OrEndpoint {
@@ -150,6 +154,7 @@ const collector: Collector = {
         minUptimePct: uptimes.length ? Math.round(Math.min(...uptimes) * 10) / 10 : null,
         oursInUsd: ours.get(model)?.input ?? null,
         oursOutUsd: ours.get(model)?.output ?? null,
+        comparedTo: slug !== model ? slug : null,
       };
       rows.push(row);
 
@@ -180,7 +185,7 @@ const collector: Collector = {
       error: failures.length ? failures.join(' | ') : null,
       rows: rows.map((r) => ({
         label: r.model.split('/').pop() ?? r.model,
-        value: `${r.providers} providers · cheapest $${r.cheapestInUsd ?? '?'}/$${r.cheapestOutUsd ?? '?'} vs ours $${r.oursInUsd ?? '?'}/$${r.oursOutUsd ?? '?'} · min uptime ${r.minUptimePct ?? '?'}%`,
+        value: `${r.comparedTo ? `only provider is us · class board ${r.comparedTo}: ` : ''}${r.providers} providers · cheapest $${r.cheapestInUsd ?? '?'}/$${r.cheapestOutUsd ?? '?'} vs ours $${r.oursInUsd ?? '?'}/$${r.oursOutUsd ?? '?'} · min uptime ${r.minUptimePct ?? '?'}%`,
       })),
       data: { models: rows },
     });

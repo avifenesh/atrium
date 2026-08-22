@@ -231,7 +231,14 @@ const collector: Collector = {
         label: m.model.split('/').pop() ?? m.model,
         value: `${m.ok ? 'up' : 'DOWN'} · ttft ${m.ttftMs ?? '—'}ms · p50 ${m.p50TtftMs ?? '—'}ms · ${m.uptimePct}% 24h`,
       })),
-      data: { models: summary, probesPerDay: dayCounts },
+      data: {
+        models: summary,
+        probesPerDay: dayCounts,
+        // raw 24h probe series for the CRM health charts (~288 points/model)
+        series: history
+          .filter((p) => models.includes(p.model))
+          .map((p) => ({ at: p.at, model: p.model, ok: p.ok, ttftMs: p.ttftMs })),
+      },
     });
     store.setFlags('endpoint', downFlags(summary));
   },

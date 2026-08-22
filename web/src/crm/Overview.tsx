@@ -278,8 +278,10 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
               (c.oursOutUsd != null && c.cheapestOutUsd != null && c.cheapestOutUsd > c.oursOutUsd * 1.5);
             return (
               <Chip key={c.model} tone={window ? 'border-amber/40 text-amber' : 'border-white/10 text-mist-dim'}>
-                OR · {c.model.split('/').pop()}: {c.providers} providers · ${c.cheapestInUsd ?? '?'}/{c.cheapestOutUsd ?? '?'} vs ours ${c.oursInUsd ?? '?'}/{c.oursOutUsd ?? '?'} · min {c.minUptimePct ?? '?'}%
-                {window && ' · WINDOW'}
+                {c.comparedTo
+                  ? `OR · ${c.model.split('/').pop()}: we are the only provider · class board ${c.comparedTo.split('/').pop()}: ${c.providers} providers $${c.cheapestInUsd ?? '?'}/${c.cheapestOutUsd ?? '?'} vs ours $${c.oursInUsd ?? '?'}/${c.oursOutUsd ?? '?'}`
+                  : `OR · ${c.model.split('/').pop()}: ${c.providers} providers · $${c.cheapestInUsd ?? '?'}/${c.cheapestOutUsd ?? '?'} vs ours $${c.oursInUsd ?? '?'}/${c.oursOutUsd ?? '?'} · min ${c.minUptimePct ?? '?'}%`}
+                {window && !c.comparedTo && ' · WINDOW'}
               </Chip>
             );
           })}
@@ -300,7 +302,11 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
 // --- health tab ---------------------------------------------------------------
 
 export function HealthTab({ data }: { data: CrmOverview }) {
-  const { endpoint, realUsage, accounts } = data;
+  const { endpoint, realUsage, realUsageHourly, accounts } = data;
+  const probeSeries = endpoint?.series ?? [];
+  const hourly = realUsageHourly ?? [];
+  const hourTick = (iso: string) => `${iso.slice(11, 13)}:00`;
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -318,6 +324,61 @@ export function HealthTab({ data }: { data: CrmOverview }) {
           </Chip>
         ))}
       </div>
+
+      {/* one row of four 24h charts per served model (each model = one box):
+          real traffic, real latency, synthetic TTFT, probe uptime */}
+      {(endpoint?.models ?? []).map((m) => {
+        const short = m.model.split('/').pop() ?? m.model;
+        const probes = probeSeries.filter((p) => p.model === m.model);
+        const modelHours = hourly.filter((h) => h.model === m.model);
+        // shared hour axis: union of both sources, oldest first
+        const hourKeys = [...new Set([...modelHours.map((h) => h.hour.slice(0, 13)), ...probes.map((p) => p.at.slice(0, 13))])].sort();
+        const byHour = new Map(modelHours.map((h) => [h.hour.slice(0, 13), h]));
+        const upByHour = hourKeys.map((k) => {
+          const hp = probes.filter((p) => p.at.slice(0, 13) === k);
+          return hp.length ? Math.round((hp.filter((p) => p.ok).length / hp.length) * 100) : null;
+        });
+        if (hourKeys.length === 0) return null;
+        const labels = hourKeys.map((k) => hourTick(`${k}:00`));
+        return (
+          <div key={m.model}>
+            <div className="mb-1 font-mono text-[11px] text-mist-dim">{short} · last 24h</div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <TrendChart
+                title="traffic, req/hr (real)"
+                height={110}
+                labels={labels}
+                series={[
+                  { name: 'requests', color: SLATE, kind: 'bar', values: hourKeys.map((k) => byHour.get(k)?.requests ?? 0) },
+                  { name: 'errors', color: CORAL, kind: 'line', values: hourKeys.map((k) => byHour.get(k)?.errors ?? 0) },
+                ]}
+                format={(v) => String(Math.round(v))}
+              />
+              <TrendChart
+                title="latency, ms to headers (real)"
+                height={110}
+                labels={labels}
+                series={[{ name: 'avg ms', color: SLATE, kind: 'line', values: hourKeys.map((k) => byHour.get(k)?.avgMs ?? null) }]}
+                format={(v) => `${Math.round(v)}ms`}
+              />
+              <TrendChart
+                title="ttft, ms (probe, 5 min)"
+                height={110}
+                labels={probes.map((p) => p.at.slice(11, 16))}
+                series={[{ name: 'ttft', color: MIST, kind: 'line', values: probes.map((p) => p.ttftMs) }]}
+                format={(v) => `${Math.round(v)}ms`}
+              />
+              <TrendChart
+                title="uptime, %/hr (probe)"
+                height={110}
+                labels={labels}
+                series={[{ name: 'up %', color: JADE, kind: 'bar', values: upByHour }]}
+                format={(v) => `${Math.round(v)}%`}
+              />
+            </div>
+          </div>
+        );
+      })}
       {accounts && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat label="accounts" value={String(accounts.total)} sub={`+${accounts.newWeek} this week`} />

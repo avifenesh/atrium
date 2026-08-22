@@ -27,6 +27,16 @@ export interface RealUsageModel {
   avgMs: number | null;
 }
 
+/** One hour of one model's real traffic — the health-tab chart rows. */
+export interface RealUsageHour {
+  hour: string; // ISO, start of hour
+  model: string;
+  requests: number;
+  errors: number;
+  /** mean time-to-headers of 2xx requests that hour */
+  avgMs: number | null;
+}
+
 async function cfCreds(): Promise<{ token: string; account: string } | null> {
   try {
     const text = await readFile(resolve(homedir(), '.config/tiyuvta/cloudflare.env'), 'utf8');
@@ -107,6 +117,59 @@ const collector: Collector = {
       }
       byModel.set(row.model, entry);
     }
+    // hourly cut for the CRM health charts — same dataset, one more round-trip
+    const hourlySql = `
+      SELECT toStartOfInterval(timestamp, INTERVAL '1' HOUR) AS hour,
+             blob2 AS model, blob3 AS status,
+             SUM(_sample_interval) AS n,
+             SUM(double1 * _sample_interval) / SUM(_sample_interval) AS avgMs
+      FROM tiyuvta_api
+      WHERE timestamp > NOW() - INTERVAL '1' DAY AND blob2 != ''
+      GROUP BY hour, model, status ORDER BY hour ASC
+      FORMAT JSON`;
+    let hourly: RealUsageHour[] = [];
+    try {
+      const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${creds.account}/analytics_engine/sql`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${creds.token}` },
+        body: hourlySql,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (response.ok) {
+        const raw = ((await response.json()) as { data?: Array<SqlRow & { hour?: string }> }).data ?? [];
+        const byKey = new Map<string, { requests: number; errors: number; okMsSum: number; okN: number }>();
+        for (const row of raw) {
+          const hour = String(row.hour ?? '').replace(' ', 'T');
+          if (!hour) continue;
+          const key = `${hour}|${row.model}`;
+          const entry = byKey.get(key) ?? { requests: 0, errors: 0, okMsSum: 0, okN: 0 };
+          const n = Number(row.n) || 0;
+          const status = Number(row.status) || 0;
+          entry.requests += n;
+          if (status >= 500 || status === 429) entry.errors += n;
+          else if (status >= 200 && status < 300 && row.avgMs != null) {
+            entry.okMsSum += Number(row.avgMs) * n;
+            entry.okN += n;
+          }
+          byKey.set(key, entry);
+        }
+        hourly = [...byKey.entries()]
+          .map(([key, e]) => {
+            const [hour, model] = key.split('|');
+            return {
+              hour,
+              model,
+              requests: Math.round(e.requests),
+              errors: Math.round(e.errors),
+              avgMs: e.okN > 0 ? Math.round(e.okMsSum / e.okN) : null,
+            };
+          })
+          .sort((a, b) => a.hour.localeCompare(b.hour));
+      }
+    } catch {
+      /* charts degrade to empty; the 24h totals above still render */
+    }
+
     const models: RealUsageModel[] = [...byModel.entries()]
       .map(([model, e]) => ({
         model,
@@ -125,7 +188,7 @@ const collector: Collector = {
         label: m.model.split('/').pop() ?? m.model,
         value: `${m.requests24h} req 24h · ${m.errorPct}% err · avg ${m.avgMs ?? '—'}ms to headers`,
       })),
-      data: { models },
+      data: { models, hourly },
     });
   },
 };

@@ -798,6 +798,8 @@ export interface CrmOverview {
       uptimePct: number;
       checkedAt: string;
     }>;
+    /** raw 24h synthetic-probe series (5-min cadence) for the health charts */
+    series: Array<{ at: string; model: string; ok: boolean; ttftMs: number | null }>;
   } | null;
   expenses: {
     burnPerHour: number;
@@ -823,9 +825,14 @@ export interface CrmOverview {
   };
   /** what real customers experienced through the router, last 24h (probes excluded) */
   realUsage: Array<{ model: string; requests24h: number; errorPct: number; avgMs: number | null }> | null;
+  /** hourly per-model real traffic over 24h (requests, errors, mean ms to headers) */
+  realUsageHourly: Array<{ hour: string; model: string; requests: number; errors: number; avgMs: number | null }> | null;
   /** OpenRouter provider landscape per served model — the outreach-timing watch */
   competitors: Array<{
     model: string;
+    /** non-null when the OpenRouter board is a stand-in class (model itself is
+     *  not listed there — we are its only provider) */
+    comparedTo?: string | null;
     providers: number;
     cheapestInUsd: number | null;
     cheapestOutUsd: number | null;

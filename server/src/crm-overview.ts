@@ -248,7 +248,9 @@ export async function crmOverview(): Promise<CrmOverview> {
           channels: (web.channels ?? []).slice(0, 10),
         }
       : null,
-    endpoint: endpoint && Array.isArray(endpoint.models) ? { models: endpoint.models } : null,
+    endpoint: endpoint && Array.isArray(endpoint.models)
+      ? { models: endpoint.models, series: Array.isArray(endpoint.series) ? endpoint.series : [] }
+      : null,
     expenses: vast
       ? {
           burnPerHour: vast.burnPerHour ?? 0,
@@ -265,6 +267,10 @@ export async function crmOverview(): Promise<CrmOverview> {
     realUsage: (() => {
       const metrics = extra['apimetrics']?.data as { models?: CrmOverview['realUsage'] } | undefined;
       return metrics?.models ?? null;
+    })(),
+    realUsageHourly: (() => {
+      const metrics = extra['apimetrics']?.data as { hourly?: CrmOverview['realUsageHourly'] } | undefined;
+      return metrics?.hourly ?? null;
     })(),
     competitors: (() => {
       const or = extra['openrouter']?.data as { models?: CrmOverview['competitors'] } | undefined;
