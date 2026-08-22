@@ -70,8 +70,16 @@ interface Candidate {
 /** demand-thread when a shippable-format word matches, prospect-thread when the
  *  title shows a buyer failing to run the model. Prospect wins the tie, exactly
  *  like radar.ts — "OOM" outranks "gguf" in the same title. */
-function classify(title: string, demand: string[], prospect: string[]): 'demand-thread' | 'prospect-thread' | null {
+function classify(
+  title: string,
+  demand: string[],
+  prospect: string[],
+  disqualify: string[],
+): 'demand-thread' | 'prospect-thread' | null {
   const lower = title.toLowerCase();
+  // a self-hoster tell kills the thread outright — someone naming their local
+  // runtime (vllm/ollama/llama.cpp...) is running metal, not shopping for an API
+  if (disqualify.some((word) => lower.includes(word))) return null;
   if (prospect.some((word) => lower.includes(word))) return 'prospect-thread';
   if (demand.some((word) => lower.includes(word))) return 'demand-thread';
   return null;
@@ -276,6 +284,7 @@ const collector: Collector = {
     const watch = signals.watch();
     const demand = watch.demandKeywords.map((k) => k.toLowerCase());
     const prospect = (watch.prospectKeywords ?? []).map((k) => k.toLowerCase());
+    const disqualify = (watch.disqualifyKeywords ?? []).map((k) => k.toLowerCase());
 
     if (watch.radarWatch.length === 0 || (demand.length === 0 && prospect.length === 0)) {
       await signals.publish('demand', [], null);
@@ -315,7 +324,7 @@ const collector: Collector = {
           // null occurredAt = the surface already bounded freshness at the query
           // (searxng time_range); a real timestamp still has to pass the window
           if (candidate.occurredAt != null && !freshEnough(candidate.occurredAt)) continue;
-          const kind = classify(candidate.title, demand, prospect);
+          const kind = classify(candidate.title, demand, prospect, disqualify);
           if (!kind) continue;
           seen.add(candidate.id);
           kept += 1;

@@ -62,6 +62,13 @@ function defaultWatch(): SignalsWatch {
       'api', 'endpoint', 'host', 'serve', 'serving', 'provider', 'oom', 'out of memory',
       'vram', 'watchdog', 'sigabrt', 'crash', 'too slow', 'tok/s', 'openrouter', 'inference',
     ],
+    // self-hoster tells: naming your local runtime disqualifies the thread as a
+    // lead (owner, 2026-08-23). Downloaders talk runtimes; buyers talk providers.
+    disqualifyKeywords: [
+      'vllm', 'llama.cpp', 'llamacpp', 'ollama', 'lm studio', 'lmstudio', 'sglang',
+      'exllama', 'koboldcpp', 'text-generation-webui', 'tabbyapi', 'mlx', 'gguf',
+      'my rig', 'my gpu', 'home server', 'self-host', 'self host', 'run locally', 'running locally',
+    ],
     // seeds mirror the retired darklanes snapshot constants — the business
     // portfolio lives here now, edited from the UI like everything else
     repos: ['avifenesh/memra'],
@@ -128,6 +135,7 @@ export const signals = {
           radarWatch: Array.isArray(w?.radarWatch) ? w.radarWatch : def.radarWatch,
           demandKeywords: Array.isArray(w?.demandKeywords) ? w.demandKeywords : def.demandKeywords,
           prospectKeywords: Array.isArray(w?.prospectKeywords) ? w.prospectKeywords : def.prospectKeywords,
+          disqualifyKeywords: Array.isArray(w?.disqualifyKeywords) ? w.disqualifyKeywords : def.disqualifyKeywords,
           repos: Array.isArray(w?.repos) ? w.repos : def.repos,
           hfModels: Array.isArray(w?.hfModels) ? w.hfModels : def.hfModels,
           crates: Array.isArray(w?.crates) ? w.crates : def.crates,

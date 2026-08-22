@@ -665,6 +665,9 @@ export interface SignalsWatch {
   /** thread-title keywords that mark a BUYER in pain (hosting/serving trouble) —
    *  these become prospect-thread signals, ranked above artifact demand */
   prospectKeywords: string[];
+  /** self-hoster tells — a title carrying one of these is a rig/runtime thread,
+   *  never a lead (owner, 2026-08-23: vllm/llama.cpp/ollama etc are wrong signs) */
+  disqualifyKeywords: string[];
   /** exposure counters portfolio — snapshotted daily because the upstream windows expire */
   repos: string[];
   hfModels: string[];
