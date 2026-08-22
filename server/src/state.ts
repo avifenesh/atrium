@@ -127,7 +127,7 @@ export function emptySnapshot(): Snapshot {
       updatedAt: null,
       items: [],
       watch: { terms: [], radarWatch: [], demandKeywords: [], prospectKeywords: [],
-    disqualifyKeywords: [], repos: [], hfModels: [], crates: [] },
+    disqualifyKeywords: [], buyerQueries: [], repos: [], hfModels: [], crates: [] },
       lastReviewedAt: null,
       sources: [],
       error: null,

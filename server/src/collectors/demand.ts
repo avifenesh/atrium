@@ -344,6 +344,50 @@ const collector: Collector = {
       }
     }
 
+    // Buyer-pain hunts (owner + research, 2026-08-23): standalone searches for
+    // the phrases the two buyer profiles type when provider-shopping — no
+    // family name required, the query IS the qualification. Only the
+    // self-hoster disqualify list can kill a hit. HN and LinkedIn only: those
+    // are the buyer surfaces.
+    const buyerQueries = watch.buyerQueries ?? [];
+    for (const query of buyerQueries) {
+      const surfaces: Array<[string, () => Promise<Candidate[]>]> = [
+        ['hn', () => fetchHn(query)],
+        ['linkedin', () => fetchLinkedin(query)],
+      ];
+      for (const [surface, fetcher] of surfaces) {
+        let candidates: Candidate[] = [];
+        try {
+          candidates = await fetcher();
+        } catch (error) {
+          failures.push(`${surface}/${query}: ${error instanceof Error ? error.message : String(error)}`);
+          continue;
+        }
+        let kept = 0;
+        for (const candidate of candidates.sort((a, b) => (b.count ?? 0) - (a.count ?? 0))) {
+          if (kept >= CAP) break;
+          if (seen.has(candidate.id)) continue;
+          if (candidate.occurredAt != null && !freshEnough(candidate.occurredAt)) continue;
+          const lower = candidate.title.toLowerCase();
+          if (disqualify.some((word) => lower.includes(word))) continue;
+          seen.add(candidate.id);
+          kept += 1;
+          items.push({
+            id: candidate.id,
+            source: candidate.source,
+            kind: 'prospect-thread',
+            entity: `buyer hunt · ${query}`,
+            title: candidate.title.slice(0, 160),
+            detail: candidate.detail,
+            url: candidate.url,
+            count: candidate.count,
+            delta: null,
+            occurredAt: candidate.occurredAt,
+          });
+        }
+      }
+    }
+
     for (const hit of await readXDemand()) {
       if (seen.has(hit.id)) continue;
       seen.add(hit.id);

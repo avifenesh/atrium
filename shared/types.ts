@@ -668,6 +668,10 @@ export interface SignalsWatch {
   /** self-hoster tells — a title carrying one of these is a rig/runtime thread,
    *  never a lead (owner, 2026-08-23: vllm/llama.cpp/ollama etc are wrong signs) */
   disqualifyKeywords: string[];
+  /** standalone buyer-pain searches (not family-bound) run against HN/LinkedIn —
+   *  the query itself qualifies the hit, only the disqualify list can kill it.
+   *  Researched from where the two buyer profiles actually talk (2026-08-23). */
+  buyerQueries: string[];
   /** exposure counters portfolio — snapshotted daily because the upstream windows expire */
   repos: string[];
   hfModels: string[];

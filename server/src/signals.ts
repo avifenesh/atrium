@@ -69,6 +69,23 @@ function defaultWatch(): SignalsWatch {
       'exllama', 'koboldcpp', 'text-generation-webui', 'tabbyapi', 'mlx', 'gguf',
       'my rig', 'my gpu', 'home server', 'self-host', 'self host', 'run locally', 'running locally',
     ],
+    // standalone buyer-pain searches (researched 2026-08-23): the query itself
+    // qualifies a hit — these are the phrases the two buyer profiles type when
+    // they are in provider-shopping pain, family name not required.
+    buyerQueries: [
+      'openrouter alternative',
+      'openrouter markup',
+      'inference costs production',
+      'rate limited anthropic',
+      'rate limited openai',
+      'llm api bill',
+      'cheaper api agents',
+      'claude code weekly cap',
+      'openclaw cheaper',
+      'opencode provider',
+      'openai_api_base',
+      'agent api costs',
+    ],
     // seeds mirror the retired darklanes snapshot constants — the business
     // portfolio lives here now, edited from the UI like everything else
     repos: ['avifenesh/memra'],
@@ -136,6 +153,7 @@ export const signals = {
           demandKeywords: Array.isArray(w?.demandKeywords) ? w.demandKeywords : def.demandKeywords,
           prospectKeywords: Array.isArray(w?.prospectKeywords) ? w.prospectKeywords : def.prospectKeywords,
           disqualifyKeywords: Array.isArray(w?.disqualifyKeywords) ? w.disqualifyKeywords : def.disqualifyKeywords,
+          buyerQueries: Array.isArray(w?.buyerQueries) ? w.buyerQueries : def.buyerQueries,
           repos: Array.isArray(w?.repos) ? w.repos : def.repos,
           hfModels: Array.isArray(w?.hfModels) ? w.hfModels : def.hfModels,
           crates: Array.isArray(w?.crates) ? w.crates : def.crates,
