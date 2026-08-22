@@ -123,24 +123,27 @@ interface SearxResult {
   content?: string;
 }
 
-async function fetchReddit(query: string): Promise<Candidate[]> {
-  const q = encodeURIComponent(`site:reddit.com "${query}"`);
+/** LinkedIn is where the buying companies talk (owner call 2026-08-23: HN and
+ *  LinkedIn are the buyer surfaces; reddit/HF are the self-hoster bubble).
+ *  Indexed coverage of linkedin.com is shallow but nonzero — posts and pulse
+ *  articles surface; a thin stream of real-company hits beats a thick stream
+ *  of rig talk. Same searxng instance, same no-publishedDate caveat. */
+async function fetchLinkedin(query: string): Promise<Candidate[]> {
+  const q = encodeURIComponent(`site:linkedin.com "${query}"`);
   const payload = await getJson<{ results?: SearxResult[] }>(`${SEARXNG}?q=${q}&format=json&time_range=month`);
   const seen = new Set<string>();
   const out: Candidate[] = [];
   for (const r of payload.results ?? []) {
-    if (!r.url || !r.title || !r.url.includes('reddit.com')) continue;
-    // normalize away query strings so the same thread from two engines dedupes
+    if (!r.url || !r.title || !r.url.includes('linkedin.com')) continue;
+    // normalize away query strings so the same post from two engines dedupes
     const url = r.url.split('?')[0];
     if (seen.has(url)) continue;
     seen.add(url);
-    const sub = url.match(/reddit\.com\/(r\/[^/]+)/)?.[1];
     out.push({
-      id: `reddit:${url.replace(/^https?:\/\/(www\.)?reddit\.com\//, '')}`,
-      source: 'reddit',
-      // searxng prefixes "r/X on Reddit: " — strip it, the subreddit rides in detail
-      title: r.title.replace(/^r\/\S+ on Reddit:\s*/i, ''),
-      detail: sub ?? null,
+      id: `linkedin:${url.replace(/^https?:\/\/(www\.)?linkedin\.com\//, '')}`,
+      source: 'linkedin',
+      title: r.title.replace(/\s*\|\s*LinkedIn\s*$/i, ''),
+      detail: r.content?.slice(0, 140) ?? null,
       url,
       count: null,
       occurredAt: null,
@@ -293,7 +296,7 @@ const collector: Collector = {
 
       const surfaces: Array<[string, () => Promise<Candidate[]>]> = [
         ['hn', () => fetchHn(query)],
-        ['reddit', () => fetchReddit(query)],
+        ['linkedin', () => fetchLinkedin(query)],
         ['gh-issue', () => fetchGithubIssues(query, token, excludeOwners)],
       ];
 

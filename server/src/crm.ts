@@ -229,6 +229,11 @@ function assemble(): CrmPipeline {
 
   for (const signal of store.get().signals.items) {
     if (!LEAD_KINDS.has(signal.kind)) continue;
+    // Owner directive 2026-08-23 (extends the no-self-hosting-leads law): HF
+    // family-thread hits are downloaders talking about rigs and local runs —
+    // not buyers — and stopped qualifying as leads. Threads on OUR OWN cards
+    // stay: that author already holds our artifact and is talking to us.
+    if (signal.source === 'hf-hub' && !(signal.entity ?? '').startsWith('own card')) continue;
     liveIds.add(signal.id);
     items.push(
       toItem(signal.id, 'lead', derivedLeadStage(signal), {
