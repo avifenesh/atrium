@@ -234,6 +234,11 @@ function assemble(): CrmPipeline {
     // not buyers — and stopped qualifying as leads. Threads on OUR OWN cards
     // stay: that author already holds our artifact and is talking to us.
     if (signal.source === 'hf-hub' && !(signal.entity ?? '').startsWith('own card')) continue;
+    // A mention is a lead only when it mentions the BUSINESS (tiyuvta, memra).
+    // The watch terms also track the owner's OSS projects (agnix, agentsys,
+    // valkey...) for the mentions panel — a CI commit naming agnix is not a
+    // buyer, and 53 of them buried the real pipeline (owner, 2026-08-23).
+    if (signal.kind === 'mention' && !/tiyuvta|memra/iu.test(`${signal.entity ?? ''} ${signal.title}`)) continue;
     liveIds.add(signal.id);
     items.push(
       toItem(signal.id, 'lead', derivedLeadStage(signal), {
