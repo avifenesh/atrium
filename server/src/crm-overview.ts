@@ -172,7 +172,23 @@ function pnl(days: CrmUsageDay[]): CrmOverview['pnl'] {
 export async function crmOverview(): Promise<CrmOverview> {
   const extra = store.get().extra;
 
-  const tiyuvta = extra['tiyuvta']?.data as { dashboard?: DashboardShape; api?: { models?: string[] } } | undefined;
+  const tiyuvta = extra['tiyuvta']?.data as
+    | {
+        dashboard?: DashboardShape;
+        api?: { models?: string[] };
+        gads?: {
+          updatedAt: number | null;
+          spend: Array<{
+            ref: string;
+            costUsd?: number | null;
+            clicks: number;
+            signups: number;
+            activated: number;
+            paid: number;
+          }>;
+        } | null;
+      }
+    | undefined;
   const dashboard = tiyuvta?.dashboard;
 
   const web = extra['webtraffic']?.data as CrmOverview['visitors'] | undefined;
@@ -259,6 +275,19 @@ export async function crmOverview(): Promise<CrmOverview> {
       }
       return [...counts.entries()].map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
     })(),
+    ads: tiyuvta?.gads
+      ? {
+          updatedAt: tiyuvta.gads.updatedAt,
+          rows: tiyuvta.gads.spend.map((s) => ({
+            ref: s.ref,
+            costUsd: s.costUsd ?? null,
+            clicks: s.clicks,
+            signups: s.signups,
+            activated: s.activated,
+            paid: s.paid,
+          })),
+        }
+      : null,
     exposure: await exposure(),
     models: tiyuvta?.api?.models ?? [],
   };

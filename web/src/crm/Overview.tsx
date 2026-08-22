@@ -37,7 +37,7 @@ function Stat({ label, value, sub, spark }: { label: string; value: string; sub?
 const sum = (days: CrmUsageDay[], pick: (d: CrmUsageDay) => number) => days.reduce((a, d) => a + pick(d), 0);
 
 export function Overview({ data }: { data: CrmOverview }) {
-  const { money, accounts, usageDays, internalDays, visitors, endpoint, expenses, exposure, pnl, outbound, competitors, signupSources, realUsage } = data;
+  const { money, accounts, usageDays, internalDays, visitors, endpoint, expenses, exposure, pnl, outbound, competitors, signupSources, realUsage, ads } = data;
 
   const pnlToday = pnl[pnl.length - 1] ?? null;
   const pnl7d = pnl.reduce((a, d) => a + d.netUsd, 0);
@@ -181,6 +181,33 @@ export function Overview({ data }: { data: CrmOverview }) {
             .join(' · ') || 'tag links with ?ref= to attribute'}
         />
       </div>
+
+      {/* ads strip — spend vs the funnel it bought, per ref; amber = past the $150/payer kill gate */}
+      {ads && ads.rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {ads.rows.map((a) => {
+            const perPayer = a.costUsd != null && a.paid > 0 ? a.costUsd / a.paid : null;
+            const breached = a.costUsd != null && (a.paid > 0 ? a.costUsd / a.paid > 150 : a.costUsd > 150);
+            return (
+              <span
+                key={a.ref}
+                className={`rounded-full border px-2.5 py-1 font-mono text-[10px] ${
+                  breached ? 'border-amber/40 text-amber' : 'border-white/10 text-mist-dim'
+                }`}
+              >
+                {a.ref}: {a.costUsd != null ? `$${a.costUsd.toFixed(2)}` : '?'} · {a.clicks} clicks · {a.signups} signups ·{' '}
+                {a.paid} paid{perPayer != null && ` · $${perPayer.toFixed(0)}/payer`}
+                {breached && ' · KILL GATE'}
+              </span>
+            );
+          })}
+          {ads.updatedAt == null && (
+            <span className="rounded-full border border-amber/40 px-2.5 py-1 font-mono text-[10px] text-amber">
+              ads: no push from the Ads Script yet
+            </span>
+          )}
+        </div>
+      )}
 
       {/* competitor strip — the outreach-timing watch */}
       {competitors && competitors.length > 0 && (

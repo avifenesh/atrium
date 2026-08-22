@@ -831,6 +831,20 @@ export interface CrmOverview {
   }> | null;
   /** signups by the ?ref= they carried in — which channel actually converts */
   signupSources: Array<{ source: string; count: number }>;
+  /** Google Ads spend joined with the signup funnel per ref (30d spend window,
+   *  funnel all-time). costUsd converted at read by the collector; the kill
+   *  gate ($150/payer, ads cell) renders from these numbers. */
+  ads: {
+    updatedAt: number | null;
+    rows: Array<{
+      ref: string;
+      costUsd: number | null;
+      clicks: number;
+      signups: number;
+      activated: number;
+      paid: number;
+    }>;
+  } | null;
   /** project reach, from the newest daily exposure snapshot: GitHub repo
    *  traffic, HF model downloads, crates installs — the top of the funnel */
   exposure: {

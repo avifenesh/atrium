@@ -10,6 +10,7 @@
 // is a customer sitting in a broken state, so it warns.
 
 import { readApiSurfaces, readCreditRequests, readDashboard, readGads, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
+import type { GadsReport } from '../core/tiyuvta.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
 import type { ExtraRow, Flag } from '../../../shared/types.js';
@@ -144,6 +145,9 @@ const collector: Collector = {
       // Ad spend against the funnel it bought — per ref, with the kill gate
       // computed here instead of remembered. Spend is windowed 30d to match the
       // cell; the funnel counts are all-time (payers never expire off their ref).
+      // Spend rows with the USD conversion done ONCE here — the CRM overview
+      // reads this from data.gads rather than re-fetching a rate.
+      const adsSpendUsd: Array<GadsReport['spend'][number] & { costUsd: number | null }> = [];
       if (gads) {
         const stampAge = gads.updatedAt ? Math.round((Date.now() - gads.updatedAt) / 3_600_000) : null;
         if (gads.spend.length === 0) {
@@ -156,6 +160,7 @@ const collector: Collector = {
         for (const ad of gads.spend) {
           const rate = ad.currency ? await usdRate(ad.currency) : 1;
           const usd = rate === null ? null : (ad.costMicros / 1e6) * rate;
+          adsSpendUsd.push({ ...ad, costUsd: usd });
           const spent = usd === null ? `${(ad.costMicros / 1e6).toFixed(2)} ${ad.currency} (no fx rate)` : `$${usd.toFixed(2)}`;
           const perPayer = usd !== null && ad.paid > 0 ? ` · $${(usd / ad.paid).toFixed(0)}/payer` : '';
           rows.push({
@@ -252,7 +257,14 @@ const collector: Collector = {
         up: true,
         rows,
         error: null,
-        data: { dashboard, traffic, api, gads, webhookFailures: webhooks?.data ?? null, creditRequests: invoices?.data ?? null },
+        data: {
+          dashboard,
+          traffic,
+          api,
+          gads: gads ? { ...gads, spend: adsSpendUsd } : null,
+          webhookFailures: webhooks?.data ?? null,
+          creditRequests: invoices?.data ?? null,
+        },
       });
       store.setFlags('tiyuvta', flags);
     } catch (error) {
