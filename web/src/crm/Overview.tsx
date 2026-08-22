@@ -181,6 +181,16 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
           title="signups by channel"
           rows={signupSources.slice(0, 8).map((s) => ({ label: s.source, value: s.count }))}
         />
+        {visitors && visitors.channels.length > 0 && (
+          <BarList
+            title="visitors by channel"
+            rows={visitors.channels.slice(0, 8).map((c) => ({
+              label: `${c.channel}${c.delta !== 0 ? ` (${c.delta > 0 ? '+' : ''}${c.delta})` : ''}`,
+              value: c.views,
+              hint: `vs prior window: ${c.delta > 0 ? '+' : ''}${c.delta}`,
+            }))}
+          />
+        )}
         {visitors && (
           <BarList
             title="top pages, 7d"
@@ -217,6 +227,28 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
           )}
         </div>
       </div>
+
+      {/* AI assistants + external referrers sending people to the sites. The ai
+          rows are floor counts: assistant apps often strip the referrer. */}
+      {visitors && visitors.referrers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {visitors.referrers
+            .filter((r) => r.kind === 'ai')
+            .map((r) => (
+              <Chip key={`ai-${r.host}`} tone="border-jade/30 text-jade">
+                AI · {r.host || '?'} {r.views}
+              </Chip>
+            ))}
+          {visitors.referrers
+            .filter((r) => r.kind !== 'ai')
+            .slice(0, 8)
+            .map((r) => (
+              <Chip key={`${r.kind}-${r.host}`}>
+                {r.kind}{r.host ? ` · ${r.host}` : ''} {r.views}
+              </Chip>
+            ))}
+        </div>
+      )}
 
       {/* ads — spend vs the funnel it bought; amber past the $150/payer kill gate */}
       {ads && ads.rows.length > 0 && (

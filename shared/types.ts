@@ -784,6 +784,10 @@ export interface CrmOverview {
     totals: Array<{ site: string; views: number }>;
     daily: Array<{ day: string; site: string; views: number }>;
     topPaths: Array<{ site: string; path: string; views: number }>;
+    /** external referrer hosts; kind 'ai' rows are the assistant citations */
+    referrers: Array<{ kind: string; host: string; views: number }>;
+    /** acquisition channels with delta vs the prior window */
+    channels: Array<{ channel: string; views: number; delta: number }>;
   } | null;
   endpoint: {
     models: Array<{

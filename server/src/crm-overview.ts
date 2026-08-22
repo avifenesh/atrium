@@ -240,7 +240,13 @@ export async function crmOverview(): Promise<CrmOverview> {
       requests: Math.max(0, row.requests - (endpoint?.probesPerDay?.[row.day] ?? 0)),
     })),
     visitors: web && Array.isArray(web.daily)
-      ? { totals: web.totals ?? [], daily: web.daily, topPaths: (web.topPaths ?? []).slice(0, 10) }
+      ? {
+          totals: web.totals ?? [],
+          daily: web.daily,
+          topPaths: (web.topPaths ?? []).slice(0, 10),
+          referrers: (web.referrers ?? []).slice(0, 15),
+          channels: (web.channels ?? []).slice(0, 10),
+        }
       : null,
     endpoint: endpoint && Array.isArray(endpoint.models) ? { models: endpoint.models } : null,
     expenses: vast
