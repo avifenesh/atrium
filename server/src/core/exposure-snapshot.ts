@@ -122,15 +122,45 @@ function mergeTraffic(next: RepoTraffic, old: RepoTraffic | undefined): RepoTraf
 }
 
 /** Write (merge) today's snapshot into `<dir>/<UTC-date>.json`. Returns the run notes. */
+/**
+ * Expand the watch list's HF entries into concrete model ids. An entry of the
+ * form `Author/*` enumerates every model under that author AT READ TIME — the
+ * fix for the list going stale: the two-id seed list sat blind to 18 published
+ * cards (one id had even been renamed and answered 307) until someone noticed
+ * the numbers "weren't following all my cards". Exact ids pass through, so a
+ * card outside the account can still be watched by name.
+ */
+export async function expandHfModels(entries: string[], notes?: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const entry of entries) {
+    const wildcard = entry.match(/^([A-Za-z0-9_.-]+)\/\*$/u);
+    if (!wildcard) {
+      ids.push(entry);
+      continue;
+    }
+    try {
+      const models = await getJson<Array<{ id: string }>>(
+        `https://huggingface.co/api/models?author=${wildcard[1]}&limit=500`,
+        null,
+      );
+      ids.push(...models.map((m) => m.id));
+    } catch (error) {
+      notes?.push(`hf:${entry}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return [...new Set(ids)].sort();
+}
+
 export async function writeExposureSnapshot(dir: string, portfolio: ExposurePortfolio): Promise<string[]> {
   const notes: string[] = [];
   const token = await githubToken();
   if (!token) notes.push('github: no token — traffic, referrers and clones skipped (public counters still recorded)');
+  const hfIds = await expandHfModels(portfolio.hfModels, notes);
 
   const [repoRows, hf, crates] = await Promise.all([
     Promise.all(portfolio.repos.map((repo) => fetchRepo(repo, token, notes))),
     Promise.all(
-      portfolio.hfModels.map(async (id) => {
+      hfIds.map(async (id) => {
         const data = await attempt(`hf:${id}`, () => getJson<any>(`https://huggingface.co/api/models/${id}`, null), notes);
         return {
           id,

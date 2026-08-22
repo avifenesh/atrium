@@ -65,7 +65,9 @@ function defaultWatch(): SignalsWatch {
     // seeds mirror the retired darklanes snapshot constants — the business
     // portfolio lives here now, edited from the UI like everything else
     repos: ['avifenesh/memra'],
-    hfModels: ['Avifenesh/Qwen3.8-27B-NVFP4-MTP-GGUF', 'Avifenesh/bw24-bench'],
+    // `Author/*` enumerates the whole account at read time (expandHfModels) —
+    // the fixed two-id seed sat blind to 18 published cards and one renamed id.
+    hfModels: ['Avifenesh/*'],
     crates: ['memra-server', 'memra-engine'],
   };
 }

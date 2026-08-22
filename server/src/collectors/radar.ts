@@ -19,6 +19,7 @@
 // Everything here is a public, unauthenticated endpoint. No token, no account.
 
 import { config } from '../config.js';
+import { expandHfModels } from '../core/exposure-snapshot.js';
 import { signals } from '../signals.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
@@ -301,7 +302,10 @@ const collector: Collector = {
     // Our own model cards: EVERY open thread is inbound — the author already
     // holds our artifact. Keyword matches keep their demand/prospect kind; the
     // rest surface as 'mention' so no question on our own cards goes unseen.
-    for (const own of settings.ownCards) {
+    // `Author/*` entries expand to the whole account here, same as exposure —
+    // a thread on a card the watch list forgot is still a customer talking.
+    const ownCards = await expandHfModels(settings.ownCards).catch(() => settings.ownCards);
+    for (const own of ownCards) {
       try {
         const payload = await getJson<{ discussions: HubDiscussion[] }>(`${API}/models/${own}/discussions?p=0`);
         for (const thread of payload.discussions ?? []) {
