@@ -90,7 +90,12 @@ function servedModels(): string[] {
 
 /** Our model ids match OpenRouter slugs for qwen/gemma; step needs the org. */
 function orSlug(model: string): string {
-  return model === 'stepfun/step-3.7-flash' || model.includes('step-3.7') ? 'stepfun/step-3.7-flash' : model;
+  if (model === 'stepfun/step-3.7-flash' || model.includes('step-3.7')) return 'stepfun/step-3.7-flash';
+  // Ornith-1.5 has no OpenRouter listing (we are the only provider) — compare
+  // against its base class board (weights-only fine-tune of qwen3.5-35b-a3b),
+  // which is the price/uptime class a customer would cross-shop.
+  if (model.toLowerCase().includes('ornith')) return 'qwen/qwen3.5-35b-a3b';
+  return model;
 }
 
 const perM = (perToken: string | undefined): number | null => {
