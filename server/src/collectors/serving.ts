@@ -172,6 +172,18 @@ export function foldIncidents(events: AlertEvent[], now: number, noticeTtlMs: nu
  * "deploy in progress") is a record, not an interruption, and a flag strip that carries
  * them stops being read.
  *
+ * SEVERITY IS THE ROUTING, AND A WARN THAT NEVER PAGES IS A DECISION HERE, NOT A BUG.
+ * This function does not choose what reaches the phone — `notify.minSeverity` does, and it is
+ * `crit` — so the severity the sentinel assigns IS the routing:
+ *
+ *   crit → renders AND pages     a loss (e.g. the request ledger has no off-box copy at all)
+ *   warn → renders, no page      a degraded margin (e.g. one off-box generation instead of two)
+ *
+ * That split is deliberate: a degraded margin belongs on the surface the owner reads when they
+ * look, not in their pocket at 4am, and lowering the threshold to catch one such signal would
+ * start paging every other warn in the daemon at once. So if a condition deserves the phone,
+ * give THAT CONDITION crit severity upstream — never move the threshold.
+ *
  * The id is the sentinel's own key, so it is stable across the whole ladder — which is
  * what makes notify.ts page once per episode and send one matching [clear] — and it is
  * also what a `flag` mute has to match, so muting `serving:<stack>:capture` keeps working
