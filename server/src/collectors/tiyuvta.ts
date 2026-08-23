@@ -9,8 +9,9 @@
 // failures are money problems and page; an unenrolled account cannot mint a key, which
 // is a customer sitting in a broken state, so it warns.
 
-import { readApiSurfaces, readCreditRequests, readDashboard, readGads, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
+import { readActivity, readApiSurfaces, readCreditRequests, readDashboard, readGads, readTraffic, readWebhookFailures, TiyuvtaUnconfigured } from '../core/tiyuvta.js';
 import type { GadsReport } from '../core/tiyuvta.js';
+import { readModelBoxUsage } from '../core/apiusage.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
 import type { ExtraRow, Flag } from '../../../shared/types.js';
@@ -60,12 +61,16 @@ const collector: Collector = {
       // the other three are small and independent, so a failure in any one of them
       // must not cost the dashboard.
       const dashboard = await readDashboard();
-      const [traffic, webhooks, invoices, api, gads] = await Promise.all([
+      const [traffic, webhooks, invoices, api, gads, activity, modelBox] = await Promise.all([
         readTraffic(7).catch(() => null),
         readWebhookFailures().catch(() => null),
         readCreditRequests().catch(() => null),
         readApiSurfaces().catch(() => null),
         readGads(30).catch(() => null),
+        // Who was active when, per box (console fans out to every engine).
+        readActivity(14).catch(() => null),
+        // Which model gets requests on which box (tiyuvta_api, real traffic).
+        readModelBoxUsage().catch(() => null),
       ]);
 
       const { accounts, money: m, books, promo, totals } = dashboard;
@@ -194,6 +199,15 @@ const collector: Collector = {
         }
       }
 
+      // Degradation stays visible: a missing table with no reason reads as "no
+      // traffic", which is exactly the confusion the activity view exists to end.
+      if (!activity) {
+        rows.push({ label: 'activity', value: '/admin/activity unreadable', tone: 'warn' });
+      }
+      if (!modelBox) {
+        rows.push({ label: 'model × box', value: 'tiyuvta_api unreadable (cloudflare.env?)', tone: 'warn' });
+      }
+
       if (traffic) {
         rows.push({
           label: 'site views, 7d',
@@ -264,6 +278,8 @@ const collector: Collector = {
           gads: gads ? { ...gads, spend: adsSpendUsd } : null,
           webhookFailures: webhooks?.data ?? null,
           creditRequests: invoices?.data ?? null,
+          activity,
+          modelBox,
         },
       });
       store.setFlags('tiyuvta', flags);

@@ -19,6 +19,84 @@ const TONE: Record<NonNullable<ExtraRow['tone']>, string> = {
   err: 'text-coral',
 };
 
+// The activity payload, restated from the collector (server/src/core/tiyuvta.ts
+// AdminActivity and server/src/core/apiusage.ts ModelBoxUsage — the extra lane
+// carries `data` as unknown, so the contract is restated here).
+
+interface Figures {
+  requests: number;
+  totalTokens: number;
+  debitedMicro: number;
+}
+
+interface Activity {
+  days: number;
+  note: string;
+  engines: Array<{ engine: string; box: string; model: string; totals: Figures; internalTotals: Figures }>;
+  tenants: Array<{
+    tenantId: string;
+    internal: boolean;
+    lastActiveDay: string | null;
+    totals: Figures;
+    engines: Partial<Record<string, Figures>>;
+    days: Array<{ day: string; engine: string } & Figures>;
+  }>;
+  errors: Array<{ tenantId: string; engine: string; code: string }>;
+  truncated: boolean;
+}
+
+interface ModelBox {
+  windows: Array<{ model: string; box: string; requests1h: number; requests24h: number; p50Ms1h: number | null; p50Ms24h: number | null }>;
+  preBlob4Requests24h: number;
+}
+
+const count = (n: number): string => n.toLocaleString('en-US');
+const money = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
+const tokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+const shortModel = (model: string): string => model.split('/').pop() ?? model;
+
+function sumFigures(rows: Figures[]): Figures {
+  return rows.reduce(
+    (sum, row) => ({
+      requests: sum.requests + row.requests,
+      totalTokens: sum.totalTokens + row.totalTokens,
+      debitedMicro: sum.debitedMicro + row.debitedMicro,
+    }),
+    { requests: 0, totalTokens: 0, debitedMicro: 0 },
+  );
+}
+
+/** One tenant row: the 14d line, expandable into its per-box split. */
+function TenantRow({ tenant, boxOf }: { tenant: Activity['tenants'][number]; boxOf: (engine: string) => string }) {
+  const split = Object.entries(tenant.engines).filter((entry): entry is [string, Figures] => Boolean(entry[1]));
+  return (
+    <details>
+      <summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_5.5rem_4rem_4.5rem_4.5rem] items-baseline gap-x-3 text-sm">
+        <span className="min-w-0 truncate font-mono text-xs text-mist-dim" title={tenant.tenantId}>
+          {tenant.tenantId}
+          {tenant.internal && <span className="ml-1.5 rounded border border-white/10 px-1 text-[9px] uppercase text-amber">internal</span>}
+        </span>
+        <span className="text-right font-mono text-xs tabular-nums text-mist-dim">{tenant.lastActiveDay ?? '—'}</span>
+        <span className="text-right font-mono text-xs tabular-nums text-mist">{count(tenant.totals.requests)}</span>
+        <span className="text-right font-mono text-xs tabular-nums text-mist">{tokens(tenant.totals.totalTokens)}</span>
+        <span className="text-right font-mono text-xs tabular-nums text-mist">{money(tenant.totals.debitedMicro)}</span>
+      </summary>
+      <div className="mb-1 mt-0.5 space-y-0.5 border-l border-white/10 pl-3">
+        {split.length === 0 && <div className="text-[11px] text-mist-faint">no traffic in the window</div>}
+        {split.map(([engine, figures]) => (
+          <div key={engine} className="grid grid-cols-[minmax(0,1fr)_4rem_4.5rem_4.5rem] items-baseline gap-x-3">
+            <span className="font-mono text-[11px] text-mist-faint">{boxOf(engine)}</span>
+            <span className="text-right font-mono text-[11px] tabular-nums text-mist-dim">{count(figures.requests)}</span>
+            <span className="text-right font-mono text-[11px] tabular-nums text-mist-dim">{tokens(figures.totalTokens)}</span>
+            <span className="text-right font-mono text-[11px] tabular-nums text-mist-dim">{money(figures.debitedMicro)}</span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 const JOBS: Array<{ action: string; label: string; hint: string }> = [
   { action: 'accounting', label: 'accounting pass', hint: 'restates the books against the engine' },
   { action: 'enrolments', label: 'repair enrolments', hint: 'enrols accounts the engine never accepted, and grants their trial credit' },
@@ -31,6 +109,16 @@ export default function TiyuvtaPanel({ section }: { section: ExtraSection }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ action: string; ok: boolean; text: string } | null>(null);
   const rows = section.rows ?? [];
+  const data = (section.data ?? {}) as { activity?: Activity | null; modelBox?: ModelBox | null };
+  const activity = data.activity ?? null;
+  const modelBox = data.modelBox ?? null;
+  const boxOf = (engine: string): string => {
+    const entry = activity?.engines.find((row) => row.engine === engine);
+    return entry ? `${entry.box} · ${shortModel(entry.model)}` : engine;
+  };
+  const customers = activity?.tenants.filter((tenant) => !tenant.internal) ?? [];
+  const internal = activity?.tenants.filter((tenant) => tenant.internal) ?? [];
+  const customerTotals = sumFigures(customers.map((tenant) => tenant.totals));
 
   async function run(action: string) {
     setBusy(action);
@@ -94,6 +182,121 @@ export default function TiyuvtaPanel({ section }: { section: ExtraSection }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {modelBox && (
+        <div className="panel-surface rounded-lg p-4">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <div className="text-[11px] uppercase tracking-wider text-mist-faint">activity — model × box</div>
+            <div className="font-mono text-[10px] text-mist-faint">router, real traffic (probes excluded)</div>
+          </div>
+          <div className="mb-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_4rem_4.5rem_4.5rem] gap-x-3 text-[10px] uppercase tracking-wider text-mist-faint">
+            <span>model</span>
+            <span>box</span>
+            <span className="text-right">1h</span>
+            <span className="text-right">24h</span>
+            <span className="text-right">p50 ms</span>
+          </div>
+          <div className="space-y-1">
+            {modelBox.windows.length === 0 && (
+              <div className="text-sm text-mist-faint">no attributed requests in 24h</div>
+            )}
+            {modelBox.windows.map((row) => (
+              <div
+                key={`${row.model}|${row.box}`}
+                className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_4rem_4.5rem_4.5rem] items-baseline gap-x-3 text-sm"
+              >
+                <span className="min-w-0 truncate text-mist-dim" title={row.model}>{shortModel(row.model)}</span>
+                <span className="min-w-0 truncate font-mono text-xs text-mist-dim" title={row.box}>{row.box}</span>
+                <span className="text-right font-mono text-xs tabular-nums text-mist">{count(row.requests1h)}</span>
+                <span className="text-right font-mono text-xs tabular-nums text-mist">{count(row.requests24h)}</span>
+                <span className="text-right font-mono text-xs tabular-nums text-mist">{row.p50Ms24h ?? '—'}</span>
+              </div>
+            ))}
+          </div>
+          {modelBox.preBlob4Requests24h > 0 && (
+            <p className="mt-2 text-[11px] text-mist-faint">
+              +{count(modelBox.preBlob4Requests24h)} requests in 24h predate the box column (pre-blob4,
+              written before 2026-08-23 ~16:45Z) and are not attributed to any box.
+            </p>
+          )}
+        </div>
+      )}
+
+      {activity && (
+        <div className="panel-surface rounded-lg p-4">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <div className="text-[11px] uppercase tracking-wider text-mist-faint">activity — tenants, {activity.days}d</div>
+            <div className="font-mono text-[10px] text-mist-faint">click a tenant for its per-box split</div>
+          </div>
+          <div className="mb-1 grid grid-cols-[minmax(0,1fr)_5.5rem_4rem_4.5rem_4.5rem] gap-x-3 text-[10px] uppercase tracking-wider text-mist-faint">
+            <span>tenant</span>
+            <span className="text-right">last active</span>
+            <span className="text-right">reqs</span>
+            <span className="text-right">tokens</span>
+            <span className="text-right">spend</span>
+          </div>
+          <div className="space-y-1">
+            {customers.length === 0 && <div className="text-sm text-mist-faint">no customer has ever been active</div>}
+            {customers.map((tenant) => (
+              <TenantRow key={tenant.tenantId} tenant={tenant} boxOf={boxOf} />
+            ))}
+          </div>
+          {customers.length > 0 && (
+            <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_5.5rem_4rem_4.5rem_4.5rem] items-baseline gap-x-3 border-t border-white/10 pt-1.5 text-sm">
+              <span className="text-[11px] uppercase tracking-wider text-mist-faint">customers total</span>
+              <span />
+              <span className="text-right font-mono text-xs tabular-nums text-mist">{count(customerTotals.requests)}</span>
+              <span className="text-right font-mono text-xs tabular-nums text-mist">{tokens(customerTotals.totalTokens)}</span>
+              <span className="text-right font-mono text-xs tabular-nums text-mist">{money(customerTotals.debitedMicro)}</span>
+            </div>
+          )}
+
+          {internal.length > 0 && (
+            <>
+              <div className="mb-1 mt-4 text-[10px] uppercase tracking-wider text-amber">
+                internal — bench key, watchdogs, probes (never counted as demand)
+              </div>
+              <div className="space-y-1">
+                {internal.map((tenant) => (
+                  <TenantRow key={tenant.tenantId} tenant={tenant} boxOf={boxOf} />
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="mt-3 space-y-1">
+            <div className="text-[10px] uppercase tracking-wider text-mist-faint">per box, customers, {activity.days}d</div>
+            {activity.engines.map((engine) => (
+              <div
+                key={engine.engine}
+                className="grid grid-cols-[minmax(0,1fr)_4rem_4.5rem_4.5rem] items-baseline gap-x-3 text-sm"
+              >
+                <span className="min-w-0 truncate font-mono text-xs text-mist-dim" title={engine.model}>
+                  {engine.box} · {shortModel(engine.model)}
+                </span>
+                <span className="text-right font-mono text-xs tabular-nums text-mist">{count(engine.totals.requests)}</span>
+                <span className="text-right font-mono text-xs tabular-nums text-mist">{tokens(engine.totals.totalTokens)}</span>
+                <span className="text-right font-mono text-xs tabular-nums text-mist">
+                  {money(engine.totals.debitedMicro)}
+                  {engine.internalTotals.requests > 0 && (
+                    <span className="text-mist-faint"> (+{count(engine.internalTotals.requests)} int)</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {activity.errors.length > 0 && (
+            <p className="mt-2 text-[11px] text-amber">
+              {activity.errors.length} box leg(s) unreadable this pass — those tenants may show less than they
+              spent: {[...new Set(activity.errors.map((row) => row.engine))].join(', ')}
+            </p>
+          )}
+          {activity.truncated && (
+            <p className="mt-1 text-[11px] text-amber">more tenants were active than the fan-out cap; the list is truncated</p>
+          )}
         </div>
       )}
 

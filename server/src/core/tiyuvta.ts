@@ -130,7 +130,38 @@ export interface GadsReport {
   unspentRefs: Array<{ ref: string; signups: number; activated: number; paid: number; usageMicro: number }>;
 }
 
+/** GET /admin/activity — who was active when, on which box (owner order 2026-08-23).
+ * Per-engine figures are fanned out live by the console because its D1 mirror stores
+ * only the cross-box sum; `source`/`note` say so. Engines are one-model-per-box, so
+ * `engines[]` also names each engine's box and model. Engine `totals` are CUSTOMER
+ * traffic only; the owner's own accounts (bench key, watchdogs, probes) report under
+ * `internalTotals` and carry `internal: true` on their tenant rows. */
+export interface ActivityFigures {
+  requests: number;
+  totalTokens: number;
+  debitedMicro: number;
+}
+
+export interface AdminActivity {
+  days: number;
+  source: string;
+  note: string;
+  generatedAt: number;
+  engines: Array<{ engine: string; box: string; model: string; totals: ActivityFigures; internalTotals: ActivityFigures }>;
+  tenants: Array<{
+    tenantId: string;
+    internal: boolean;
+    lastActiveDay: string | null;
+    totals: ActivityFigures;
+    engines: Partial<Record<string, ActivityFigures>>;
+    days: Array<{ day: string; engine: string } & ActivityFigures>;
+  }>;
+  errors: Array<{ tenantId: string; engine: string; code: string }>;
+  truncated: boolean;
+}
+
 export const readDashboard = () => request<AdminDashboard>('GET', '/admin/dashboard');
+export const readActivity = (days = 14) => request<AdminActivity>('GET', `/admin/activity?days=${days}`);
 export const readGads = (days: 7 | 30 | 90 = 30) => request<GadsReport>('GET', `/admin/gads?days=${days}`);
 export const readTraffic = (days = 7) => request<AdminTraffic>('GET', `/admin/traffic?days=${days}`);
 export const readWebhookFailures = () => request<{ data: unknown[] }>('GET', '/admin/webhook-failures');
