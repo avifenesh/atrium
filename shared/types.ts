@@ -879,6 +879,47 @@ export interface CrmOverview {
     crates: Array<{ name: string; recentDownloads: number; version: string }>;
   } | null;
   models: string[];
+  /** the serving watchdog's incidents — the rig-side sentinel's alerts, collapsed.
+   *  null = the serving collector is disabled or has not run yet. */
+  serving: ServingSnapshot | null;
+}
+
+// ---------- serving alerts ----------
+
+/**
+ * One incident from darklanes' serving sentinel, folded across the whole re-escalation
+ * ladder. `key` is the sentinel's own stable incident id (`<stack>:edge-down`,
+ * `<stack>:capture`), NOT its title — titles carry the streak and change on every rung.
+ */
+export interface ServingIncident {
+  key: string;
+  /** the stack or subsystem the key names: a serving stack id, `web-<site>`, or 'sentinel' */
+  scope: string;
+  /** the condition: 'edge-down', 'capture', 'disk-low', 'restarts-cumulative:50' */
+  kind: string;
+  severity: Flag['severity'];
+  title: string;
+  detail: string;
+  /** start of THIS episode — reset when a resolved key is raised again */
+  firstAt: string;
+  lastAt: string;
+  /** alerts the sentinel emitted under this key this episode (the ladder rungs) */
+  pages: number;
+  open: boolean;
+  resolvedAt: string | null;
+  /** what the recovery said, once it recovered */
+  clearedBy: string | null;
+}
+
+export interface ServingSnapshot {
+  updatedAt: string;
+  /** age of the sentinel's last tick against its 60s timer; null = it has never run.
+   *  A pager fed by a file is silent both when nothing is wrong and when the writer is
+   *  dead, so this number is the only thing that tells those apart. */
+  tickAgeS: number | null;
+  openCrit: number;
+  openWarn: number;
+  incidents: ServingIncident[];
 }
 
 export interface CrmUsageDay {

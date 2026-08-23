@@ -293,6 +293,27 @@ export const defaults = {
     sendCmd: [] as string[],
   },
 
+  /** Serving alerts — read-only ingestion of darklanes' serving sentinel.
+   *
+   *  The sentinel (ops/serving/sentinel.py, systemd user timer, every 60s) probes every
+   *  public serving hostname from outside and appends every alert it raises to
+   *  `<stateDir>/alerts.jsonl`. This daemon reads that file, collapses the escalation
+   *  ladder into incidents and pages crits through `notify` above.
+   *
+   *  A FILE, NOT A ROUTE, on purpose: a watchdog's tick must not depend on this daemon
+   *  being up, and a POST would silently discard every alert raised during an atrium
+   *  restart. Nothing here writes to the sentinel's state. */
+  serving: {
+    /** '' = ~/.local/state/tiyuvta-serving (the sentinel's own default) */
+    stateDir: '',
+    /** silence from a 60s watchdog longer than this is itself a crit — the file is
+     *  equally quiet when nothing is wrong and when the writer has died */
+    silentAfterMs: 600_000,
+    /** a point-in-time notice (restart milestone, version change, new Xid count) has no
+     *  "still happening" state, so it expires instead of waiting for a resolve */
+    noticeTtlMs: 6 * 3_600_000,
+  },
+
   /** CRM public surface — the ONE part of atrium reachable off the machine, via a
    *  Cloudflare tunnel + Access. Empty host = disabled (default), and the daemon
    *  behaves exactly as before. When set, requests arriving with this Host header

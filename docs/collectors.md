@@ -154,6 +154,27 @@ Two rules that fell out of building it and are worth copying:
 If a section has its own panel, exclude it from the generic `ExtraPanel` render in
 `web/src/App.tsx` — otherwise every row appears twice.
 
+## Ingesting another process's alerts (the `serving` collector)
+
+`serving` reads an append-only alert ledger written by an external watchdog (darklanes'
+`ops/serving/sentinel.py`, a 60s systemd timer) and turns it into flags, so its crits ride the
+existing `notify` pipe to the phone. Four rules generalise to any collector fed by another
+process:
+
+- **Let the writer write a file; do not give it a route.** The watchdog must not depend on this
+  daemon being up to do its own job, and a POST would silently discard every alert raised
+  during an atrium restart. A file is durable, ingested as a backlog on return, and readable by
+  hand when atrium is down. Cost: one collector interval of latency.
+- **Group on a stable key the writer declares, never on the message text.** An escalating
+  alarm re-sends the same condition with a changing message (a streak, an age). Keying on text
+  turns one incident into N flags and N pages, which is how an operator learns to ignore pages.
+- **Ingest the events, not the writer's whole state.** The sentinel's `state.json` also carries
+  ssh endpoints and provider hostnames; those must not reach a surface that leaves the machine,
+  so they are never read rather than read-and-filtered.
+- **Treat the writer's own liveness as a signal.** A file-fed pager is equally silent when
+  nothing is wrong and when the writer has died, so the writer's heartbeat (here, `state.json`'s
+  mtime) gets its own crit flag.
+
 ## Reusable bespoke collectors
 
 Most of the author's plugin collectors integrate private tooling, but one is published and

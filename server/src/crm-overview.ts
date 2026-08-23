@@ -302,5 +302,14 @@ export async function crmOverview(): Promise<CrmOverview> {
       : null,
     exposure: await exposure(),
     models: tiyuvta?.api?.models ?? [],
+    // The serving watchdog's incidents. READ-ONLY DISPLAY: this surface shows what the
+    // sentinel said and nothing more — it cannot acknowledge, silence, revive a guard or
+    // touch a box. atrium's rule that action names are an allowlist rather than a path
+    // proxy exists precisely so a page cannot become a remote control.
+    //
+    // The incident list is copied out whole, but the sentinel's FLEET ROSTER is
+    // deliberately not: its state file carries ssh endpoints and host provider addresses,
+    // and none of that belongs on a surface that leaves the machine, Access or no Access.
+    serving: (extra['serving']?.data as CrmOverview['serving']) ?? null,
   };
 }

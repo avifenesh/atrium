@@ -36,7 +36,7 @@ function Chip({ children, tone = 'border-white/10 text-mist-dim' }: { children: 
 // --- pipeline tab: the pulse strip -------------------------------------------
 
 export function PulseStrip({ data, dueCount }: { data: CrmOverview; dueCount: number }) {
-  const { pnl, usageDays, visitors, endpoint, accounts, ads } = data;
+  const { pnl, usageDays, visitors, endpoint, accounts, ads, serving } = data;
   const pnlToday = pnl[pnl.length - 1] ?? null;
   const revenue7d = sum(usageDays, (d) => d.debitedMicro);
   const visitors7d = visitors ? visitors.totals.reduce((a, t) => a + t.views, 0) : null;
@@ -57,6 +57,102 @@ export function PulseStrip({ data, dueCount }: { data: CrmOverview; dueCount: nu
       )}
       {killGate && <Chip tone="border-amber/40 text-amber">ads KILL GATE</Chip>}
       {dueCount > 0 && <Chip tone="border-amber/40 text-amber">⏰ {dueCount} due</Chip>}
+      {/* Serving watchdog, on the pipeline screen too: an open crit on a box that takes
+          money outranks every follow-up on this page, so it must not live only one tab
+          away. A dead sentinel is its own chip — a silent pager and a healthy fleet look
+          identical from here otherwise. */}
+      {serving && serving.tickAgeS === null && (
+        <Chip tone="border-coral/50 text-coral">sentinel NOT RUNNING</Chip>
+      )}
+      {serving && serving.tickAgeS !== null && serving.tickAgeS > 600 && (
+        <Chip tone="border-coral/50 text-coral">sentinel stalled {Math.round(serving.tickAgeS / 60)}m</Chip>
+      )}
+      {serving && serving.openCrit > 0 && (
+        <Chip tone="border-coral/50 text-coral">serving {serving.openCrit} CRIT</Chip>
+      )}
+      {serving && serving.openCrit === 0 && serving.openWarn > 0 && (
+        <Chip tone="border-amber/40 text-amber">serving {serving.openWarn} warn</Chip>
+      )}
+    </div>
+  );
+}
+
+// --- serving watchdog ---------------------------------------------------------
+//
+// Read-only by construction: there is no acknowledge button, no silence button and no
+// revive button. atrium keeps action names on an allowlist rather than proxying paths
+// precisely so that a page can never become a remote control over a serving box.
+
+function IncidentRow({ inc }: { inc: NonNullable<CrmOverview['serving']>['incidents'][number] }) {
+  const tone = !inc.open
+    ? 'border-white/8 text-mist-dim'
+    : inc.severity === 'crit'
+      ? 'border-coral/40 text-coral'
+      : inc.severity === 'warn'
+        ? 'border-amber/30 text-amber'
+        : 'border-white/10 text-mist-dim';
+  return (
+    <div className={`rounded-xl border bg-ink-2 px-3.5 py-2.5 ${tone}`}>
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wider">
+          {inc.open ? inc.severity : 'cleared'}
+        </span>
+        <span className="min-w-0 flex-1 text-sm text-mist">{inc.title}</span>
+        {/* the ladder's rung count is the incident's age in pages — the number that says
+            "this is the same outage, not seventeen of them" */}
+        {inc.pages > 1 && (
+          <span className="shrink-0 font-mono text-[10px] text-mist-dim">×{inc.pages}</span>
+        )}
+      </div>
+      <div className="mt-1 font-mono text-[10px] leading-relaxed text-mist-dim">{inc.detail}</div>
+      <div className="mt-1 font-mono text-[10px] text-mist-faint">
+        {inc.scope} · {inc.kind} · since {inc.firstAt.slice(5, 16).replace('T', ' ')}
+        {inc.open ? ` · last ${inc.lastAt.slice(11, 16)}` : ` · cleared ${inc.resolvedAt?.slice(11, 16) ?? ''}`}
+        {!inc.open && inc.clearedBy ? ` — ${inc.clearedBy}` : ''}
+      </div>
+    </div>
+  );
+}
+
+export function ServingBlock({ serving }: { serving: CrmOverview['serving'] }) {
+  if (!serving) return null;
+  const open = serving.incidents.filter((i) => i.open);
+  const recent = serving.incidents.filter((i) => !i.open).slice(0, 6);
+  // The sentinel's heartbeat is load-bearing, not decoration: with no tick, this whole
+  // block is quiet for the same reason a healthy fleet is quiet.
+  const stale = serving.tickAgeS === null || serving.tickAgeS > 600;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip tone={stale ? 'border-coral/50 text-coral' : 'border-jade/30 text-jade'}>
+          watchdog{' '}
+          {serving.tickAgeS === null
+            ? 'NOT RUNNING — the boxes are unwatched'
+            : stale
+              ? `STALLED · last tick ${Math.round(serving.tickAgeS / 60)}m ago`
+              : `ticking · ${serving.tickAgeS}s ago`}
+        </Chip>
+        {open.length === 0 && !stale && (
+          <Chip tone="border-jade/30 text-jade">no open serving incidents</Chip>
+        )}
+      </div>
+      {open.length > 0 && (
+        <div className="space-y-1.5">
+          {open.map((i) => (
+            <IncidentRow key={i.key} inc={i} />
+          ))}
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-mist-faint">
+            recently cleared
+          </div>
+          {recent.map((i) => (
+            <IncidentRow key={i.key} inc={i} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -302,13 +398,17 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
 // --- health tab ---------------------------------------------------------------
 
 export function HealthTab({ data }: { data: CrmOverview }) {
-  const { endpoint, realUsage, realUsageHourly, accounts } = data;
+  const { endpoint, realUsage, realUsageHourly, accounts, serving } = data;
   const probeSeries = endpoint?.series ?? [];
   const hourly = realUsageHourly ?? [];
   const hourTick = (iso: string) => `${iso.slice(11, 13)}:00`;
 
   return (
     <div className="space-y-2">
+      {/* First, above the endpoint probes: the sentinel sees things a per-model probe
+          cannot — a dead tunnel, a gone instance, an on-box guard that will not start, and a
+          replication loop that has stopped copying the request ledger off the box. */}
+      <ServingBlock serving={serving} />
       <div className="flex flex-wrap items-center gap-1.5">
         {(endpoint?.models ?? []).map((m) => (
           <Chip key={m.model} tone={m.ok ? 'border-jade/30 text-jade' : 'border-coral/50 text-coral'}>

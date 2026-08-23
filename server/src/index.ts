@@ -42,6 +42,7 @@ import radarCollector from './collectors/radar.js';
 import demandCollector from './collectors/demand.js';
 import vastCollector from './collectors/vast.js';
 import endpointCollector from './collectors/endpoint.js';
+import servingCollector from './collectors/serving.js';
 import openrouterCollector from './collectors/openrouter.js';
 import apimetricsCollector from './collectors/apimetrics.js';
 import tiyuvtaCollector from './collectors/tiyuvta.js';
@@ -74,6 +75,7 @@ for (const c of [
   demandCollector,
   vastCollector,
   endpointCollector,
+  servingCollector,
   openrouterCollector,
   apimetricsCollector,
   tiyuvtaCollector,
