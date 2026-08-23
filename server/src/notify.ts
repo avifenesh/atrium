@@ -16,14 +16,31 @@ export interface NotifyOpts {
 }
 
 const SEV_RANK: Record<Flag['severity'], number> = { info: 0, warn: 1, crit: 2 };
-const GLOBAL_CAP = 5; // sends per rolling hour — a flag storm must not become a phone storm
 const HOUR_MS = 3_600_000;
 const MAX_LEN = 300;
 
+// RATE LIMITS, SPLIT BY SEVERITY (owner ruling, 2026-08-23).
+//
+// There was one `GLOBAL_CAP = 5` for everything, and on a fleet-wide outage it INVERTED its
+// own intent: the sixth crit — a second box going down — was silently dropped from the phone.
+// A cap exists to stop spam, and the alert sources now sit behind their own escalation
+// ladders (the serving sentinel re-pages a persisting condition 17 times a day, not 1,440),
+// so the anti-spam job is already done upstream. A cap doing an already-done job while
+// suppressing the one page that matters is a bad trade.
+//
+// So crit gets its own, much higher ceiling, and the counters are INDEPENDENT rather than one
+// shared budget. That second part is load-bearing: the serving sentinel raises `edge-down` as
+// a WARN on the first tick and escalates to crit on the fifth, so a fleet-wide outage produces
+// a burst of warns *before* the crits. A shared budget would let those warns eat the crit
+// allowance and starve exactly the pages this change exists to deliver.
+const SOFT_CAP = 5; // warn + info per rolling hour — unchanged; these are not worth a storm
+const HARD_CAP = 20; // crit per rolling hour — a real ceiling, so a runaway writer cannot flood
+
 let opts: NotifyOpts | null = null; // null until init — pre-init flag updates are dropped
 let lastPingAt = new Map<string, number>(); // flag id → last send attempt
-let pinged = new Set<string>(); // pinged and still raised — drives clear notices
-let sentAt: number[] = []; // attempt timestamps inside the rolling cap window
+let pinged = new Map<string, Flag['severity']>(); // pinged and still raised → drives clear notices
+let critSentAt: number[] = []; // crit attempt timestamps inside the rolling window
+let softSentAt: number[] = []; // warn/info attempt timestamps inside the rolling window
 let chain: Promise<void> = Promise.resolve(); // serializes sends; flush() awaits it
 
 export function init(o: NotifyOpts): void {
@@ -34,8 +51,9 @@ export function init(o: NotifyOpts): void {
   }
   opts = o;
   lastPingAt = new Map();
-  pinged = new Set();
-  sentAt = [];
+  pinged = new Map();
+  critSentAt = [];
+  softSentAt = [];
 }
 
 /** Store hook — called with the previous and next full flag lists on every recompute. */
@@ -57,16 +75,20 @@ export function onFlagsChanged(prev: Flag[], next: Flag[], activeMutes: Mute[]):
     if (lastPingAt.has(f.id)) continue; // throttled flap (pruned above once the window passes)
     // recorded at attempt, not success — a hermes outage must not turn into a retry storm
     lastPingAt.set(f.id, now);
-    pinged.add(f.id);
-    enqueue(format(f), now);
+    pinged.set(f.id, f.severity);
+    enqueue(format(f), now, f.severity);
   }
 
-  for (const id of pinged) {
+  for (const [id, severity] of pinged) {
     if (nextIds.has(id)) continue;
     pinged.delete(id);
     const old = prev.find((f) => f.id === id);
     if (opts.notifyClear && old && !isMuted(id, activeMutes, now)) {
-      enqueue(`atrium [clear] ${clean(old.title)}`.slice(0, MAX_LEN), now);
+      // The clear inherits the severity of the flag it closes, so it rides the same ceiling
+      // as the page it answers. Under the old single cap, six crits plus five clears left one
+      // page the owner could never close — which is the failure the clear notice exists to
+      // prevent in the first place.
+      enqueue(`atrium [clear] ${clean(old.title)}`.slice(0, MAX_LEN), now, severity);
     }
   }
 }
@@ -95,10 +117,20 @@ function format(f: Flag): string {
   return msg.length <= MAX_LEN ? msg : `${msg.slice(0, MAX_LEN - 1)}…`;
 }
 
-function enqueue(msg: string, now: number): void {
-  sentAt = sentAt.filter((t) => now - t < HOUR_MS);
-  if (sentAt.length >= GLOBAL_CAP) return; // dropped, not queued — the flags view still shows it
-  sentAt.push(now);
+function enqueue(msg: string, now: number, severity: Flag['severity']): void {
+  const crit = severity === 'crit';
+  const window = (crit ? critSentAt : softSentAt).filter((t) => now - t < HOUR_MS);
+  if (crit) critSentAt = window;
+  else softSentAt = window;
+  const cap = crit ? HARD_CAP : SOFT_CAP;
+  if (window.length >= cap) {
+    // Dropped, not queued — the flags view and the CRM still show it. Logged rather than
+    // silent: a page that never went out must leave a trace somewhere, or hitting the ceiling
+    // looks exactly like nothing having happened.
+    console.error(`[notify] ${severity} send DROPPED at the ${cap}/hr ceiling: ${msg.slice(0, 120)}`);
+    return;
+  }
+  window.push(now);
   const [cmd, ...args] = opts!.sendCmd;
   chain = chain.then(
     () =>
