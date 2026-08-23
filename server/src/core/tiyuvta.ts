@@ -158,7 +158,12 @@ export async function readApiSurfaces(apiBase = 'https://api.tiyuvta.ai/v1'): Pr
       try {
         const response = await fetch(`${apiBase}${path}`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          // x-tiyuvta-probe keeps these out of the router's real-user metrics
+          // (tiyuvta_api). Unflagged, this check wrote a steady 4xx floor into
+          // the dataset — every 5 minutes, four rejecting paths — which read
+          // as a customer failing continuously during the 2026-08-23 outage
+          // investigation until it was traced back here.
+          headers: { 'content-type': 'application/json', 'x-tiyuvta-probe': '1' },
           body: '{}',
           signal: AbortSignal.timeout(15_000),
         });
@@ -179,7 +184,12 @@ export async function readApiSurfaces(apiBase = 'https://api.tiyuvta.ai/v1'): Pr
 
   let models: string[] = [];
   try {
-    const catalogue = (await (await fetch(`${apiBase}/models`, { signal: AbortSignal.timeout(15_000) })).json()) as {
+    const catalogue = (await (
+      await fetch(`${apiBase}/models`, {
+        headers: { 'x-tiyuvta-probe': '1' },
+        signal: AbortSignal.timeout(15_000),
+      })
+    ).json()) as {
       data?: Array<{ id?: string }>;
     };
     models = (catalogue.data ?? []).map((entry) => entry.id ?? '').filter(Boolean);
