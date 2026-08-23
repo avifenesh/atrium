@@ -290,13 +290,18 @@ function assemble(): CrmPipeline {
     if (liveIds.has(entry.id)) continue;
     orphaned.push(entry.id);
     const kind = entry.id.startsWith('tenant:') ? 'account' : entry.id.startsWith('direction:') ? 'direction' : 'lead';
+    // The raw id is a useless header ("x:2089854486..."), and an X status id is
+    // still a working link — reconstruct what we can so the owner's notes stay
+    // actionable after the source item ages out.
+    const statusId = entry.id.match(/^x:(\d+)$/u)?.[1] ?? null;
+    const firstNote = entry.notes[0]?.text.replace(/\s+/gu, ' ').trim() ?? null;
     items.push(
       toItem(entry.id, kind, 'new', {
-        title: entry.id,
+        title: firstNote ? firstNote.slice(0, 120) : statusId ? `X post ${statusId.slice(-6)}` : entry.id,
         subtitle: 'source item no longer reported',
         source: null,
         detail: null,
-        url: null,
+        url: statusId ? `https://x.com/i/web/status/${statusId}` : null,
         metrics: null,
         activityAt: entry.updatedAt,
       }, now),
