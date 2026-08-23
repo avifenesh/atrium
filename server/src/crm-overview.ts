@@ -198,8 +198,11 @@ export async function crmOverview(): Promise<CrmOverview> {
   const vast = extra['vast']?.data as
     | {
         burnPerHour?: number;
+        prepaidPerHour?: number;
+        marginalPerHour?: number;
         creditUsd?: number | null;
         instances?: Array<{
+          prepaid?: boolean;
           label?: string | null;
           gpuName?: string | null;
           numGpus?: number | null;
@@ -254,6 +257,8 @@ export async function crmOverview(): Promise<CrmOverview> {
     expenses: vast
       ? {
           burnPerHour: vast.burnPerHour ?? 0,
+          prepaidPerHour: vast.prepaidPerHour ?? 0,
+          marginalPerHour: vast.marginalPerHour ?? vast.burnPerHour ?? 0,
           creditUsd: vast.creditUsd ?? null,
           instances: (vast.instances ?? []).map((i) => ({
             label: i.label ?? null,
@@ -261,6 +266,7 @@ export async function crmOverview(): Promise<CrmOverview> {
             numGpus: i.numGpus ?? null,
             dphTotal: i.dphTotal ?? null,
             status: i.status ?? null,
+            prepaid: i.prepaid ?? false,
           })),
         }
       : null,

@@ -61,12 +61,22 @@ export interface VastInstance {
   dphTotal: number | null;
   status: string | null;
   startedAt: string | null;
+  /** owner-declared monthly-prepaid box (config `vast.prepaidIds`): its dph is
+   *  sunk cost, not marginal spend. Owner ruling 2026-08-23 — "both prod boxes
+   *  are pre paid for a month"; counting them as hourly burn broke the CRM's
+   *  spend calculation. */
+  prepaid: boolean;
 }
 
 export interface VastState {
   instances: VastInstance[];
-  /** running instances' combined $/hr */
+  /** running instances' combined $/hr — TOTAL, prepaid included. This is the
+   *  P&L number (prepaid capacity is a real amortized cost) and the field the
+   *  burn history persists, so its meaning must not drift. */
   burnPerHour: number;
+  /** the split: prepaid (sunk, monthly) vs marginal (draws credit now). */
+  prepaidPerHour: number;
+  marginalPerHour: number;
   creditUsd: number | null;
   error: string | null;
 }
@@ -105,7 +115,19 @@ const collector: Collector = {
       return;
     }
 
-    const state: VastState = { instances: [], burnPerHour: 0, creditUsd: null, error: null };
+    const prepaidIds = new Set(
+      ((config as unknown as { vast?: { prepaidIds?: number[] } }).vast?.prepaidIds ?? []).filter(
+        (id): id is number => typeof id === 'number',
+      ),
+    );
+    const state: VastState = {
+      instances: [],
+      burnPerHour: 0,
+      prepaidPerHour: 0,
+      marginalPerHour: 0,
+      creditUsd: null,
+      error: null,
+    };
     try {
       // instances moved to v1 (v0 answers deprecated_endpoint); users/current has not
       const payload = await getJson<{ instances?: RawInstance[] }>('/v1/instances/?owner=me', key);
@@ -118,9 +140,14 @@ const collector: Collector = {
           dphTotal: raw.dph_total ?? null,
           status: raw.actual_status ?? null,
           startedAt: raw.start_date ? new Date(raw.start_date * 1000).toISOString() : null,
+          prepaid: prepaidIds.has(raw.id),
         };
         state.instances.push(instance);
-        if (instance.status === 'running' && instance.dphTotal) state.burnPerHour += instance.dphTotal;
+        if (instance.status === 'running' && instance.dphTotal) {
+          state.burnPerHour += instance.dphTotal;
+          if (instance.prepaid) state.prepaidPerHour += instance.dphTotal;
+          else state.marginalPerHour += instance.dphTotal;
+        }
       }
       state.instances.sort((a, b) => (b.dphTotal ?? 0) - (a.dphTotal ?? 0));
     } catch (error) {
@@ -141,7 +168,10 @@ const collector: Collector = {
       up: state.error == null,
       error: state.error,
       rows: [
-        { label: 'burn', value: `$${state.burnPerHour.toFixed(2)}/hr · ${state.instances.filter((i) => i.status === 'running').length} running` },
+        {
+          label: 'burn',
+          value: `$${state.marginalPerHour.toFixed(2)}/hr on-demand + $${state.prepaidPerHour.toFixed(2)}/hr prepaid · ${state.instances.filter((i) => i.status === 'running').length} running`,
+        },
         { label: 'credit', value: state.creditUsd == null ? '?' : `$${state.creditUsd.toFixed(2)}` },
       ],
       data: state as unknown as Record<string, unknown>,

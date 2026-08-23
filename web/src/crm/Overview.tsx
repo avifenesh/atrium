@@ -169,7 +169,11 @@ export function MoneyTab({ data }: { data: CrmOverview }) {
   const today = usageDays[usageDays.length - 1];
   const pnl7d = pnl.reduce((a, d) => a + d.netUsd, 0);
   const burnDay = expenses ? expenses.burnPerHour * 24 : 0;
-  const runwayDays = expenses?.creditUsd != null && burnDay > 0 ? expenses.creditUsd / burnDay : null;
+  // Runway = credit ÷ ON-DEMAND burn only: prepaid boxes were paid up front and
+  // do not drain the credit (owner ruling 2026-08-23 — counting them made the
+  // runway lie short).
+  const marginalDay = expenses ? expenses.marginalPerHour * 24 : 0;
+  const runwayDays = expenses?.creditUsd != null && marginalDay > 0 ? expenses.creditUsd / marginalDay : null;
 
   const days = usageDays.map((d) => d.day);
   const internalByDay = new Map(internalDays.map((d) => [d.day, d.requests]));
@@ -190,7 +194,11 @@ export function MoneyTab({ data }: { data: CrmOverview }) {
         <Stat
           label="gpu burn"
           value={expenses ? `$${expenses.burnPerHour.toFixed(2)}/hr` : '—'}
-          sub={expenses ? `≈$${burnDay.toFixed(0)}/day · credit ${expenses.creditUsd == null ? '?' : `$${expenses.creditUsd.toFixed(0)}`}${runwayDays != null ? ` (~${runwayDays.toFixed(1)}d)` : ''}` : null}
+          sub={
+            expenses
+              ? `$${expenses.prepaidPerHour.toFixed(2)} prepaid + $${expenses.marginalPerHour.toFixed(2)} on-demand · ≈$${burnDay.toFixed(0)}/day · credit ${expenses.creditUsd == null ? '?' : `$${expenses.creditUsd.toFixed(0)}`}${runwayDays != null ? ` (~${runwayDays.toFixed(1)}d)` : ''}`
+              : null
+          }
         />
       </div>
 
@@ -238,6 +246,7 @@ export function MoneyTab({ data }: { data: CrmOverview }) {
           {expenses.instances.map((i, at) => (
             <Chip key={at}>
               {i.label ?? i.gpuName ?? '?'} · {i.numGpus ?? '?'}× {i.gpuName ?? ''} · ${i.dphTotal?.toFixed(2) ?? '?'}/hr · {i.status ?? '?'}
+              {i.prepaid ? ' · prepaid' : ''}
             </Chip>
           ))}
         </div>

@@ -809,7 +809,12 @@ export interface CrmOverview {
     series: Array<{ at: string; model: string; ok: boolean; ttftMs: number | null }>;
   } | null;
   expenses: {
+    /** total $/hr, prepaid included — the P&L number */
     burnPerHour: number;
+    /** monthly-prepaid boxes' share (sunk cost, does not draw credit) */
+    prepaidPerHour: number;
+    /** on-demand share — what actually drains the vast credit */
+    marginalPerHour: number;
     creditUsd: number | null;
     instances: Array<{
       label: string | null;
@@ -817,6 +822,7 @@ export interface CrmOverview {
       numGpus: number | null;
       dphTotal: number | null;
       status: string | null;
+      prepaid: boolean;
     }>;
   } | null;
   /** the business number: usage revenue minus GPU burn, per day. Burn comes
