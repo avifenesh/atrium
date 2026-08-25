@@ -6,6 +6,14 @@
 // persisted at ~/.config/atrium/endpoint-health.json gives uptime% and p50 that
 // survive atrium restarts.
 //
+// THIS IS THE CUSTOMER-FELT NUMBER, NOT THE ENGINE'S. It is measured from wherever atrium runs, so
+// it carries the distance to the serving box. Measured 2026-08-25: 196-259ms observed from Israel
+// against the DE box, while the same completion on that box's own loopback returns in 65-136ms —
+// about 130ms of the reading is transit, and Cloudflare terminates TLS at a nearby edge (cf-ray
+// ...-TLV) so a handshake timing cannot separate the two. For the serving stack's own cost see
+// in_region_ttft_ms in darklanes ops/serving/sentinel.py, which probes on the box itself.
+// Do not compare the two numbers as if they measured the same thing.
+//
 // This is the LIGHT measurement the darklanes .env key exists for (see
 // prod-serving-boxes-untouchable) — one token per model per 5 minutes, never a
 // bench. The key's tenant must stay marked internal in the console so probes
