@@ -276,7 +276,17 @@ function assemble(): CrmPipeline {
             : null,
         ].filter(Boolean).join(' · '),
         url: null,
-        metrics: { requests: account.requests, spentMicro: account.spentMicro, paid: account.paid },
+        metrics: {
+          requests: account.requests,
+          spentMicro: account.spentMicro,
+          paid: account.paid,
+          creditedMicro: account.creditedMicro ?? null,
+          balanceMicro: account.creditedMicro != null ? account.creditedMicro - account.spentMicro : null,
+          enrolled: account.enrolled,
+          suspended: account.suspended,
+          lastActiveDay: typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null,
+          signupRef: account.signupRef ?? null,
+        },
         activityAt: typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null,
       }, now),
     );

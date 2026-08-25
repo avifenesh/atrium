@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { Board } from './Board';
 import { GrowthTab, HealthTab, MoneyTab, PulseStrip } from './Overview';
+import { UsersTab } from './Users';
 import { CRM_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
 
 const POLL_MS = 60_000;
@@ -305,7 +306,7 @@ type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
 // Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
-const TABS = ['pipeline', 'money', 'growth', 'health'] as const;
+const TABS = ['pipeline', 'users', 'money', 'growth', 'health'] as const;
 type Tab = (typeof TABS)[number];
 const readTab = (): Tab => {
   const h = window.location.hash.replace('#', '');
@@ -360,7 +361,11 @@ export function CrmApp() {
     return () => clearInterval(timer);
   }, [refresh]);
 
-  const items = pipeline?.items ?? [];
+  const allItems = pipeline?.items ?? [];
+  // The pipeline is for things you chase through stages. An account is a customer whose numbers you
+  // read, and it has its own screen now, so it is not a pipeline card. Keeping both here forced one
+  // list to answer two unrelated questions.
+  const items = useMemo(() => allItems.filter((i) => i.kind !== 'account'), [allItems]);
   const due = useMemo(() => items.filter((i) => i.followUpDue), [items]);
   const kindCounts = useMemo(() => {
     const map = new Map<CrmItem['kind'], number>();
@@ -383,7 +388,9 @@ export function CrmApp() {
     if (stage !== 'any' && stage !== 'due' && i.stage !== stage) return false;
     return !needle || matches(i, needle);
   });
-  const open = openId ? items.find((i) => i.id === openId) ?? null : null;
+  // Resolve against allItems, not the pipeline-narrowed list: the users screen opens accounts,
+  // which `items` deliberately excludes.
+  const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
 
   return (
     <div className="mx-auto max-w-7xl px-3 pb-16 pt-4 sm:px-5">
@@ -418,8 +425,15 @@ export function CrmApp() {
         ))}
       </div>
 
-      {tab !== 'pipeline' && !overview && !error && (
+      {tab !== 'pipeline' && tab !== 'users' && !overview && !error && (
         <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+      )}
+      {tab === 'users' && (
+        pipeline
+          ? <UsersTab items={allItems} onOpen={setOpenId} />
+          : !error && (
+            <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+          )
       )}
       {tab === 'money' && overview && <MoneyTab data={overview} />}
       {tab === 'growth' && overview && <GrowthTab data={overview} />}
@@ -438,7 +452,7 @@ export function CrmApp() {
         <button type="button" onClick={() => setKind('all')} className={chipClass(kind === 'all')}>
           all {items.length}
         </button>
-        {(['direction', 'lead', 'account'] as const).map((k) => (
+        {(['direction', 'lead'] as const).map((k) => (
           <button
             key={k}
             type="button"

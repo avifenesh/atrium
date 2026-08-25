@@ -750,8 +750,22 @@ export interface CrmItem {
   followUpDue: boolean;
   notes: CrmNote[];
   contacts: CrmContact[];
-  /** accounts only */
-  metrics: { requests: number; spentMicro: number; paid: boolean } | null;
+  /**
+   * accounts only. The users page reads these directly: the same facts used to live only inside the
+   * formatted `detail` string, which meant sorting or filtering on balance meant parsing prose.
+   */
+  metrics: {
+    requests: number;
+    spentMicro: number;
+    paid: boolean;
+    creditedMicro: number | null;
+    /** credited minus spent, null when the console did not report a credit total */
+    balanceMicro: number | null;
+    enrolled: boolean;
+    suspended: boolean;
+    lastActiveDay: string | null;
+    signupRef: string | null;
+  } | null;
   /** newest activity timestamp the sources know for sorting */
   activityAt: string | null;
 }

@@ -208,3 +208,40 @@ test('directions: files become pipeline rows with detail, and overlay state stic
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// The users screen reads these fields directly instead of parsing the formatted `detail` string.
+// Before they existed, balance and last-active survived only inside prose, so nothing could sort or
+// filter on them. If they stop being populated the page silently shows em dashes for every row.
+test('account items carry the metrics the users screen sorts on', async () => {
+  await withCrm(async () => {
+    seedStore([], [
+      account('ten_rich', {
+        requests: 120, spentMicro: 2_500_000, creditedMicro: 10_000_000,
+        lastActiveDay: '2026-08-24', signupRef: 'x', paid: true,
+      }),
+      account('ten_fresh'),
+    ]);
+    await crm.load();
+    const items = crm.pipeline().items;
+
+    const rich = items.find((i) => i.id === 'tenant:ten_rich');
+    assert.ok(rich?.metrics, 'an account item must carry metrics');
+    assert.equal(rich.metrics.requests, 120);
+    assert.equal(rich.metrics.spentMicro, 2_500_000);
+    assert.equal(rich.metrics.creditedMicro, 10_000_000);
+    // Balance is derived, not reported: credited minus spent.
+    assert.equal(rich.metrics.balanceMicro, 7_500_000);
+    assert.equal(rich.metrics.lastActiveDay, '2026-08-24');
+    assert.equal(rich.metrics.signupRef, 'x');
+    assert.equal(rich.metrics.paid, true);
+    assert.equal(rich.metrics.suspended, false);
+    assert.equal(rich.metrics.enrolled, true);
+
+    // An account the console reported no credit total for must read as unknown, never as zero:
+    // "$0.00 balance" and "we do not know the balance" are different facts.
+    const fresh = items.find((i) => i.id === 'tenant:ten_fresh');
+    assert.equal(fresh?.metrics?.creditedMicro, null);
+    assert.equal(fresh?.metrics?.balanceMicro, null);
+    assert.equal(fresh?.metrics?.requests, 0);
+  });
+});
