@@ -2,7 +2,7 @@
 // funnel order. The phone list view stays in CrmApp; this renders only ≥lg.
 
 import type { CrmItem, CrmStage } from '../../../shared/types';
-import { CRM_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
+import { PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
 
 const KIND_TONE: Record<CrmItem['kind'], string> = {
   direction: 'text-amber',
@@ -39,7 +39,7 @@ export function Board({ items, onOpen }: { items: CrmItem[]; onOpen: (id: string
   }
   return (
     <div className="flex items-start gap-2 overflow-x-auto pb-2">
-      {CRM_STAGES.map((stage) => {
+      {PIPELINE_STAGES.map((stage) => {
         const column = byStage.get(stage) ?? [];
         return (
           <div key={stage} className="w-60 shrink-0 rounded-xl border border-white/8 bg-white/[0.015] xl:w-64">

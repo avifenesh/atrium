@@ -20,7 +20,7 @@ import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../share
 import { Board } from './Board';
 import { GrowthTab, HealthTab, MoneyTab, PulseStrip } from './Overview';
 import { UsersTab } from './Users';
-import { CRM_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
+import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
 
 const POLL_MS = 60_000;
 
@@ -178,6 +178,8 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
             stage{item.overridden && ` (pinned — sources say ${STAGE_LABEL[item.derivedStage]})`}
           </div>
           <div className="flex flex-wrap gap-1.5">
+            {/* The full stage set here, deliberately: this drawer also opens accounts from the
+                users screen, and an account really does sit in signed-up / active / paying. */}
             {CRM_STAGES.map((stage) => (
               <button
                 key={stage}
@@ -528,12 +530,13 @@ export function CrmApp() {
       </div>
 
       {/* stage row — the funnel cut for the phone list; the board already
-          shows every stage as a column, so this row hides on desktop */}
+          shows every stage as a column, so this row hides on desktop. Uses the pipeline stage set,
+          not every CrmStage: the account-only stages can never hold a lead. */}
       <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
         <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
           any stage
         </button>
-        {CRM_STAGES.map((s) => (
+        {PIPELINE_STAGES.map((s) => (
           <button
             key={s}
             type="button"

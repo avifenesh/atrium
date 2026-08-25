@@ -245,3 +245,44 @@ test('account items carry the metrics the users screen sorts on', async () => {
     assert.equal(fresh?.metrics?.requests, 0);
   });
 });
+
+// The pipeline board renders one column per PIPELINE_STAGES entry. That set is only correct while the
+// server cannot put a lead or a direction into an account-only stage. This pins the server half of
+// that contract: if derivedLeadStage ever starts returning 'signed-up' / 'active' / 'paying', the
+// board would silently stop showing those rows and this fails instead.
+test('leads and directions never derive an account-only stage', async () => {
+  await withCrm(async () => {
+    const ACCOUNT_ONLY = new Set(['signed-up', 'active', 'paying']);
+    seedStore(
+      [
+        signal('s-new', 'mention'),
+        signal('s-engaged', 'mention', { status: 'engaged', note: null, updatedAt: '2026-08-19T00:00:00Z' }),
+        signal('s-dismissed', 'mention', { status: 'dismissed', note: null, updatedAt: '2026-08-19T00:00:00Z' }),
+      ],
+      // An account in every lifecycle state, to prove the account side DOES use them.
+      [
+        account('ten_signedup'),
+        account('ten_active', { requests: 9 }),
+        account('ten_paying', { paid: true }),
+      ],
+    );
+    await crm.load();
+    const items = crm.pipeline().items;
+
+    for (const item of items) {
+      if (item.kind === 'account') continue;
+      assert.ok(
+        !ACCOUNT_ONLY.has(item.derivedStage),
+        `${item.kind} ${item.id} derived an account-only stage: ${item.derivedStage}`,
+      );
+    }
+
+    // And the account side genuinely populates them, so the stages are not dead overall.
+    const accountStages = new Set(
+      items.filter((i) => i.kind === 'account').map((i) => i.derivedStage),
+    );
+    assert.ok(accountStages.has('signed-up'), 'an account should reach signed-up');
+    assert.ok(accountStages.has('active'), 'an account should reach active');
+    assert.ok(accountStages.has('paying'), 'an account should reach paying');
+  });
+});
