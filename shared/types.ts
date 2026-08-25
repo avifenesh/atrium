@@ -768,6 +768,12 @@ export interface CrmItem {
   } | null;
   /** newest activity timestamp the sources know for sorting */
   activityAt: string | null;
+  /**
+   * leads only: how well this row matches the target (companies and heavy users running always-on
+   * agents). The pipeline sorts on it, because 153 unranked rows made the owner do the triage the
+   * collector should have done. `labels` names the signals found, so a score is never a black box.
+   */
+  relevance: { score: number; labels: string[]; qualified: boolean } | null;
 }
 
 export interface CrmPipeline {

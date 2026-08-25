@@ -20,6 +20,7 @@ import { mkdir, readdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from './config.js';
 import { store } from './state.js';
+import { scoreLead } from './lead-relevance.js';
 import { iso, readJson } from './util.js';
 import type {
   CrmContact,
@@ -190,7 +191,11 @@ function toItem(
   const entry = persisted.entries[id];
   const stage = entry?.stage ?? derivedStage;
   const followUpAt = entry?.followUpAt ?? null;
+  const relevance = kind === 'lead'
+    ? scoreLead({ kind, title: base.title, subtitle: base.subtitle, detail: base.detail })
+    : null;
   return {
+    relevance,
     id,
     kind,
     ...base,

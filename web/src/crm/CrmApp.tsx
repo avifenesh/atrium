@@ -92,6 +92,14 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
       </div>
       <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-mist-faint">
         <span className={KIND_TONE[item.kind]}>{item.kind}</span>
+        {item.relevance && item.relevance.labels.length > 0 && (
+          <span
+            className={item.relevance.qualified ? 'text-jade' : 'text-mist-faint'}
+            title={item.relevance.labels.join(', ')}
+          >
+            {item.relevance.qualified ? '◆' : '·'} {item.relevance.labels[0]}
+          </span>
+        )}
         {item.source && item.source !== 'seller' && <span>{item.source}</span>}
         {item.subtitle && <span className="min-w-0 truncate">{item.subtitle}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-2">
@@ -329,6 +337,8 @@ export function CrmApp() {
   const [stage, setStage] = useState<StageFilter>('any');
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
+  const [onlyQualified, setOnlyQualified] = useState(false);
   const [tab, setTab] = useState<Tab>(readTab);
 
   useEffect(() => {
@@ -365,7 +375,14 @@ export function CrmApp() {
   // The pipeline is for things you chase through stages. An account is a customer whose numbers you
   // read, and it has its own screen now, so it is not a pipeline card. Keeping both here forced one
   // list to answer two unrelated questions.
-  const items = useMemo(() => allItems.filter((i) => i.kind !== 'account'), [allItems]);
+  const workable = useMemo(() => allItems.filter((i) => i.kind !== 'account'), [allItems]);
+  // A lost row is a decision already made. Showing it forever means the list grows without the work
+  // growing, and it buried the rows that still need a reply.
+  const items = useMemo(
+    () => (showClosed ? workable : workable.filter((i) => i.stage !== 'lost')),
+    [workable, showClosed],
+  );
+  const closedCount = useMemo(() => workable.filter((i) => i.stage === 'lost').length, [workable]);
   const due = useMemo(() => items.filter((i) => i.followUpDue), [items]);
   const kindCounts = useMemo(() => {
     const map = new Map<CrmItem['kind'], number>();
@@ -383,11 +400,25 @@ export function CrmApp() {
   }, [inKind]);
 
   const needle = query.trim().toLowerCase();
-  const visible = inKind.filter((i) => {
-    if (stage === 'due' && !i.followUpDue) return false;
-    if (stage !== 'any' && stage !== 'due' && i.stage !== stage) return false;
-    return !needle || matches(i, needle);
-  });
+  const visible = useMemo(() => {
+    const rows = inKind.filter((i) => {
+      if (stage === 'due' && !i.followUpDue) return false;
+      if (stage !== 'any' && stage !== 'due' && i.stage !== stage) return false;
+      if (onlyQualified && i.relevance && !i.relevance.qualified) return false;
+      return !needle || matches(i, needle);
+    });
+    // Relevance first, then recency. An unranked list of 150 rows makes the owner do the triage the
+    // collector should already have done, and the highest-value row was sorting arbitrarily.
+    return [...rows].sort((a, b) => {
+      const byScore = (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0);
+      if (byScore !== 0) return byScore;
+      return (b.activityAt ?? '').localeCompare(a.activityAt ?? '');
+    });
+  }, [inKind, stage, onlyQualified, needle]);
+  const qualifiedCount = useMemo(
+    () => inKind.filter((i) => i.relevance?.qualified ?? true).length,
+    [inKind],
+  );
   // Resolve against allItems, not the pipeline-narrowed list: the users screen opens accounts,
   // which `items` deliberately excludes.
   const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
@@ -469,6 +500,23 @@ export function CrmApp() {
             className={chipClass(stage === 'due', 'text-amber')}
           >
             ⏰ due {due.length}
+          </button>
+        )}
+        {/* The cut that answers "what is actually worth my next tick". */}
+        <button
+          type="button"
+          onClick={() => setOnlyQualified(!onlyQualified)}
+          className={chipClass(onlyQualified, onlyQualified ? '' : 'text-jade')}
+        >
+          ◆ qualified {qualifiedCount}
+        </button>
+        {closedCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowClosed(!showClosed)}
+            className={chipClass(showClosed, 'text-mist-faint')}
+          >
+            closed {closedCount}
           </button>
         )}
         <input
