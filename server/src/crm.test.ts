@@ -67,7 +67,8 @@ test('derives stages: lead states and account states map onto one funnel', async
     const byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
     assert.equal(byId.get('s-new')?.stage, 'new');
     assert.equal(byId.get('s-engaged')?.stage, 'contacted');
-    assert.equal(byId.get('s-dismissed')?.stage, 'lost');
+    // dismissed = triaged away without engaging — a skip, not a loss
+    assert.equal(byId.get('s-dismissed')?.stage, 'skipped');
     assert.equal(byId.has('s-counter'), false);
     assert.equal(byId.get('tenant:t-fresh')?.stage, 'signed-up');
     assert.equal(byId.get('tenant:t-active')?.stage, 'active');

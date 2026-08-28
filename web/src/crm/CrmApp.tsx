@@ -18,9 +18,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { Board } from './Board';
-import { GrowthTab, HealthTab, MoneyTab, PulseStrip } from './Overview';
+import { ModelsTab } from './Models';
+import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
 import { UsersTab } from './Users';
-import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE } from './stages';
+import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE, stageLabelFor } from './stages';
 
 const POLL_MS = 60_000;
 
@@ -70,10 +71,10 @@ function age(iso: string | null): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-function StageBadge({ stage, overridden }: { stage: CrmStage; overridden: boolean }) {
+function StageBadge({ item, stage, overridden }: { item: Pick<CrmItem, 'kind' | 'source'>; stage: CrmStage; overridden: boolean }) {
   return (
     <span className={`shrink-0 rounded-full border border-white/10 px-2 py-0.5 font-mono text-[10px] ${STAGE_TONE[stage]}`}>
-      {STAGE_LABEL[stage]}
+      {stageLabelFor(item, stage)}
       {overridden && ' *'}
     </span>
   );
@@ -88,7 +89,7 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
     >
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
-        <StageBadge stage={item.stage} overridden={item.overridden} />
+        <StageBadge item={item} stage={item.stage} overridden={item.overridden} />
       </div>
       <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-mist-faint">
         <span className={KIND_TONE[item.kind]}>{item.kind}</span>
@@ -175,7 +176,7 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
         {/* stage — one tap per column; tapping the derived stage clears the override */}
         <div className="mt-4">
           <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-mist-faint">
-            stage{item.overridden && ` (pinned — sources say ${STAGE_LABEL[item.derivedStage]})`}
+            stage{item.overridden && ` (pinned — sources say ${stageLabelFor(item, item.derivedStage)})`}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {/* The full stage set here, deliberately: this drawer also opens accounts from the
@@ -192,7 +193,7 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
                   stage === item.stage ? `border-white/25 bg-white/5 ${STAGE_TONE[stage]}` : 'border-white/8 text-mist-dim'
                 }`}
               >
-                {STAGE_LABEL[stage]}
+                {stageLabelFor(item, stage)}
               </button>
             ))}
           </div>
@@ -316,15 +317,22 @@ type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
 // Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
-const TABS = ['pipeline', 'users', 'money', 'growth', 'health'] as const;
+// One tab per question: work the pipeline, read the users, count the models,
+// read the money, see who visits, judge the outreach, check for fire.
+const TABS = ['pipeline', 'users', 'models', 'money', 'traffic', 'outreach', 'health'] as const;
 type Tab = (typeof TABS)[number];
 const readTab = (): Tab => {
   const h = window.location.hash.replace('#', '');
+  if (h === 'growth') return 'traffic'; // the old growth tab split into traffic + outreach
   return (TABS as readonly string[]).includes(h) ? (h as Tab) : 'pipeline';
 };
 
 const matches = (i: CrmItem, needle: string) =>
   `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''}`.toLowerCase().includes(needle);
+
+// A skipped or lost row is a decision already made. Showing it forever means the list grows
+// without the work growing, and it buried the rows that still need a reply.
+const CLOSED = new Set<CrmStage>(['lost', 'skipped']);
 
 const chipClass = (active: boolean, extra = '') =>
   `shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
@@ -378,13 +386,11 @@ export function CrmApp() {
   // read, and it has its own screen now, so it is not a pipeline card. Keeping both here forced one
   // list to answer two unrelated questions.
   const workable = useMemo(() => allItems.filter((i) => i.kind !== 'account'), [allItems]);
-  // A lost row is a decision already made. Showing it forever means the list grows without the work
-  // growing, and it buried the rows that still need a reply.
   const items = useMemo(
-    () => (showClosed ? workable : workable.filter((i) => i.stage !== 'lost')),
+    () => (showClosed ? workable : workable.filter((i) => !CLOSED.has(i.stage))),
     [workable, showClosed],
   );
-  const closedCount = useMemo(() => workable.filter((i) => i.stage === 'lost').length, [workable]);
+  const closedCount = useMemo(() => workable.filter((i) => CLOSED.has(i.stage)).length, [workable]);
   const due = useMemo(() => items.filter((i) => i.followUpDue), [items]);
   const kindCounts = useMemo(() => {
     const map = new Map<CrmItem['kind'], number>();
@@ -469,7 +475,9 @@ export function CrmApp() {
           )
       )}
       {tab === 'money' && overview && <MoneyTab data={overview} />}
-      {tab === 'growth' && overview && <GrowthTab data={overview} />}
+      {tab === 'models' && overview && <ModelsTab data={overview} />}
+      {tab === 'traffic' && overview && <TrafficTab data={overview} />}
+      {tab === 'outreach' && overview && <OutreachTab data={overview} />}
       {tab === 'health' && overview && <HealthTab data={overview} />}
 
       {tab === 'pipeline' && (

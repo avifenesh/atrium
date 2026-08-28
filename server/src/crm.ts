@@ -36,7 +36,7 @@ import type {
 
 /** Runtime twin of the CrmStage union (shared/types.ts is types-only — see the
  *  note there). The two satisfies-checks make drift a compile error both ways. */
-export const CRM_STAGES = ['new', 'contacted', 'replied', 'signed-up', 'active', 'paying', 'lost'] as const satisfies readonly CrmStage[];
+export const CRM_STAGES = ['new', 'contacted', 'replied', 'signed-up', 'active', 'paying', 'skipped', 'lost'] as const satisfies readonly CrmStage[];
 type _Complete = CrmStage extends (typeof CRM_STAGES)[number] ? true : never;
 const _complete: _Complete = true;
 void _complete;
@@ -154,7 +154,9 @@ const LEAD_KINDS = new Set(['mention', 'demand-thread', 'prospect-thread']);
 
 function derivedLeadStage(signal: SignalItem): CrmStage {
   if (signal.lead?.status === 'engaged') return 'contacted';
-  if (signal.lead?.status === 'dismissed') return 'lost';
+  // dismissed = the seller triaged it away without engaging. That is a skip,
+  // not a loss: lost means we tried and it died.
+  if (signal.lead?.status === 'dismissed') return 'skipped';
   return 'new';
 }
 

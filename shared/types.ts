@@ -698,11 +698,13 @@ export interface SignalsState {
 
 /** One funnel for both kinds: a lead (thread/mention worth winning) walks
  *  new → contacted → replied and becomes an account (signed-up → active → paying);
- *  'lost' is terminal for either. Order matters — it is the board's column order.
+ *  'skipped' is a triage decision on a lead we never engaged (a thread judged
+ *  not worth a comment); 'lost' is terminal after real engagement, for either.
+ *  Order matters — it is the board's column order.
  *  This file stays types-only (its .js compiles CJS under the root package but
  *  loads inside the server's ESM scope), so the runtime array lives in
  *  server/src/crm.ts and web/src/crm/stages.ts, each type-checked against this. */
-export type CrmStage = 'new' | 'contacted' | 'replied' | 'signed-up' | 'active' | 'paying' | 'lost';
+export type CrmStage = 'new' | 'contacted' | 'replied' | 'signed-up' | 'active' | 'paying' | 'skipped' | 'lost';
 
 export interface CrmNote {
   at: string;
@@ -825,8 +827,9 @@ export interface CrmOverview {
       uptimePct: number;
       checkedAt: string;
     }>;
-    /** raw 24h synthetic-probe series (5-min cadence) for the health charts */
-    series: Array<{ at: string; model: string; ok: boolean; ttftMs: number | null }>;
+    /** raw 24h synthetic-probe series (5-min cadence) for the health charts;
+     *  authFault marks probes our own key was rejected on — unknown health, not down */
+    series: Array<{ at: string; model: string; ok: boolean; ttftMs: number | null; authFault?: boolean }>;
   } | null;
   expenses: {
     /** total $/hr, prepaid included — the P&L number */
@@ -860,6 +863,8 @@ export interface CrmOverview {
   realUsage: Array<{ model: string; requests24h: number; errorPct: number; avgMs: number | null }> | null;
   /** hourly per-model real traffic over 24h (requests, errors, mean ms to headers) */
   realUsageHourly: Array<{ hour: string; model: string; requests: number; errors: number; avgMs: number | null }> | null;
+  /** daily per-model real traffic over 7d — the models-tab request counts */
+  realUsageDaily: Array<{ day: string; model: string; requests: number; errors: number; avgMs: number | null }> | null;
   /** OpenRouter provider landscape per served model — the outreach-timing watch */
   competitors: Array<{
     model: string;

@@ -255,10 +255,14 @@ export function MoneyTab({ data }: { data: CrmOverview }) {
   );
 }
 
-// --- growth tab ---------------------------------------------------------------
+// --- traffic tab ----------------------------------------------------------------
+//
+// Who is coming to the sites and from where. The outreach numbers (funnel, ads,
+// competitors) moved to their own tab: "is the site being found" and "is our
+// selling working" are different questions asked at different moments.
 
-export function GrowthTab({ data }: { data: CrmOverview }) {
-  const { visitors, signupSources, ads, outbound, exposure, competitors } = data;
+export function TrafficTab({ data }: { data: CrmOverview }) {
+  const { visitors, exposure } = data;
 
   // per-site daily series over the union of days, oldest→newest
   const sites = visitors ? [...new Set(visitors.daily.map((r) => r.site))].sort() : [];
@@ -282,10 +286,6 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
             format={(v) => String(Math.round(v))}
           />
         )}
-        <BarList
-          title="signups by channel"
-          rows={signupSources.slice(0, 8).map((s) => ({ label: s.source, value: s.count }))}
-        />
         {visitors && visitors.channels.length > 0 && (
           <BarList
             title="visitors by channel"
@@ -302,35 +302,24 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
             rows={visitors.topPaths.slice(0, 8).map((p) => ({ label: `${p.site} ${p.path}`, value: p.views }))}
           />
         )}
-        <div className="space-y-2">
-          <Stat
-            label="outbound funnel"
-            value={`${outbound.drafted} → ${outbound.contacted} → ${outbound.replied}`}
-            sub={
-              outbound.bySource.length
-                ? outbound.bySource.slice(0, 3).map((s) => `${s.source} ${s.drafted}/${s.contacted}/${s.replied}`).join(' · ')
-                : 'drafted → contacted → replied'
-            }
-          />
-          {exposure && (
-            <div className="grid grid-cols-2 gap-2">
-              {exposure.repos[0] && (
-                <Stat
-                  label={`github · ${exposure.repos[0].repo.split('/').pop()}`}
-                  value={`★${exposure.repos[0].stars}`}
-                  sub={`${exposure.repos[0].views14d} views 14d · ${exposure.repos[0].clones14d} clones`}
-                />
-              )}
-              {exposure.huggingface.length > 0 && (
-                <Stat
-                  label="hf downloads 30d"
-                  value={String(exposure.huggingface.reduce((a, h) => a + h.downloads30d, 0))}
-                  sub={`${exposure.huggingface.length} cards`}
-                />
-              )}
-            </div>
-          )}
-        </div>
+        {exposure && (
+          <div className="grid grid-cols-2 gap-2">
+            {exposure.repos[0] && (
+              <Stat
+                label={`github · ${exposure.repos[0].repo.split('/').pop()}`}
+                value={`★${exposure.repos[0].stars}`}
+                sub={`${exposure.repos[0].views14d} views 14d · ${exposure.repos[0].clones14d} clones`}
+              />
+            )}
+            {exposure.huggingface.length > 0 && (
+              <Stat
+                label="hf downloads 30d"
+                value={String(exposure.huggingface.reduce((a, h) => a + h.downloads30d, 0))}
+                sub={`${exposure.huggingface.length} cards`}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* AI assistants + external referrers sending people to the sites. The ai
@@ -352,6 +341,69 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
                 {r.kind}{r.host ? ` · ${r.host}` : ''} {r.views}
               </Chip>
             ))}
+        </div>
+      )}
+
+      {exposure && exposure.referrers.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {exposure.referrers.slice(0, 6).map((r) => (
+            <Chip key={r.referrer}>gh ref · {r.referrer} {r.count}</Chip>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- outreach tab ---------------------------------------------------------------
+//
+// Is the selling working: the outbound funnel, which channel signups actually
+// carried, what ads bought, and the competitor watch that times outreach.
+
+export function OutreachTab({ data }: { data: CrmOverview }) {
+  const { signupSources, ads, outbound, competitors } = data;
+
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 lg:grid-cols-2">
+        <Stat
+          label="outbound funnel · drafted → contacted → replied"
+          value={`${outbound.drafted} → ${outbound.contacted} → ${outbound.replied}`}
+          sub={
+            outbound.bySource.length
+              ? outbound.bySource.slice(0, 3).map((s) => `${s.source} ${s.drafted}/${s.contacted}/${s.replied}`).join(' · ')
+              : null
+          }
+        />
+        <BarList
+          title="signups by channel"
+          rows={signupSources.slice(0, 8).map((s) => ({ label: s.source, value: s.count }))}
+        />
+      </div>
+
+      {/* per-source funnel — the table view of what each pond produced */}
+      {outbound.bySource.length > 0 && (
+        <div className="overflow-x-auto rounded-xl border border-white/8">
+          <table className="w-full border-collapse font-mono text-[12px]">
+            <thead>
+              <tr className="border-b border-white/8 text-left text-mist-faint">
+                <th className="px-3 py-2 font-normal">source</th>
+                <th className="px-3 py-2 text-right font-normal">drafted</th>
+                <th className="px-3 py-2 text-right font-normal">contacted</th>
+                <th className="px-3 py-2 text-right font-normal">replied</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outbound.bySource.map((s) => (
+                <tr key={s.source} className="border-b border-white/5 last:border-0">
+                  <td className="px-3 py-2 text-mist">{s.source}</td>
+                  <td className="px-3 py-2 text-right text-mist-dim">{s.drafted}</td>
+                  <td className="px-3 py-2 text-right text-mist-dim">{s.contacted}</td>
+                  <td className={`px-3 py-2 text-right ${s.replied > 0 ? 'text-jade' : 'text-mist-faint'}`}>{s.replied}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -392,14 +444,6 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
           })}
         </div>
       )}
-
-      {exposure && exposure.referrers.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {exposure.referrers.slice(0, 6).map((r) => (
-            <Chip key={r.referrer}>gh ref · {r.referrer} {r.count}</Chip>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -407,10 +451,7 @@ export function GrowthTab({ data }: { data: CrmOverview }) {
 // --- health tab ---------------------------------------------------------------
 
 export function HealthTab({ data }: { data: CrmOverview }) {
-  const { endpoint, realUsage, realUsageHourly, accounts, serving } = data;
-  const probeSeries = endpoint?.series ?? [];
-  const hourly = realUsageHourly ?? [];
-  const hourTick = (iso: string) => `${iso.slice(11, 13)}:00`;
+  const { endpoint, realUsage, accounts, serving } = data;
 
   return (
     <div className="space-y-2">
@@ -434,60 +475,8 @@ export function HealthTab({ data }: { data: CrmOverview }) {
         ))}
       </div>
 
-      {/* one row of four 24h charts per served model (each model = one box):
-          real traffic, real latency, synthetic TTFT, probe uptime */}
-      {(endpoint?.models ?? []).map((m) => {
-        const short = m.model.split('/').pop() ?? m.model;
-        const probes = probeSeries.filter((p) => p.model === m.model);
-        const modelHours = hourly.filter((h) => h.model === m.model);
-        // shared hour axis: union of both sources, oldest first
-        const hourKeys = [...new Set([...modelHours.map((h) => h.hour.slice(0, 13)), ...probes.map((p) => p.at.slice(0, 13))])].sort();
-        const byHour = new Map(modelHours.map((h) => [h.hour.slice(0, 13), h]));
-        const upByHour = hourKeys.map((k) => {
-          const hp = probes.filter((p) => p.at.slice(0, 13) === k);
-          return hp.length ? Math.round((hp.filter((p) => p.ok).length / hp.length) * 100) : null;
-        });
-        if (hourKeys.length === 0) return null;
-        const labels = hourKeys.map((k) => hourTick(`${k}:00`));
-        return (
-          <div key={m.model}>
-            <div className="mb-1 font-mono text-[11px] text-mist-dim">{short} · last 24h</div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              <TrendChart
-                title="traffic, req/hr (real)"
-                height={110}
-                labels={labels}
-                series={[
-                  { name: 'requests', color: SLATE, kind: 'bar', values: hourKeys.map((k) => byHour.get(k)?.requests ?? 0) },
-                  { name: 'errors', color: CORAL, kind: 'line', values: hourKeys.map((k) => byHour.get(k)?.errors ?? 0) },
-                ]}
-                format={(v) => String(Math.round(v))}
-              />
-              <TrendChart
-                title="latency, ms to headers (real)"
-                height={110}
-                labels={labels}
-                series={[{ name: 'avg ms', color: SLATE, kind: 'line', values: hourKeys.map((k) => byHour.get(k)?.avgMs ?? null) }]}
-                format={(v) => `${Math.round(v)}ms`}
-              />
-              <TrendChart
-                title="ttft, ms (probe, 5 min)"
-                height={110}
-                labels={probes.map((p) => p.at.slice(11, 16))}
-                series={[{ name: 'ttft', color: MIST, kind: 'line', values: probes.map((p) => p.ttftMs) }]}
-                format={(v) => `${Math.round(v)}ms`}
-              />
-              <TrendChart
-                title="uptime, %/hr (probe)"
-                height={110}
-                labels={labels}
-                series={[{ name: 'up %', color: JADE, kind: 'bar', values: upByHour }]}
-                format={(v) => `${Math.round(v)}%`}
-              />
-            </div>
-          </div>
-        );
-      })}
+      {/* the per-model 24h chart grids live on the models tab now — health answers
+          "is anything on fire", models answers "what is each model doing" */}
       {accounts && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat label="accounts" value={String(accounts.total)} sub={`+${accounts.newWeek} this week`} />

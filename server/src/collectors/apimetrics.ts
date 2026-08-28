@@ -37,6 +37,15 @@ export interface RealUsageHour {
   avgMs: number | null;
 }
 
+/** One day of one model's real traffic — the models-tab 7d counts. */
+export interface RealUsageDaily {
+  day: string; // YYYY-MM-DD
+  model: string;
+  requests: number;
+  errors: number;
+  avgMs: number | null;
+}
+
 async function cfCreds(): Promise<{ token: string; account: string } | null> {
   try {
     const text = await readFile(resolve(homedir(), '.config/tiyuvta/cloudflare.env'), 'utf8');
@@ -170,6 +179,61 @@ const collector: Collector = {
       /* charts degrade to empty; the 24h totals above still render */
     }
 
+    // daily cut over 7d — the models-tab "counted requests to each model".
+    // Same dataset, day grain: cheap, and it answers "which model earns its box"
+    // without anyone summing hourly rows by eye.
+    const dailySql = `
+      SELECT toStartOfInterval(timestamp, INTERVAL '1' DAY) AS day,
+             blob2 AS model, blob3 AS status,
+             SUM(_sample_interval) AS n,
+             SUM(double1 * _sample_interval) / SUM(_sample_interval) AS avgMs
+      FROM tiyuvta_api
+      WHERE timestamp > NOW() - INTERVAL '7' DAY AND blob2 != ''
+      GROUP BY day, model, status ORDER BY day ASC
+      FORMAT JSON`;
+    let daily: RealUsageDaily[] = [];
+    try {
+      const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${creds.account}/analytics_engine/sql`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${creds.token}` },
+        body: dailySql,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (response.ok) {
+        const raw = ((await response.json()) as { data?: Array<SqlRow & { day?: string }> }).data ?? [];
+        const byKey = new Map<string, { requests: number; errors: number; okMsSum: number; okN: number }>();
+        for (const row of raw) {
+          const day = String(row.day ?? '').slice(0, 10);
+          if (!day) continue;
+          const key = `${day}|${row.model}`;
+          const entry = byKey.get(key) ?? { requests: 0, errors: 0, okMsSum: 0, okN: 0 };
+          const n = Number(row.n) || 0;
+          const status = Number(row.status) || 0;
+          entry.requests += n;
+          if (status >= 500 || status === 429) entry.errors += n;
+          else if (status >= 200 && status < 300 && row.avgMs != null) {
+            entry.okMsSum += Number(row.avgMs) * n;
+            entry.okN += n;
+          }
+          byKey.set(key, entry);
+        }
+        daily = [...byKey.entries()]
+          .map(([key, e]) => {
+            const [day, model] = key.split('|');
+            return {
+              day,
+              model,
+              requests: Math.round(e.requests),
+              errors: Math.round(e.errors),
+              avgMs: e.okN > 0 ? Math.round(e.okMsSum / e.okN) : null,
+            };
+          })
+          .sort((a, b) => a.day.localeCompare(b.day));
+      }
+    } catch {
+      /* the 24h view still renders without the 7d cut */
+    }
+
     const models: RealUsageModel[] = [...byModel.entries()]
       .map(([model, e]) => ({
         model,
@@ -188,7 +252,7 @@ const collector: Collector = {
         label: m.model.split('/').pop() ?? m.model,
         value: `${m.requests24h} req 24h · ${m.errorPct}% err · avg ${m.avgMs ?? '—'}ms to headers`,
       })),
-      data: { models, hourly },
+      data: { models, hourly, daily },
     });
   },
 };

@@ -129,7 +129,7 @@ function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {
     // as "contacted" without anyone having written a word.
     const contacted = item.kind === 'account'
       ? item.contacts.length > 0
-      : item.contacts.length > 0 || (item.stage !== 'new' && item.stage !== 'lost');
+      : item.contacts.length > 0 || (item.stage !== 'new' && item.stage !== 'lost' && item.stage !== 'skipped');
     // An account being `active` says nothing about our email: it was active
     // before we wrote. Derived stages never yield 'replied', so on an account
     // that value can only come from the owner pinning it after a real answer
@@ -277,6 +277,10 @@ export async function crmOverview(): Promise<CrmOverview> {
     realUsageHourly: (() => {
       const metrics = extra['apimetrics']?.data as { hourly?: CrmOverview['realUsageHourly'] } | undefined;
       return metrics?.hourly ?? null;
+    })(),
+    realUsageDaily: (() => {
+      const metrics = extra['apimetrics']?.data as { daily?: CrmOverview['realUsageDaily'] } | undefined;
+      return metrics?.daily ?? null;
     })(),
     competitors: (() => {
       const or = extra['openrouter']?.data as { models?: CrmOverview['competitors'] } | undefined;
