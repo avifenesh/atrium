@@ -46,6 +46,13 @@ interface Probe {
   model: string;
   ok: boolean;
   ttftMs: number | null;
+  /** The endpoint rejected our KEY (401/402/403), which says nothing about whether
+   *  it is serving. On 2026-08-28 memra v0.117 made unenrolled tenants fail closed
+   *  (they used to be unmetered); the probe key's tenant lost its free pass and all
+   *  four models read DOWN for ~10h while customers were served normally the whole
+   *  time. A monitor that cannot tell "my credential died" from "the product died"
+   *  is worse than no monitor. */
+  authFault?: boolean;
 }
 
 export interface EndpointModelHealth {
@@ -56,6 +63,8 @@ export interface EndpointModelHealth {
   uptimePct: number;
   p50TtftMs: number | null;
   probes: number;
+  /** Last probe was rejected on credentials — unknown health, NOT down. */
+  authFault: boolean;
 }
 
 let history: Probe[] = [];
@@ -111,7 +120,11 @@ async function probe(base: string, key: string, model: string): Promise<Probe> {
     });
     if (!response.ok || !response.body) {
       await response.body?.cancel().catch(() => {});
-      return { at, model, ok: false, ttftMs: null };
+      // 401/402/403 are verdicts on OUR key, not on the endpoint: auth and billing
+      // admission both run before any model is touched, so a rejection here proves
+      // the box answered — it cannot be evidence that the box is down.
+      const authFault = response.status === 401 || response.status === 402 || response.status === 403;
+      return { at, model, ok: false, ttftMs: null, ...(authFault ? { authFault: true } : {}) };
     }
     const reader = response.body.getReader();
     const first = await reader.read();
@@ -140,14 +153,21 @@ function summarize(now: number, served: string[]): EndpointModelHealth[] {
   for (const [model, probes] of byModel) {
     const last = probes[probes.length - 1];
     const okTtfts = probes.filter((p) => p.ttftMs != null).map((p) => p.ttftMs as number).sort((a, b) => a - b);
+    // Credential-rejected probes measured nothing, so they leave the uptime ratio
+    // rather than dragging it down: a dead key must not manufacture a 30% uptime
+    // figure for a box that served every real request that hour.
+    const measured = probes.filter((p) => !p.authFault);
     out.push({
       model,
       ok: last.ok,
       ttftMs: last.ttftMs,
       checkedAt: last.at,
-      uptimePct: Math.round((probes.filter((p) => p.ok).length / probes.length) * 1000) / 10,
+      uptimePct: measured.length
+        ? Math.round((measured.filter((p) => p.ok).length / measured.length) * 1000) / 10
+        : 0,
       p50TtftMs: okTtfts.length ? okTtfts[Math.floor(okTtfts.length / 2)] : null,
-      probes: probes.length,
+      probes: measured.length,
+      authFault: Boolean(last.authFault),
     });
   }
   return out.sort((a, b) => a.model.localeCompare(b.model));
@@ -158,8 +178,29 @@ function summarize(now: number, served: string[]): EndpointModelHealth[] {
  *  a blip. Crit flags ride the normal notify pipe to the phone; the stable id
  *  makes recovery send a matching [clear]. */
 export function downFlags(summary: EndpointModelHealth[]): Flag[] {
+  // A credential rejection is one fault about one key, not N faults about N models.
+  // Raise it once, as a warn, and say what to do — never as N crit "model down"
+  // pages, which is what shipped four false DOWN rows on 2026-08-28.
+  const authBlocked = summary.filter((m) => m.authFault);
+  if (authBlocked.length && authBlocked.length === summary.length) {
+    const at = authBlocked[0].checkedAt;
+    return [
+      {
+        id: 'endpoint:probe-credential',
+        severity: 'warn' as const,
+        title: 'endpoint probe credential rejected — health is UNKNOWN, not down',
+        detail:
+          `every model rejected the probe key at ${at} (401/402/403). Auth and billing ` +
+          'admission run before any model is touched, so the endpoint answered. Check that ' +
+          "the probe tenant is enrolled for prepaid billing, then re-probe. Customer traffic " +
+          'is unaffected by this flag — read realUsage, not this row, to judge the product.',
+        source: 'endpoint',
+        raisedAt: at,
+      },
+    ];
+  }
   return summary
-    .filter((m) => !m.ok)
+    .filter((m) => !m.ok && !m.authFault)
     .map((m) => ({
       id: `endpoint:down:${m.model}`,
       severity: 'crit' as const,
@@ -230,14 +271,23 @@ const collector: Collector = {
 
     const summary = summarize(now, models);
     const allOk = summary.every((m) => m.ok);
+    // `up` drives the red banner. Unknown-because-our-key-was-rejected is not down:
+    // claiming the product is down when we merely cannot authenticate is the same
+    // lie the tiyuvta collector already refuses to tell for an ABSENT token.
+    const credentialBlocked = summary.length > 0 && summary.every((m) => m.authFault);
     store.setExtra('endpoint', {
       title: 'endpoint health',
       updatedAt: iso(),
-      up: allOk,
-      error: null,
+      up: allOk || credentialBlocked,
+      error: credentialBlocked
+        ? 'probe key rejected (401/402/403) — endpoint health unknown, not down'
+        : null,
       rows: summary.map((m) => ({
         label: m.model.split('/').pop() ?? m.model,
-        value: `${m.ok ? 'up' : 'DOWN'} · ttft ${m.ttftMs ?? '—'}ms · p50 ${m.p50TtftMs ?? '—'}ms · ${m.uptimePct}% 24h`,
+        value: m.authFault
+          ? 'UNKNOWN · probe key rejected — check prepaid enrolment for the probe tenant'
+          : `${m.ok ? 'up' : 'DOWN'} · ttft ${m.ttftMs ?? '—'}ms · p50 ${m.p50TtftMs ?? '—'}ms · ${m.uptimePct}% 24h`,
+        tone: m.authFault ? ('warn' as const) : m.ok ? ('ok' as const) : ('err' as const),
       })),
       data: {
         models: summary,
@@ -245,7 +295,13 @@ const collector: Collector = {
         // raw 24h probe series for the CRM health charts (~288 points/model)
         series: history
           .filter((p) => models.includes(p.model))
-          .map((p) => ({ at: p.at, model: p.model, ok: p.ok, ttftMs: p.ttftMs })),
+          .map((p) => ({
+            at: p.at,
+            model: p.model,
+            ok: p.ok,
+            ttftMs: p.ttftMs,
+            ...(p.authFault ? { authFault: true } : {}),
+          })),
       },
     });
     store.setFlags('endpoint', downFlags(summary));
