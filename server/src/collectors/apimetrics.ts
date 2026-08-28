@@ -22,7 +22,13 @@ import type { Collector } from './registry.js';
 export interface RealUsageModel {
   model: string;
   requests24h: number;
+  /** 5xx only — faults that are OURS. */
   errorPct: number;
+  /** 429 only. On the batch-class models a shed is the CONTRACT (harvest yields to
+   *  interactive and sheds retryably), so folding it into err% painted the capture rows
+   *  50% red on 2026-08-28 over two designed-looking rejections. Shown separately so a
+   *  real shed storm is still visible without reading as an outage. */
+  shedPct: number;
   /** mean time-to-headers of successful requests — includes streaming TTFT */
   avgMs: number | null;
 }
@@ -33,6 +39,7 @@ export interface RealUsageHour {
   model: string;
   requests: number;
   errors: number;
+  sheds: number;
   /** mean time-to-headers of 2xx requests that hour */
   avgMs: number | null;
 }
@@ -43,7 +50,42 @@ export interface RealUsageDaily {
   model: string;
   requests: number;
   errors: number;
+  sheds: number;
   avgMs: number | null;
+}
+
+type Acc = { requests: number; errors: number; sheds: number; okMsSum: number; okN: number };
+const newAcc = (): Acc => ({ requests: 0, errors: 0, sheds: 0, okMsSum: 0, okN: 0 });
+/** One classification for all three cuts, so a grain can never disagree with another.
+ *  errors = 5xx (ours); sheds = 429 (retryable, and the batch-class contract); other 4xx
+ *  are the caller's own mistakes and would drown both signals. */
+function accumulate(entry: Acc, status: number, n: number, avgMs: unknown): void {
+  entry.requests += n;
+  if (status >= 500) entry.errors += n;
+  else if (status === 429) entry.sheds += n;
+  else if (status >= 200 && status < 300 && avgMs != null) {
+    entry.okMsSum += Number(avgMs) * n;
+    entry.okN += n;
+  }
+}
+
+/** The live roster, so pre-2026-08-28 junk rows (the router used to index the CLIENT's
+ *  model string verbatim: nope/nope, does-not-exist, test) fold into the same `unknown`
+ *  bucket the router now writes, instead of rendering as models we serve. Analytics
+ *  Engine keeps 3 months of history, so the fix at the writer alone leaves stale junk
+ *  in every read until November. On fetch failure nothing folds — full data over tidy. */
+async function servedRoster(): Promise<Set<string> | null> {
+  try {
+    const response = await fetch('https://api.tiyuvta.ai/v1/models', {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+    const doc = (await response.json()) as { data?: Array<{ id?: string }> };
+    const ids = (doc.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === 'string');
+    return ids.length > 0 ? new Set(ids) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function cfCreds(): Promise<{ token: string; account: string } | null> {
@@ -111,20 +153,14 @@ const collector: Collector = {
       return;
     }
 
-    const byModel = new Map<string, { requests: number; errors: number; okMsSum: number; okN: number }>();
+    const roster = await servedRoster();
+    const fold = (model: string): string => (roster && !roster.has(model) ? 'unknown' : model);
+    const byModel = new Map<string, Acc>();
     for (const row of rows) {
-      const entry = byModel.get(row.model) ?? { requests: 0, errors: 0, okMsSum: 0, okN: 0 };
-      const n = Number(row.n) || 0;
-      const status = Number(row.status) || 0;
-      entry.requests += n;
-      // customer-hurting outcomes: server errors and throttles; 4xx key/input
-      // mistakes are the customer's own and would drown the signal
-      if (status >= 500 || status === 429) entry.errors += n;
-      else if (status >= 200 && status < 300 && row.avgMs != null) {
-        entry.okMsSum += Number(row.avgMs) * n;
-        entry.okN += n;
-      }
-      byModel.set(row.model, entry);
+      const model = fold(row.model);
+      const entry = byModel.get(model) ?? newAcc();
+      accumulate(entry, Number(row.status) || 0, Number(row.n) || 0, row.avgMs);
+      byModel.set(model, entry);
     }
     // hourly cut for the CRM health charts — same dataset, one more round-trip
     const hourlySql = `
@@ -146,20 +182,13 @@ const collector: Collector = {
       });
       if (response.ok) {
         const raw = ((await response.json()) as { data?: Array<SqlRow & { hour?: string }> }).data ?? [];
-        const byKey = new Map<string, { requests: number; errors: number; okMsSum: number; okN: number }>();
+        const byKey = new Map<string, Acc>();
         for (const row of raw) {
           const hour = String(row.hour ?? '').replace(' ', 'T');
           if (!hour) continue;
-          const key = `${hour}|${row.model}`;
-          const entry = byKey.get(key) ?? { requests: 0, errors: 0, okMsSum: 0, okN: 0 };
-          const n = Number(row.n) || 0;
-          const status = Number(row.status) || 0;
-          entry.requests += n;
-          if (status >= 500 || status === 429) entry.errors += n;
-          else if (status >= 200 && status < 300 && row.avgMs != null) {
-            entry.okMsSum += Number(row.avgMs) * n;
-            entry.okN += n;
-          }
+          const key = `${hour}|${fold(row.model)}`;
+          const entry = byKey.get(key) ?? newAcc();
+          accumulate(entry, Number(row.status) || 0, Number(row.n) || 0, row.avgMs);
           byKey.set(key, entry);
         }
         hourly = [...byKey.entries()]
@@ -170,6 +199,7 @@ const collector: Collector = {
               model,
               requests: Math.round(e.requests),
               errors: Math.round(e.errors),
+              sheds: Math.round(e.sheds),
               avgMs: e.okN > 0 ? Math.round(e.okMsSum / e.okN) : null,
             };
           })
@@ -201,20 +231,13 @@ const collector: Collector = {
       });
       if (response.ok) {
         const raw = ((await response.json()) as { data?: Array<SqlRow & { day?: string }> }).data ?? [];
-        const byKey = new Map<string, { requests: number; errors: number; okMsSum: number; okN: number }>();
+        const byKey = new Map<string, Acc>();
         for (const row of raw) {
           const day = String(row.day ?? '').slice(0, 10);
           if (!day) continue;
-          const key = `${day}|${row.model}`;
-          const entry = byKey.get(key) ?? { requests: 0, errors: 0, okMsSum: 0, okN: 0 };
-          const n = Number(row.n) || 0;
-          const status = Number(row.status) || 0;
-          entry.requests += n;
-          if (status >= 500 || status === 429) entry.errors += n;
-          else if (status >= 200 && status < 300 && row.avgMs != null) {
-            entry.okMsSum += Number(row.avgMs) * n;
-            entry.okN += n;
-          }
+          const key = `${day}|${fold(row.model)}`;
+          const entry = byKey.get(key) ?? newAcc();
+          accumulate(entry, Number(row.status) || 0, Number(row.n) || 0, row.avgMs);
           byKey.set(key, entry);
         }
         daily = [...byKey.entries()]
@@ -225,6 +248,7 @@ const collector: Collector = {
               model,
               requests: Math.round(e.requests),
               errors: Math.round(e.errors),
+              sheds: Math.round(e.sheds),
               avgMs: e.okN > 0 ? Math.round(e.okMsSum / e.okN) : null,
             };
           })
@@ -239,6 +263,7 @@ const collector: Collector = {
         model,
         requests24h: Math.round(e.requests),
         errorPct: e.requests > 0 ? Math.round((e.errors / e.requests) * 1000) / 10 : 0,
+        shedPct: e.requests > 0 ? Math.round((e.sheds / e.requests) * 1000) / 10 : 0,
         avgMs: e.okN > 0 ? Math.round(e.okMsSum / e.okN) : null,
       }))
       .sort((a, b) => b.requests24h - a.requests24h);
@@ -250,7 +275,7 @@ const collector: Collector = {
       error: null,
       rows: models.map((m) => ({
         label: m.model.split('/').pop() ?? m.model,
-        value: `${m.requests24h} req 24h · ${m.errorPct}% err · avg ${m.avgMs ?? '—'}ms to headers`,
+        value: `${m.requests24h} req 24h · ${m.errorPct}% err · ${m.shedPct}% shed · avg ${m.avgMs ?? '—'}ms to headers`,
       })),
       data: { models, hourly, daily },
     });

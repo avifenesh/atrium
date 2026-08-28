@@ -860,11 +860,11 @@ export interface CrmOverview {
     bySource: Array<{ source: string; drafted: number; contacted: number; replied: number }>;
   };
   /** what real customers experienced through the router, last 24h (probes excluded) */
-  realUsage: Array<{ model: string; requests24h: number; errorPct: number; avgMs: number | null }> | null;
+  realUsage: Array<{ model: string; requests24h: number; errorPct: number; shedPct: number; avgMs: number | null }> | null;
   /** hourly per-model real traffic over 24h (requests, errors, mean ms to headers) */
-  realUsageHourly: Array<{ hour: string; model: string; requests: number; errors: number; avgMs: number | null }> | null;
+  realUsageHourly: Array<{ hour: string; model: string; requests: number; errors: number; sheds: number; avgMs: number | null }> | null;
   /** daily per-model real traffic over 7d — the models-tab request counts */
-  realUsageDaily: Array<{ day: string; model: string; requests: number; errors: number; avgMs: number | null }> | null;
+  realUsageDaily: Array<{ day: string; model: string; requests: number; errors: number; sheds: number; avgMs: number | null }> | null;
   /** OpenRouter provider landscape per served model — the outreach-timing watch */
   competitors: Array<{
     model: string;

@@ -470,7 +470,8 @@ export function HealthTab({ data }: { data: CrmOverview }) {
       <div className="flex flex-wrap items-center gap-1.5">
         {(realUsage ?? []).map((m) => (
           <Chip key={m.model} tone={m.errorPct > 1 ? 'border-coral/50 text-coral' : 'border-white/10 text-mist-dim'}>
-            real · {m.model.split('/').pop()}: {m.requests24h} req 24h · {m.errorPct}% err · {m.avgMs ?? '—'}ms
+            real · {m.model.split('/').pop()}: {m.requests24h} req 24h · {m.errorPct}% err
+            {m.shedPct > 0 ? ` · ${m.shedPct}% shed` : ''} · {m.avgMs ?? '—'}ms
           </Chip>
         ))}
       </div>

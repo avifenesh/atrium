@@ -72,7 +72,7 @@ export function ModelsTab({ data }: { data: CrmOverview }) {
               <th className="px-3 py-2 text-right font-normal">req 24h</th>
               <th className="px-3 py-2 text-right font-normal">req 7d</th>
               <th className="px-3 py-2 text-right font-normal">share 7d</th>
-              <th className="px-3 py-2 text-right font-normal">err 24h</th>
+              <th className="px-3 py-2 text-right font-normal">err 24h</th><th className="px-3 py-2 text-right font-normal">shed 24h</th>
               <th className="px-3 py-2 text-right font-normal">latency</th>
               <th className="px-3 py-2 text-right font-normal">probe</th>
             </tr>
@@ -95,6 +95,11 @@ export function ModelsTab({ data }: { data: CrmOverview }) {
                     <td className="px-3 py-2 text-right text-mist-faint">{share.toFixed(0)}%</td>
                     <td className={`px-3 py-2 text-right ${u && u.errorPct > 1 ? 'text-coral' : 'text-mist-faint'}`}>
                       {u ? `${u.errorPct}%` : '—'}
+                    </td>
+                    {/* A shed is the batch-class contract (harvest yields, retryable 429) —
+                        amber worth a look, never the coral of a fault we own. */}
+                    <td className={`px-3 py-2 text-right ${u && u.shedPct > 0 ? 'text-amber' : 'text-mist-faint'}`}>
+                      {u ? `${u.shedPct}%` : '—'}
                     </td>
                     <td className="px-3 py-2 text-right text-mist-dim">{u?.avgMs != null ? `${u.avgMs}ms` : '—'}</td>
                     <td className={`px-3 py-2 text-right ${p ? (p.ok ? 'text-jade' : 'text-coral') : 'text-mist-faint'}`}>
