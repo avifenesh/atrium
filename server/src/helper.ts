@@ -801,12 +801,19 @@ export const helper = {
   async dismiss(idValue: unknown, input: unknown): Promise<HelperOffer> {
     const offer = findOffer(idValue);
     const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    // A reason is OPTIONAL (owner, 2026-08-28): dismissing must never cost a sentence.
+    // With a reason the scout learns (feedback row + optional working-agreement entry);
+    // without one the offer is simply declined and nothing is inferred from silence.
     const reason = cleanText(raw.reason, 1_000);
-    if (!reason) throw new Error('tell the scout why this offer is not useful');
     const remember = raw.remember !== false;
     const now = iso();
-    const next: HelperOffer = { ...offer, status: 'declined', feedback: reason, snoozedUntil: null, updatedAt: now };
+    const next: HelperOffer = { ...offer, status: 'declined', feedback: reason || null, snoozedUntil: null, updatedAt: now };
     offers = offers.map((candidate) => candidate.id === offer.id ? next : candidate);
+    if (!reason) {
+      await persist();
+      publish();
+      return next;
+    }
     feedback = [{
       id: randomUUID(),
       offerId: offer.id,

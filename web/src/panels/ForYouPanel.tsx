@@ -341,6 +341,21 @@ function OfferCard({
     }
   };
 
+  // Plain dismiss: no form, no reason, nothing learned. "Not for me" (below) stays the
+  // teaching path for when the owner wants the scout to stop offering a whole class.
+  const quickDismiss = async () => {
+    if (busy) return;
+    onBusy(`dismiss:${offer.id}`);
+    try {
+      await dismissHelperOffer(offer.id);
+      onNotice('Offer dismissed.');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : String(error), true);
+    } finally {
+      onBusy(null);
+    }
+  };
+
   const snooze = async () => {
     if (busy) return;
     onBusy(`snooze:${offer.id}`);
@@ -390,6 +405,14 @@ function OfferCard({
         <OfferEvidence offer={offer} />
 
         <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-white/[0.055] pt-4">
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => void quickDismiss()}
+            className="min-h-11 cursor-pointer rounded-md px-3 py-2 font-mono text-[11px] text-mist-faint transition-colors hover:bg-white/5 hover:text-mist disabled:cursor-default disabled:opacity-50"
+          >
+            Dismiss
+          </button>
           <button
             type="button"
             disabled={busy !== null}

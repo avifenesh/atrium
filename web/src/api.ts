@@ -124,8 +124,13 @@ export function scanHelper(): Promise<{ ok: boolean; scheduled: boolean }> {
   return helperRequest('/api/helper/scan');
 }
 
-export function dismissHelperOffer(id: string, reason: string, remember: boolean): Promise<HelperOffer> {
-  return helperRequest(`/api/helper/offers/${encodeURIComponent(id)}/dismiss`, 'POST', { reason, remember });
+export function dismissHelperOffer(id: string, reason?: string, remember?: boolean): Promise<HelperOffer> {
+  // No reason = plain dismiss: the server declines the offer and learns nothing from it.
+  return helperRequest(
+    `/api/helper/offers/${encodeURIComponent(id)}/dismiss`,
+    'POST',
+    reason ? { reason, remember: remember !== false } : {},
+  );
 }
 
 export function snoozeHelperOffer(id: string, durationMs = 24 * 60 * 60_000): Promise<HelperOffer> {
