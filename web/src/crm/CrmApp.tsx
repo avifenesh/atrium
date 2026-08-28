@@ -562,6 +562,11 @@ export function CrmApp() {
         <Board
           items={stage === 'due' ? visible : inKind.filter((i) => !needle || matches(i, needle))}
           onOpen={setOpenId}
+          onMove={(id, nextStage) => {
+            void post('/api/crm/entry', { id, stage: nextStage })
+              .then(refresh)
+              .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+          }}
         />
       </div>
 
