@@ -36,17 +36,27 @@ export const STAGE_LABEL: Record<CrmStage, string> = {
 /** Sources where the action is a public comment on a thread, not a mail to a
  *  person. The stage machinery is identical; only the words change — "contacted"
  *  on an X thread misdescribes what happened, which is that we commented. */
-const COMMENT_SOURCES = new Set(['x', 'hn', 'reddit', 'hf-hub', 'gh-issue', 'github-pr', 'gh-code', 'youtube', 'blog']);
+const COMMENT_SOURCES = new Set(['x', 'hn', 'reddit', 'hf-hub', 'gh-issue', 'gh-code', 'youtube', 'blog']);
 
 const COMMENT_LABEL: Partial<Record<CrmStage, string>> = {
   contacted: 'commented',
   replied: 'comment back',
 };
 
+/** Sources where the action is opening a pull request: the touch is the PR
+ *  going up, the win is it merging. */
+const PR_SOURCES = new Set(['github-pr', 'gh-pr']);
+
+const PR_LABEL: Partial<Record<CrmStage, string>> = {
+  contacted: 'pr open',
+  replied: 'pr merged',
+};
+
 /** The stage word that fits what actually happens on this item's channel. */
 export function stageLabelFor(item: Pick<CrmItem, 'kind' | 'source'>, stage: CrmStage): string {
-  if (item.kind === 'lead' && item.source && COMMENT_SOURCES.has(item.source)) {
-    return COMMENT_LABEL[stage] ?? STAGE_LABEL[stage];
+  if (item.kind === 'lead' && item.source) {
+    if (PR_SOURCES.has(item.source)) return PR_LABEL[stage] ?? STAGE_LABEL[stage];
+    if (COMMENT_SOURCES.has(item.source)) return COMMENT_LABEL[stage] ?? STAGE_LABEL[stage];
   }
   return STAGE_LABEL[stage];
 }
