@@ -8,7 +8,8 @@
 //   blob1  path
 //   blob2  model ('' when the request had none)
 //   blob3  HTTP status
-//   blob4  serving box — 'de' / 'nj' / a pinned origin's hostname
+//   blob4  serving origin — 'primary' (rows before 2026-08-30 say 'de', its
+//          one-time box nickname) / 'nj' / a pinned origin's hostname
 //          (e.g. ornith-api.tiyuvta.ai). '' on every row written before the
 //          column landed (2026-08-23 ~16:45Z); those are counted apart as
 //          pre-blob4 rather than attributed to any box.
