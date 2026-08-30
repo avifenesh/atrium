@@ -516,6 +516,32 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // do-prompt injects live product/company facts at click time (council pattern)
+    if (method === 'GET' && path === '/api/crm/do-prompt') {
+      try {
+        return json(res, 200, await crm.doPrompt(url.searchParams.get('id')));
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/crm/directions/refresh') {
+      try {
+        return json(res, 200, { ok: true, count: await crm.refreshDirections() });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (method === 'POST' && path === '/api/crm/do') {
+      const body = await readBody(req).catch(() => ({}));
+      try {
+        return json(res, 200, { ok: true, ...await crm.launchDo(body?.id, body) });
+      } catch (err) {
+        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     // signals — the "outside world noticed my work" section
     if (method === 'POST' && path === '/api/signals/reviewed') {
       return json(res, 200, { ok: true, lastReviewedAt: await signals.markReviewed() });

@@ -146,6 +146,7 @@ test('rejects garbage: unknown stage, bad date, empty note', async () => {
     await assert.rejects(() => crm.update('x', { followUpAt: 'tomorrowish' }), /ISO date/);
     await assert.rejects(() => crm.addNote('x', '   '), /note text/);
     await assert.rejects(() => crm.addContact('', 'email', 'hi'), /missing id/);
+    await assert.rejects(() => crm.update('x', { action: { brief: 'no label' } }), /action.label/);
   });
 });
 
@@ -199,7 +200,9 @@ test('directions: files become pipeline rows with detail, and overlay state stic
     assert.equal(item?.source, 'seller');
     assert.equal(item?.stage, 'new');
     assert.match(item?.detail ?? '', /three servers/);
-    assert.match(item?.detail ?? '', /→ join/);
+    assert.equal(item?.detail?.includes('join r/LocalLLaMA'), false, 'firstAction is the stuck do-link, not buried in detail');
+    assert.equal(item?.action?.label.startsWith('do join r/LocalLLaMA'), true);
+    assert.equal(item?.action?.href, 'https://example.com/discord');
     assert.equal(pipeline.items.some((i) => i.title === 'no slug'), false);
 
     // owner overlay works on directions like any other id
@@ -286,4 +289,96 @@ test('leads and directions never derive an account-only stage', async () => {
     assert.ok(accountStages.has('active'), 'an account should reach active');
     assert.ok(accountStages.has('paying'), 'an account should reach paying');
   });
+});
+
+test('stuck action: overlay wins over a direction firstAction; leads stay empty until researched', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'atrium-crm-action-'));
+  crm._resetForTest(join(dir, 'crm.json'), dir);
+  try {
+    seedStore([signal('s-lead', 'prospect-thread'), signal('s-draft', 'prospect-thread')], []);
+    await writeFile(join(dir, 'discord-llm-servers.json'), JSON.stringify({
+      slug: 'discord-llm-servers',
+      title: 'Answer capacity questions in LLM Discord servers',
+      why: 'three servers asked',
+      firstAction: 'join the server and watch',
+      segment: 'hobbyist-to-paid',
+      urls: ['https://example.com/discord'],
+      createdAt: '2026-08-20T00:00:00Z',
+    }));
+    await crm._refreshDirectionsForTest();
+
+    const lead = crm.pipeline().items.find((i) => i.id === 's-lead');
+    assert.equal(lead?.action, null);
+
+    await crm.addNote('s-draft', 'outreach draft (seller):\nYou need Qwen3.8 27B. I serve that.');
+    const drafted = crm.pipeline().items.find((i) => i.id === 's-draft');
+    assert.equal(drafted?.action?.label, 'do send the outreach draft');
+    assert.match(drafted?.action?.brief ?? '', /You need Qwen3.8 27B/);
+    await crm.update('s-draft', {
+      action: {
+        label: 'do draft a reply on X — leftover ingest',
+        brief: 'Qualify against companies/heavy-users.',
+        href: 'https://example.com/s-draft',
+      },
+    });
+    assert.equal(crm.pipeline().items.find((i) => i.id === 's-draft')?.action?.label, 'do send the outreach draft');
+
+    await crm.update('s-lead', {
+      action: {
+        label: 'do qualify and draft a reply — t-s-lead',
+        brief: 'Read the thread. Qualify against companies/heavy-users and always-on agents.',
+        href: 'https://example.com/s-lead',
+      },
+    });
+    assert.equal(crm.pipeline().items.find((i) => i.id === 's-lead')?.action, null);
+
+    await crm.update('direction:discord-llm-servers', {
+      action: { label: 'do draft a mail to the server ops', brief: 'Open on their hosting thread.', href: 'https://example.com/mail' },
+    });
+    const direction = crm.pipeline().items.find((i) => i.id === 'direction:discord-llm-servers');
+    assert.equal(direction?.action?.label, 'do draft a mail to the server ops');
+    assert.equal(direction?.action?.href, 'https://example.com/mail');
+
+    await crm.update('s-lead', { action: { label: 'do reply on the HN thread', href: 'https://example.com/s-lead' } });
+    const prompted = await crm.doPrompt('s-lead', {
+      generatedAt: '2026-08-29T00:00:00Z',
+      stateBrief: 'Accounts: 2 with purchase',
+      stateBriefPath: 'test/state-brief.md',
+      productMarketing: 'Prepaid LLM inference API. Never offer trial credit.',
+      productMarketingPath: 'test/product-marketing.md',
+    });
+    assert.match(prompted.prompt, /VERIFIED FACTS you must weigh/);
+    assert.match(prompted.prompt, /Accounts: 2 with purchase/);
+    assert.match(prompted.prompt, /do reply on the HN thread/);
+    assert.match(prompted.prompt, /s-lead/);
+    assert.match(prompted.prompt, /Never offer trial credit/);
+
+    await assert.rejects(() => crm.doPrompt('s-missing'), /unknown item/);
+    await crm.update('s-lead', { action: null });
+    await assert.rejects(() => crm.doPrompt('s-lead'), /no action/);
+
+    // An owner label that happens to open like an ingest template must stick: the
+    // placeholder filter reads the template brief, not the label, or a saved action
+    // disappears from the card with a 200 and do-prompt then says 'item has no action'.
+    await crm.update('s-lead', {
+      action: {
+        label: 'do draft a reply on X about their OpenRouter bill',
+        brief: 'Open on the $40k line they quoted. Destination: their thread. Draft only.',
+        href: 'https://example.com/s-lead',
+      },
+    });
+    const kept = crm.pipeline().items.find((i) => i.id === 's-lead');
+    assert.equal(kept?.action?.label, 'do draft a reply on X about their OpenRouter bill');
+    assert.match((await crm.doPrompt('s-lead')).prompt, /their OpenRouter bill/);
+
+    // The outreach-draft action is synthesized on every assemble(), so its stamp has
+    // to come from the source note. An iso() default churned updatedAt once a second
+    // and reset the owner's half-typed brief in the editor at every 60s poll.
+    const draftStamp = crm.pipeline().items.find((i) => i.id === 's-draft')?.action?.updatedAt;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(crm.pipeline().items.find((i) => i.id === 's-draft')?.action?.updatedAt, draftStamp);
+
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
+import { DoLink, isPlaceholderAction } from './Action';
 import { Board } from './Board';
 import { ModelsTab } from './Models';
 import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
@@ -82,10 +83,19 @@ function StageBadge({ item, stage, overridden }: { item: Pick<CrmItem, 'kind' | 
 
 function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="block w-full rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3 text-left transition-colors hover:border-white/20"
+      onKeyDown={(e) => {
+        // Only the card itself: Enter on the nested Do button must launch, not open.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="block w-full cursor-pointer rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3 text-left transition-colors hover:border-white/20"
     >
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm text-mist">{item.title}</span>
@@ -110,11 +120,104 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
           )}
         </span>
       </div>
-      {/* directions carry their pitch — a title alone is not enough to judge one */}
+      <DoLink item={item} compact />
       {item.kind === 'direction' && item.detail && (
         <div className="mt-1.5 line-clamp-2 whitespace-pre-line text-xs text-mist-dim">{item.detail}</div>
       )}
-    </button>
+    </div>
+  );
+}
+
+function ActionEditor({ item, busy, run }: { item: CrmItem; busy: boolean; run: (work: () => Promise<unknown>) => Promise<void> }) {
+  const [label, setLabel] = useState(item.action?.label ?? '');
+  const [brief, setBrief] = useState(item.action?.brief ?? '');
+  const [href, setHref] = useState(item.action?.href ?? item.url ?? '');
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+
+  useEffect(() => {
+    setLabel(item.action?.label ?? '');
+    setBrief(item.action?.brief ?? '');
+    setHref(item.action?.href ?? item.url ?? '');
+  }, [item.id, item.url, item.action?.updatedAt, item.action?.label, item.action?.brief, item.action?.href]);
+
+  return (
+    <div className="mt-5 rounded-xl border border-amber/25 bg-amber/[0.04] p-4 sm:p-5">
+      <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-amber">do</div>
+      <div className="space-y-3">
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="do draft a mail to…"
+          className="w-full rounded-lg border border-white/10 bg-ink px-3 py-2.5 font-mono text-sm text-mist placeholder:text-mist-faint"
+        />
+        <textarea
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+          placeholder="artifact, destination, opening sentence"
+          rows={12}
+          className="min-h-48 w-full resize-y rounded-lg border border-white/10 bg-ink px-3 py-3 text-sm leading-relaxed text-mist placeholder:text-mist-faint"
+        />
+        <input
+          value={href}
+          onChange={(e) => setHref(e.target.value)}
+          placeholder={item.url ?? 'https://…'}
+          className="w-full rounded-lg border border-white/10 bg-ink px-3 py-2.5 font-mono text-sm text-mist placeholder:text-mist-faint"
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={busy || !label.trim()}
+            onClick={() =>
+              run(() =>
+                post('/api/crm/entry', {
+                  id: item.id,
+                  action: { label, brief: brief.trim() || null, href: href.trim() || null },
+                }),
+              )
+            }
+            className="cursor-pointer rounded-lg border border-white/15 px-3 py-2 font-mono text-[12px] text-mist disabled:opacity-40"
+          >
+            save
+          </button>
+          {item.action && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => post('/api/crm/entry', { id: item.id, action: null }))}
+              className="cursor-pointer font-mono text-[12px] text-mist-faint underline"
+            >
+              clear
+            </button>
+          )}
+          {item.action && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setCopyFailed(false);
+                void api<{ prompt: string }>(`/api/crm/do-prompt?id=${encodeURIComponent(item.id)}`)
+                  .then((body) => {
+                    // Not a secure context (the page is also served over plain http on
+                    // the tailnet) means no clipboard API at all.
+                    if (!navigator.clipboard) throw new Error('no clipboard here');
+                    return navigator.clipboard.writeText(body.prompt);
+                  })
+                  .then(() => {
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 2000);
+                  })
+                  .catch(() => setCopyFailed(true));
+              }}
+              className="cursor-pointer font-mono text-[12px] text-mist-faint underline"
+            >
+              {copyFailed ? 'copy failed' : copied ? 'prompt copied' : 'copy prompt'}
+            </button>
+          )}
+        </div>
+        <DoLink item={item} />
+      </div>
+    </div>
   );
 }
 
@@ -144,7 +247,7 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
   return (
     <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/60 sm:items-center" onClick={onClose}>
       <div
-        className="max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-white/10 bg-ink-2 p-4 sm:rounded-2xl"
+        className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-t-2xl border border-white/10 bg-ink-2 p-5 sm:rounded-2xl sm:p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-2">
@@ -168,10 +271,12 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
         </div>
 
         {item.detail && (
-          <div className="mt-3 whitespace-pre-line rounded-lg border border-white/8 px-3 py-2 text-xs text-mist-dim">
+          <div className="mt-3 whitespace-pre-line rounded-lg border border-white/8 px-3 py-2 text-sm text-mist-dim">
             {item.detail}
           </div>
         )}
+
+        <ActionEditor item={item} busy={busy} run={run} />
 
         {/* stage — one tap per column; tapping the derived stage clears the override */}
         <div className="mt-4">
@@ -328,7 +433,9 @@ const readTab = (): Tab => {
 };
 
 const matches = (i: CrmItem, needle: string) =>
-  `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''}`.toLowerCase().includes(needle);
+  `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''} ${i.action?.label ?? ''} ${i.action?.brief ?? ''}`
+    .toLowerCase()
+    .includes(needle);
 
 // A skipped or lost row is a decision already made. Showing it forever means the list grows
 // without the work growing, and it buried the rows that still need a reply.
@@ -349,6 +456,7 @@ export function CrmApp() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const [onlyQualified, setOnlyQualified] = useState(false);
+  const [needsAction, setNeedsAction] = useState(false);
   const [tab, setTab] = useState<Tab>(readTab);
 
   useEffect(() => {
@@ -408,25 +516,38 @@ export function CrmApp() {
   }, [inKind]);
 
   const needle = query.trim().toLowerCase();
-  const visible = useMemo(() => {
-    const rows = inKind.filter((i) => {
-      if (stage === 'due' && !i.followUpDue) return false;
-      if (stage !== 'any' && stage !== 'due' && i.stage !== stage) return false;
+  // The chips (search, qualified, needs research) apply to BOTH layouts. The kanban
+  // board keeps every stage — that is its axis — so it takes this list, not `visible`:
+  // filtering the phone list only made the desktop chips look active and do nothing.
+  const chipFiltered = useMemo(
+    () => inKind.filter((i) => {
       if (onlyQualified && i.relevance && !i.relevance.qualified) return false;
+      if (needsAction && !isPlaceholderAction(i)) return false;
       return !needle || matches(i, needle);
+    }),
+    [inKind, onlyQualified, needsAction, needle],
+  );
+  const visible = useMemo(() => {
+    const rows = chipFiltered.filter((i) => {
+      if (stage === 'due') return i.followUpDue;
+      return stage === 'any' || i.stage === stage;
     });
     // Relevance first, then recency. An unranked list of 150 rows makes the owner do the triage the
     // collector should already have done, and the highest-value row was sorting arbitrarily.
     return [...rows].sort((a, b) => {
+      const aDummy = isPlaceholderAction(a) ? 1 : 0;
+      const bDummy = isPlaceholderAction(b) ? 1 : 0;
+      if (aDummy !== bDummy) return aDummy - bDummy;
       const byScore = (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0);
       if (byScore !== 0) return byScore;
       return (b.activityAt ?? '').localeCompare(a.activityAt ?? '');
     });
-  }, [inKind, stage, onlyQualified, needle]);
+  }, [chipFiltered, stage]);
   const qualifiedCount = useMemo(
     () => inKind.filter((i) => i.relevance?.qualified ?? true).length,
     [inKind],
   );
+  const needsActionCount = useMemo(() => inKind.filter((i) => isPlaceholderAction(i)).length, [inKind]);
   // Resolve against allItems, not the pipeline-narrowed list: the users screen opens accounts,
   // which `items` deliberately excludes.
   const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
@@ -520,6 +641,13 @@ export function CrmApp() {
         >
           ◆ qualified {qualifiedCount}
         </button>
+        <button
+          type="button"
+          onClick={() => setNeedsAction(!needsAction)}
+          className={chipClass(needsAction, needsAction ? '' : 'text-amber')}
+        >
+          needs research {needsActionCount}
+        </button>
         {closedCount > 0 && (
           <button
             type="button"
@@ -537,9 +665,6 @@ export function CrmApp() {
         />
       </div>
 
-      {/* stage row — the funnel cut for the phone list; the board already
-          shows every stage as a column, so this row hides on desktop. Uses the pipeline stage set,
-          not every CrmStage: the account-only stages can never hold a lead. */}
       <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
         <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
           any stage
@@ -556,11 +681,9 @@ export function CrmApp() {
         ))}
       </div>
 
-      {/* desktop: kanban board over the kind/search-filtered items (stage
-          filter does not apply — every stage is its own column) */}
       <div className="hidden lg:block">
         <Board
-          items={stage === 'due' ? visible : inKind.filter((i) => !needle || matches(i, needle))}
+          items={stage === 'due' ? visible : chipFiltered}
           onOpen={setOpenId}
           onMove={(id, nextStage) => {
             void post('/api/crm/entry', { id, stage: nextStage })
@@ -570,7 +693,6 @@ export function CrmApp() {
         />
       </div>
 
-      {/* phone: flat list, due-first sort from the server */}
       <div className="space-y-1.5 lg:hidden">
         {visible.map((item) => (
           <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />

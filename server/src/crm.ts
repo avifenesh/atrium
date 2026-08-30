@@ -2,9 +2,10 @@
 //
 // The dashboard could SHOW leads (signals) and accounts (tiyuvta) but nothing
 // remembered what the owner did about them: no stage, no notes, no "ping them
-// Thursday". This module adds exactly that memory and nothing else — the live
-// facts (requests, spend, thread titles) keep coming from their collectors, so
-// the CRM file never goes stale on data it doesn't own.
+// Thursday", no stuck next move. This module adds exactly that memory and
+// nothing else — the live facts (requests, spend, thread titles) keep coming
+// from their collectors, so the CRM file never goes stale on data it doesn't
+// own. The do-link's product facts are injected at click (crm-do.ts), not stored.
 //
 //   ~/.config/atrium/crm.json   { entries: { <id>: CrmEntry } }
 //
@@ -23,6 +24,7 @@ import { store } from './state.js';
 import { scoreLead } from './lead-relevance.js';
 import { iso, readJson } from './util.js';
 import type {
+  CrmAction,
   CrmContact,
   CrmDirection,
   CrmEntry,
@@ -31,8 +33,10 @@ import type {
   CrmPipeline,
   CrmStage,
   Flag,
+  HelperExecutor,
   SignalItem,
 } from '../../shared/types.js';
+import { actionFromFirstAction, actionFromOutreachNotes, buildDoPrompt, isPlaceholderAction, loadContextPack, parseAction, writeDoLaunch, type ContextPack } from './crm-do.js';
 
 /** Runtime twin of the CrmStage union (shared/types.ts is types-only — see the
  *  note there). The two satisfies-checks make drift a compile error both ways. */
@@ -90,16 +94,19 @@ function isStage(value: unknown): value is CrmStage {
 }
 
 function entryFor(id: string): CrmEntry {
-  return (
-    persisted.entries[id] ?? {
-      id,
-      stage: null,
-      notes: [],
-      contacts: [],
-      followUpAt: null,
-      updatedAt: iso(),
-    }
-  );
+  const existing = persisted.entries[id];
+  if (existing) {
+    return { ...existing, action: parseAction(existing.action) };
+  }
+  return {
+    id,
+    stage: null,
+    notes: [],
+    contacts: [],
+    followUpAt: null,
+    action: null,
+    updatedAt: iso(),
+  };
 }
 
 function cleanText(value: unknown, field: string): string {
@@ -183,11 +190,15 @@ function accountsFromStore(): DashboardAccount[] {
   return (dashboard?.top ?? []).filter((account) => account.tenantId && !account.internal);
 }
 
+function researchedAction(action: CrmAction | null): CrmAction | null {
+  return isPlaceholderAction(action) ? null : action;
+}
+
 function toItem(
   id: string,
   kind: CrmItem['kind'],
   derivedStage: CrmStage,
-  base: Pick<CrmItem, 'title' | 'subtitle' | 'source' | 'detail' | 'url' | 'metrics' | 'activityAt'>,
+  base: Pick<CrmItem, 'title' | 'subtitle' | 'source' | 'detail' | 'url' | 'metrics' | 'activityAt' | 'action'>,
   now: string,
 ): CrmItem {
   const entry = persisted.entries[id];
@@ -208,6 +219,9 @@ function toItem(
     followUpDue: followUpAt != null && followUpAt <= now,
     notes: entry?.notes ?? [],
     contacts: entry?.contacts ?? [],
+    action: researchedAction(parseAction(entry?.action))
+      ?? researchedAction(base.action)
+      ?? actionFromOutreachNotes(entry?.notes ?? [], base.url),
   };
 }
 
@@ -224,12 +238,11 @@ function assemble(): CrmPipeline {
         title: direction.title,
         subtitle: direction.segment,
         source: 'seller',
-        detail: [direction.why, direction.firstAction && `→ ${direction.firstAction}`]
-          .filter(Boolean)
-          .join('\n') || null,
+        detail: direction.why || null,
         url: direction.urls[0] ?? null,
         metrics: null,
         activityAt: direction.createdAt,
+        action: actionFromFirstAction(direction.firstAction, direction.urls[0] ?? null, direction.createdAt),
       }, now),
     );
   }
@@ -258,6 +271,7 @@ function assemble(): CrmPipeline {
         url: signal.url,
         metrics: null,
         activityAt: signal.occurredAt ?? signal.firstSeenAt,
+        action: null,
       }, now),
     );
   }
@@ -295,6 +309,7 @@ function assemble(): CrmPipeline {
           signupRef: account.signupRef ?? null,
         },
         activityAt: typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null,
+        action: null,
       }, now),
     );
   }
@@ -321,6 +336,8 @@ function assemble(): CrmPipeline {
         url: statusId ? `https://x.com/i/web/status/${statusId}` : null,
         metrics: null,
         activityAt: entry.updatedAt,
+        action: researchedAction(parseAction(entry.action))
+          ?? actionFromOutreachNotes(entry.notes, statusId ? `https://x.com/i/web/status/${statusId}` : null),
       }, now),
     );
   }
@@ -428,8 +445,8 @@ export const crm = {
     return assemble();
   },
 
-  /** Set or clear the manual stage and/or the follow-up date. */
-  async update(id: unknown, patch: { stage?: unknown; followUpAt?: unknown }): Promise<CrmEntry> {
+  /** Set or clear the manual stage, the follow-up date, and/or the stuck action. */
+  async update(id: unknown, patch: { stage?: unknown; followUpAt?: unknown; action?: unknown }): Promise<CrmEntry> {
     if (typeof id !== 'string' || !id) throw new Error('missing id');
     const entry = entryFor(id);
     if ('stage' in patch) {
@@ -442,11 +459,62 @@ export const crm = {
       }
       entry.followUpAt = patch.followUpAt as string | null;
     }
+    if ('action' in patch) {
+      if (patch.action === null) {
+        entry.action = null;
+      } else {
+        const action = parseAction(patch.action, iso());
+        if (!action) throw new Error('action.label is required');
+        entry.action = action;
+      }
+    }
     entry.updatedAt = iso();
     persisted.entries[id] = entry;
     await persist();
     raiseFollowUpFlags();
     return entry;
+  },
+
+  item(id: string): CrmItem | undefined {
+    return assemble().items.find((row) => row.id === id);
+  },
+
+  /** Live do-prompt: action + VERIFIED FACTS fetched now, not when the action was written. */
+  async doPrompt(id: unknown, pack?: ContextPack): Promise<{ prompt: string; item: CrmItem }> {
+    if (typeof id !== 'string' || !id) throw new Error('missing id');
+    const item = this.item(id);
+    if (!item) throw new Error('unknown item');
+    if (!item.action) throw new Error('item has no action');
+    const prompt = buildDoPrompt(item, pack ?? await loadContextPack());
+    return { prompt, item };
+  },
+
+  /** One fixed action: launch the SERVER-BUILT prompt for this card. The request
+   *  body chooses the executor and nothing else.
+   *
+   *  There used to be a `prompt` field that replaced the built prompt verbatim.
+   *  POST /api/crm/do is reachable from the public CRM host (crmPathAllowed
+   *  admits /api/crm/*), and that prompt becomes the agent's first argv token on
+   *  this machine, so the field turned one authenticated request into
+   *  "run anything here" — the seam law's path-proxy, with no caller: neither the
+   *  board nor the detail sheet ever sent it. Manual runs use the copy-prompt
+   *  button and a terminal. */
+  async launchDo(id: unknown, input: unknown): Promise<{ launched: true; executor: HelperExecutor; session: string }> {
+    const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const executor: HelperExecutor = raw.executor === 'codex' ? 'codex' : 'claude';
+    const built = await this.doPrompt(id);
+    const { session } = await writeDoLaunch({
+      id: built.item.id,
+      title: built.item.title,
+      executor,
+      prompt: built.prompt,
+    });
+    return { launched: true, executor, session };
+  },
+
+  async refreshDirections(): Promise<number> {
+    await refreshDirections();
+    return directions.length;
   },
 
   async addNote(id: unknown, text: unknown): Promise<CrmNote> {

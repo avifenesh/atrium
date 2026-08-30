@@ -21,6 +21,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
+import { scoreLead } from '../lead-relevance.js';
 import { signals } from '../signals.js';
 import type { SignalItem } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
@@ -175,10 +176,8 @@ interface XHit {
   kind?: string;
 }
 
-/** X hits arrive pre-qualified — the grok prompt only returns people looking for
- *  hosted inference or failing to run a watched model — so there is no
- *  title-keyword gate here: "can't run it on my 3060" carries no keyword and is
- *  exactly the buyer. */
+/** X hits are gated twice: x-lead-scan's create-bar, then scoreLead here.
+ *  Personal weekly-cap vents and brand mentions do not become signals. */
 async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
   let raw: string;
   try {
@@ -197,13 +196,27 @@ async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
     }
     const statusId = hit.url?.match(/\/status\/(\d+)/)?.[1];
     if (!statusId || !hit.text) continue;
+    // Legacy rows only: x-lead-scan already emits nothing but kind 'seeker' (its grok
+    // prompt refuses brand mentions with no buyer signal, and its writer drops any
+    // mention hit). This clears the pre-2026-08-29 rows still in the file. Inbound
+    // brand mentions on X have to come back through the scan as seekers, not here.
+    if (hit.kind === 'mention') continue;
     if (hit.foundAt != null && !freshEnough(hit.foundAt)) continue;
+    // Score exactly the fields the board will re-score (crm.ts toItem runs scoreLead
+    // again over title + entity + detail). Gating on the full post while storing a
+    // 160-char title meant a row could pass ingest and then show as unqualified,
+    // hidden behind the board's own filter.
+    const title = hit.text.replace(/\s+/g, ' ').slice(0, 280);
+    const entity = hit.family ?? 'inference';
+    if (!scoreLead({ kind: 'lead', title, subtitle: entity, detail: hit.author ?? null }).qualified) {
+      continue;
+    }
     out.push({
       id: `x:${statusId}`,
       source: 'x',
-      kind: hit.kind === 'mention' ? 'mention' : 'prospect-thread',
-      entity: hit.family ?? 'inference',
-      title: hit.text.replace(/\s+/g, ' ').slice(0, 160),
+      kind: 'prospect-thread',
+      entity,
+      title,
       detail: hit.author ?? null,
       url: hit.url as string,
       count: null,

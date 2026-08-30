@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { CrmItem } from '../../../shared/types';
+import { DoLink } from './Action';
 
 /**
  * Users — the accounts screen.
@@ -190,11 +191,12 @@ export function UsersTab({
                   onClick={() => onOpen(item.id)}
                   className="cursor-pointer border-b border-white/5 last:border-0 hover:bg-white/[0.03]"
                 >
-                  <td className="max-w-[22ch] truncate px-3 py-2 text-mist" title={item.title}>
-                    {item.title}
-                    {m.suspended && <span className="ml-1.5 text-coral">suspended</span>}
+                  <td className="max-w-[28ch] px-3 py-2 text-mist" title={item.title}>
+                    <div className="truncate">{item.title}</div>
+                    {m.suspended && <span className="ml-0 text-coral">suspended</span>}
                     {m.paid && <span className="ml-1.5 text-amber">paid</span>}
                     {!m.enrolled && <span className="ml-1.5 text-mist-faint">unenrolled</span>}
+                    <DoLink item={item} compact showMissing={false} />
                   </td>
                   <td className="px-3 py-2 text-right text-mist-dim">{m.requests}</td>
                   <td className="px-3 py-2 text-right text-mist-dim">{money(m.spentMicro)}</td>

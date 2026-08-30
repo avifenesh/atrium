@@ -719,6 +719,19 @@ export interface CrmContact {
   summary: string;
 }
 
+/** Agent-written next move, stuck on the pipeline card as a "do X" link.
+ *  Product and company facts are NOT stored here — they are injected live
+ *  when the owner clicks Do (Hermes council VERIFIED FACTS pattern). */
+export interface CrmAction {
+  /** Imperative, executable without re-research. The card link text. */
+  label: string;
+  /** Target-specific brief for the executing agent. */
+  brief: string | null;
+  /** The URL or path the action is about. */
+  href: string | null;
+  updatedAt: string;
+}
+
 /** Owner-written CRM state for one pipeline item, keyed by the item id
  *  (signal id for leads, `tenant:<id>` for console accounts). Everything
  *  derivable from live sources stays OUT of here. */
@@ -729,6 +742,10 @@ export interface CrmEntry {
   notes: CrmNote[];
   contacts: CrmContact[];
   followUpAt: string | null;
+  /** next move: owner-typed in the CRM, or written by the seller hunt through
+   *  POST /api/crm/entry. null = nothing stuck yet (a direction still falls back to
+   *  its firstAction, and a thread with an outreach-draft note to that draft). */
+  action: CrmAction | null;
   updatedAt: string;
 }
 
@@ -741,9 +758,11 @@ export interface CrmItem {
   /** where the item came from: signal source for leads ('hf-hub', 'hn', 'reddit',
    *  'gh-issue', ...), 'console' for accounts, 'seller' for directions */
   source: string | null;
-  /** longer free text: thread stats for leads, why + first action for directions */
+  /** longer free text: thread stats for leads, why for directions */
   detail: string | null;
   url: string | null;
+  /** stuck on the card; overlay wins, else direction firstAction, else lead default */
+  action: CrmAction | null;
   stage: CrmStage;
   /** what the sources say on their own — shown when a manual override diverges */
   derivedStage: CrmStage;
