@@ -217,7 +217,7 @@ function systemdDetail(activates: string | null, status: SystemdServiceStatus | 
   return `${activates} failed (${result}${exitStatus})`;
 }
 
-async function collectSystemdUser(entries: ScheduleEntry[]): Promise<void> {
+async function collectSystemdUser(entries: ScheduleEntry[], flags: Flag[]): Promise<void> {
   const out = await shTry('systemctl', ['--user', 'list-timers', '--all', '--output=json']);
   if (out === null) return;
   let timers: any;
@@ -264,6 +264,20 @@ async function collectSystemdUser(entries: ScheduleEntry[]): Promise<void> {
       detail: systemdDetail(activates, serviceStatus),
       muteable: false,
     });
+    // A failed oneshot never flips its TIMER's ActiveState (it stays
+    // active(waiting)), so the system collector's watchedUnits check can't see it.
+    // For timers the owner watches, a failed last activation is the alert.
+    if (systemdLastStatus(serviceStatus) === 'fail' && config.watchedUnits.includes(String(t.unit))) {
+      const id = `schedule:unit-failed:${t.unit}`;
+      flags.push({
+        id,
+        severity: 'warn',
+        title: `${t.unit}: last run failed`,
+        detail: systemdDetail(activates, serviceStatus) ?? 'last activation failed',
+        source: 'schedule',
+        raisedAt: pinnedRaisedAt(id),
+      });
+    }
   }
 }
 
@@ -299,7 +313,7 @@ const collector: Collector = {
       if (cron !== null) collectCrontab(cron, entries, flags);
       await collectHermes(entries);
       await collectRevuto(entries);
-      await collectSystemdUser(entries);
+      await collectSystemdUser(entries, flags);
       await checkIdleWatcherBug(flags);
       store.setSection('schedule', { updatedAt: iso(), entries, error: null });
     } catch (err) {
