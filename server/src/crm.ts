@@ -37,6 +37,7 @@ import type {
   SignalItem,
 } from '../../shared/types.js';
 import { actionFromFirstAction, actionFromOutreachNotes, buildDoPrompt, isPlaceholderAction, loadContextPack, parseAction, writeDoLaunch, type ContextPack } from './crm-do.js';
+import { crmEvents } from './crm-events.js';
 
 /** Runtime twin of the CrmStage union (shared/types.ts is types-only — see the
  *  note there). The two satisfies-checks make drift a compile error both ways. */
@@ -439,6 +440,15 @@ export const crm = {
     await refreshDirections();
     // the seller hunt runs every 6h; a 5-minute re-read is generous
     setInterval(() => void refreshDirections(), 300_000).unref();
+    // activity differ: record arrivals, stage moves, quiet/resume and usage
+    // deltas. First pass waits for the collectors' first publish — diffing an
+    // empty store against the baseline would read as everything vanishing.
+    await crmEvents.load();
+    const observe = () => void crmEvents.observe(assemble().items).catch((err) => {
+      console.error('[crm-events] observe failed:', err instanceof Error ? err.message : err);
+    });
+    setTimeout(observe, 120_000).unref();
+    setInterval(observe, 300_000).unref();
   },
 
   pipeline(): CrmPipeline {
@@ -509,6 +519,13 @@ export const crm = {
       executor,
       prompt: built.prompt,
     });
+    crmEvents.emit({
+      type: 'do-launched',
+      itemId: built.item.id,
+      title: `do: ${built.item.action?.label ?? built.item.title}`,
+      detail: `${executor} · tmux ${session}`,
+      url: built.item.url,
+    });
     return { launched: true, executor, session };
   },
 
@@ -544,6 +561,13 @@ export const crm = {
     entry.updatedAt = contact.at;
     persisted.entries[id] = entry;
     await persist();
+    crmEvents.emit({
+      type: 'contact-logged',
+      itemId: id,
+      title: `touched ${id.startsWith('tenant:') ? 'account' : 'lead'} via ${contact.channel}`,
+      detail: contact.summary,
+      url: null,
+    });
     return contact;
   },
 
@@ -552,12 +576,14 @@ export const crm = {
     await refreshDirections();
   },
 
-  /** test hook: reset in-memory state and redirect the persist file / directions dir */
+  /** test hook: reset in-memory state and redirect the persist file / directions dir.
+   *  The events ledger follows the crm.json tmp dir so tests never touch the real one. */
   _resetForTest(filePath?: string, dirPath?: string): void {
     persisted = { entries: {} };
     directions = [];
     loaded = true;
     if (filePath) file = filePath;
     if (dirPath) directionsDir = dirPath;
+    crmEvents._resetForTest(filePath ? join(filePath, '..') : dirPath);
   },
 };

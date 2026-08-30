@@ -16,7 +16,8 @@
 // screen by job; the stage row and search cut within one.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
+import type { CrmActivity, CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
+import { ActivityTab } from './Activity';
 import { DoLink, isPlaceholderAction } from './Action';
 import { Board } from './Board';
 import { ModelsTab } from './Models';
@@ -422,9 +423,9 @@ type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
 // Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
-// One tab per question: work the pipeline, read the users, count the models,
-// read the money, see who visits, judge the outreach, check for fire.
-const TABS = ['pipeline', 'users', 'models', 'money', 'traffic', 'outreach', 'health'] as const;
+// One tab per question: work the pipeline, see what changed, read the users,
+// count the models, read the money, see who visits, judge the outreach, check for fire.
+const TABS = ['pipeline', 'activity', 'users', 'models', 'money', 'traffic', 'outreach', 'health'] as const;
 type Tab = (typeof TABS)[number];
 const readTab = (): Tab => {
   const h = window.location.hash.replace('#', '');
@@ -449,6 +450,7 @@ const chipClass = (active: boolean, extra = '') =>
 export function CrmApp() {
   const [pipeline, setPipeline] = useState<CrmPipeline | null>(null);
   const [overview, setOverview] = useState<CrmOverview | null>(null);
+  const [activity, setActivity] = useState<CrmActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<KindFilter>('all');
   const [stage, setStage] = useState<StageFilter>('any');
@@ -471,12 +473,14 @@ export function CrmApp() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextPipeline, nextOverview] = await Promise.all([
+      const [nextPipeline, nextOverview, nextActivity] = await Promise.all([
         api<CrmPipeline>('/api/crm/pipeline'),
         api<CrmOverview>('/api/crm/overview'),
+        api<CrmActivity>('/api/crm/activity'),
       ]);
       setPipeline(nextPipeline);
       setOverview(nextOverview);
+      setActivity(nextActivity);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -585,12 +589,19 @@ export function CrmApp() {
         ))}
       </div>
 
-      {tab !== 'pipeline' && tab !== 'users' && !overview && !error && (
+      {tab !== 'pipeline' && tab !== 'users' && tab !== 'activity' && !overview && !error && (
         <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
       )}
       {tab === 'users' && (
         pipeline
           ? <UsersTab items={allItems} onOpen={setOpenId} />
+          : !error && (
+            <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+          )
+      )}
+      {tab === 'activity' && (
+        activity
+          ? <ActivityTab activity={activity} onOpen={setOpenId} />
           : !error && (
             <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
           )
@@ -604,8 +615,21 @@ export function CrmApp() {
       {tab === 'pipeline' && (
         <>
       {overview && (
-        <div className="mb-3">
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
           <PulseStrip data={overview} dueCount={due.length} />
+          {/* today's motion, one tap from the board — the feed itself lives on the activity tab */}
+          {activity && Object.values(activity.today).some((n) => (n ?? 0) > 0) && (
+            <button
+              type="button"
+              onClick={() => goTab('activity')}
+              className="cursor-pointer rounded-full border border-slate-glow/40 px-2.5 py-1 font-mono text-[10px] text-slate-glow"
+            >
+              today: {(['account-new', 'lead-new', 'near-miss', 'stage-change'] as const)
+                .filter((t) => (activity.today[t] ?? 0) > 0)
+                .map((t) => `${activity.today[t]} ${t === 'account-new' ? 'signup' : t === 'lead-new' ? 'lead' : t === 'near-miss' ? 'near-miss' : 'move'}`)
+                .join(' · ') || 'activity'} →
+            </button>
+          )}
         </div>
       )}
 

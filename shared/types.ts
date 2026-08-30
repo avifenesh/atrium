@@ -982,6 +982,40 @@ export interface CrmUsageDay {
   debitedMicro: number;
 }
 
+/** One thing that HAPPENED in the pipeline. The board shows state; this feed
+ *  shows motion — a lead arriving, an account signing up or going quiet, spend
+ *  moving — so the owner reads "what changed" instead of diffing the board by
+ *  memory. Written append-only by server/src/crm-events.ts. */
+export type CrmEventType =
+  | 'lead-new'        // a qualified lead entered the pipeline
+  | 'near-miss'       // an X hit failed the create-bar by a hair — the visible false negative
+  | 'direction-new'   // the seller hunt filed a new way to sell
+  | 'account-new'     // a signup appeared on the console
+  | 'stage-change'    // any item moved stage (derived or owner-pinned)
+  | 'account-quiet'   // an active/paying account crossed the quiet threshold
+  | 'account-resumed' // a quiet account called again
+  | 'account-usage'   // coalesced request/spend delta for one account
+  | 'contact-logged'  // the owner logged a touch
+  | 'do-launched';    // a do-link launched an agent session
+
+export interface CrmEvent {
+  at: string;
+  type: CrmEventType;
+  /** pipeline item id when the event is about one; near-misses never joined the board */
+  itemId: string | null;
+  title: string;
+  detail: string | null;
+  url: string | null;
+}
+
+export interface CrmActivity {
+  updatedAt: string;
+  /** newest first */
+  events: CrmEvent[];
+  /** counts for the current UTC day, keyed by event type */
+  today: Partial<Record<CrmEventType, number>>;
+}
+
 /** One direction file under ~/.config/atrium/directions/ — written by the hermes
  *  seller profile's scheduled hunt, read into the pipeline as kind 'direction'.
  *  A direction is a NEW way to sell (channel, segment, integration, partnership,

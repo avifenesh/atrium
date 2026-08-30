@@ -18,6 +18,7 @@ import { reentry } from './reentry.js';
 import { helper } from './helper.js';
 import { signals } from './signals.js';
 import { crm } from './crm.js';
+import { crmEvents } from './crm-events.js';
 import { crmOverview } from './crm-overview.js';
 import { verifyAccessJwt } from './access-auth.js';
 import type { MuteRequest } from '../../shared/types.js';
@@ -487,6 +488,12 @@ const server = createServer(async (req, res) => {
     // public host reads one endpoint instead of the machine-wide snapshot
     if (method === 'GET' && path === '/api/crm/overview') {
       return json(res, 200, await crmOverview());
+    }
+
+    // what changed — the pipeline's motion feed (see crm-events.ts)
+    if (method === 'GET' && path === '/api/crm/activity') {
+      const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days')) || 7));
+      return json(res, 200, crmEvents.activity(days));
     }
 
     if (method === 'POST' && path === '/api/crm/entry') {

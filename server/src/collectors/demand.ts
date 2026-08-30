@@ -21,7 +21,8 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
-import { scoreLead } from '../lead-relevance.js';
+import { crmEvents } from '../crm-events.js';
+import { QUALIFIED_AT, scoreLead } from '../lead-relevance.js';
 import { signals } from '../signals.js';
 import type { SignalItem } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
@@ -208,7 +209,22 @@ async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
     // hidden behind the board's own filter.
     const title = hit.text.replace(/\s+/g, ' ').slice(0, 280);
     const entity = hit.family ?? 'inference';
-    if (!scoreLead({ kind: 'lead', title, subtitle: entity, detail: hit.author ?? null }).qualified) {
+    const relevance = scoreLead({ kind: 'lead', title, subtitle: entity, detail: hit.author ?? null });
+    if (!relevance.qualified) {
+      // The gate's false negatives used to be invisible: a hit that failed the
+      // bar by a hair vanished without a trace, so a mistuned rule cost leads
+      // nobody could see. A near-miss (within 2 points) goes to the activity
+      // feed — visible, rescuable, but never a board row. Once per status id.
+      const missId = `x:${statusId}`;
+      if (relevance.score >= QUALIFIED_AT - 2 && !crmEvents.seen('near-miss', missId)) {
+        crmEvents.emit({
+          type: 'near-miss',
+          itemId: missId,
+          title,
+          detail: `scored ${relevance.score}/${QUALIFIED_AT}${relevance.labels.length ? ` — ${relevance.labels.join(', ')}` : ''}${hit.author ? ` · ${hit.author}` : ''}`,
+          url: hit.url ?? null,
+        });
+      }
       continue;
     }
     out.push({
