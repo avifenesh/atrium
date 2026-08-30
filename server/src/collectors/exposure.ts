@@ -248,7 +248,7 @@ const collector: Collector = {
       if (quietCards.length) {
         counter('hf:quiet', `hf: ${quietCards.length} card(s) with no downloads/likes`, 'tracked, quiet', quietCards.length, undefined, {
           detail: quietCards.slice(0, 6).join(', ') + (quietCards.length > 6 ? ', …' : ''),
-          url: 'https://huggingface.co/Avifenesh',
+          url: 'https://huggingface.co/tiyuvta',
         });
       }
       for (const crate of snapshot.crates) {

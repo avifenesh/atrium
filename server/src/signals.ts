@@ -91,7 +91,7 @@ function defaultWatch(): SignalsWatch {
     repos: ['avifenesh/memra'],
     // `Author/*` enumerates the whole account at read time (expandHfModels) —
     // the fixed two-id seed sat blind to 18 published cards and one renamed id.
-    hfModels: ['Avifenesh/*'],
+    hfModels: ['tiyuvta/*', 'Avifenesh/*'],
     crates: ['memra-server', 'memra-engine'],
   };
 }
