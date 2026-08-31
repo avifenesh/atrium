@@ -476,11 +476,11 @@ function ExploreBlock({ explore, win }: { explore: CrmOverview['explore']; win: 
           <div className="grid gap-2 font-mono text-[11px] text-mist-dim sm:grid-cols-3">
             <div>
               <div className="mb-1 text-[10px] uppercase tracking-wider text-mist-faint">landed from</div>
+              {/* foldLandings already labels direct arrivals as a 'direct' source row */}
               {open.sources.map((s) => (
                 <div key={s.label}>{s.label} <span className="text-mist">{s.views}</span></div>
               ))}
-              {open.sources.length === 0 && <div>only direct</div>}
-              {open.direct > 0 && <div>direct <span className="text-mist">{open.direct}</span></div>}
+              {open.sources.length === 0 && <div>none recorded</div>}
             </div>
             <div>
               <div className="mb-1 text-[10px] uppercase tracking-wider text-mist-faint">then moved to</div>
