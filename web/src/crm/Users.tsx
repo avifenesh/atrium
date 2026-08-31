@@ -25,18 +25,20 @@ const dayAge = (day: string | null): number | null => {
   return Math.floor((Date.now() - then) / 86_400_000);
 };
 
-type Sort = 'spend' | 'requests' | 'balance' | 'recent';
-type Cut = 'all' | 'active' | 'quiet' | 'never' | 'paying' | 'suspended';
+type Sort = 'spend' | 'requests' | 'today' | 'balance' | 'recent';
+type Cut = 'all' | 'today' | 'active' | 'quiet' | 'never' | 'paying' | 'suspended';
 
 const SORTS: Array<{ id: Sort; label: string }> = [
   { id: 'spend', label: 'spend' },
   { id: 'requests', label: 'requests' },
+  { id: 'today', label: 'today' },
   { id: 'balance', label: 'balance' },
   { id: 'recent', label: 'last active' },
 ];
 
 const CUTS: Array<{ id: Cut; label: string }> = [
   { id: 'all', label: 'all' },
+  { id: 'today', label: 'active today' },
   { id: 'active', label: 'used it' },
   { id: 'quiet', label: 'went quiet' },
   { id: 'never', label: 'never used' },
@@ -53,6 +55,7 @@ function cutOf(item: CrmItem): Exclude<Cut, 'all'>[] {
   const out: Exclude<Cut, 'all'>[] = [];
   if (m.suspended) out.push('suspended');
   if (m.paid) out.push('paying');
+  if ((m.requestsToday ?? 0) > 0) out.push('today');
   if (m.requests > 0) {
     out.push('active');
     const age = dayAge(m.lastActiveDay);
@@ -94,6 +97,7 @@ export function UsersTab({
     const key = (item: CrmItem): number => {
       const m = item.metrics!;
       if (sort === 'requests') return m.requests;
+      if (sort === 'today') return m.requestsToday ?? -1;
       if (sort === 'balance') return m.balanceMicro ?? -1;
       if (sort === 'recent') return -(dayAge(m.lastActiveDay) ?? 99_999);
       return m.spentMicro;
@@ -106,13 +110,21 @@ export function UsersTab({
     let spend = 0;
     let outstanding = 0;
     let used = 0;
+    let activeToday = 0;
+    let requestsToday = 0;
+    let todayKnown = false;
     for (const item of accounts) {
       const m = item.metrics!;
       spend += m.spentMicro;
       if (m.balanceMicro != null) outstanding += Math.max(0, m.balanceMicro);
       if (m.requests > 0) used += 1;
+      if (m.requestsToday != null) {
+        todayKnown = true;
+        requestsToday += m.requestsToday;
+        if (m.requestsToday > 0) activeToday += 1;
+      }
     }
-    return { spend, outstanding, used };
+    return { spend, outstanding, used, activeToday, requestsToday, todayKnown };
   }, [accounts]);
 
   if (accounts.length === 0) {
@@ -125,9 +137,13 @@ export function UsersTab({
 
   return (
     <div>
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Stat label="accounts" value={String(accounts.length)} />
         <Stat label="used it" value={`${summary.used} of ${accounts.length}`} />
+        <Stat
+          label="today"
+          value={summary.todayKnown ? `${summary.activeToday} active · ${summary.requestsToday} req` : '—'}
+        />
         <Stat label="spent" value={money(summary.spend)} />
         <Stat label="credit outstanding" value={money(summary.outstanding)} />
       </div>
@@ -175,6 +191,7 @@ export function UsersTab({
             <tr className="border-b border-white/8 text-left text-mist-faint">
               <th className="px-3 py-2 font-normal">account</th>
               <th className="px-3 py-2 text-right font-normal">requests</th>
+              <th className="px-3 py-2 text-right font-normal">today</th>
               <th className="px-3 py-2 text-right font-normal">spent</th>
               <th className="px-3 py-2 text-right font-normal">balance</th>
               <th className="px-3 py-2 text-right font-normal">last active</th>
@@ -199,6 +216,9 @@ export function UsersTab({
                     <DoLink item={item} compact showMissing={false} />
                   </td>
                   <td className="px-3 py-2 text-right text-mist-dim">{m.requests}</td>
+                  <td className={`px-3 py-2 text-right ${(m.requestsToday ?? 0) > 0 ? 'text-jade' : 'text-mist-faint'}`}>
+                    {m.requestsToday == null ? '—' : m.requestsToday}
+                  </td>
                   <td className="px-3 py-2 text-right text-mist-dim">{money(m.spentMicro)}</td>
                   <td className="px-3 py-2 text-right text-mist-dim">{money(m.balanceMicro)}</td>
                   <td className={`px-3 py-2 text-right ${quiet ? 'text-amber' : 'text-mist-faint'}`}>

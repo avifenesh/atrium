@@ -250,6 +250,64 @@ test('account items carry the metrics the users screen sorts on', async () => {
   });
 });
 
+// "How many requests did this user make TODAY" comes from the console activity
+// report, not the lifetime counter. The join must distinguish three states:
+// account active today (N), report present but account silent (0), report
+// unavailable (null) — a null rendered as 0 would say "nobody called" during an
+// activity outage.
+test('account metrics join today figures from the activity report, null when absent', async () => {
+  await withCrm(async () => {
+    seedStore([], [account('t-busy'), account('t-idle'), account('t-broken'), account('t-capped')]);
+    const today = new Date().toISOString().slice(0, 10);
+    const state = store.get().extra['tiyuvta']!;
+    store.setExtra('tiyuvta', {
+      ...state,
+      data: {
+        ...(state.data as Record<string, unknown>),
+        activity: {
+          days: 14,
+          errors: [{ tenantId: 't-broken', engine: 'q38', code: 'engine_unreachable' }],
+          tenants: [
+            {
+              tenantId: 't-busy',
+              // totals is the cross-box mirror truth; day rows are live journal
+              // exports that under-report after a box move — the window figure
+              // must come from totals (217-read-as-8 incident, 2026-08-30)
+              totals: { requests: 217, debitedMicro: 900_000 },
+              days: [
+                { day: today, engine: 'q38', requests: 41, debitedMicro: 310_000 },
+                { day: '2020-01-01', engine: 'q38', requests: 9, debitedMicro: 50_000 },
+              ],
+            },
+            // fan-out leg failed: day data is UNKNOWN, never zero
+            { tenantId: 't-broken', totals: { requests: 12, debitedMicro: 10_000 }, days: [] },
+            // past the fan-out cap: window traffic exists but no day rows shipped
+            { tenantId: 't-capped', totals: { requests: 30, debitedMicro: 20_000 }, days: [] },
+          ],
+        },
+      },
+    });
+
+    const byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
+    assert.equal(byId.get('tenant:t-busy')?.metrics?.requestsToday, 41);
+    assert.equal(byId.get('tenant:t-busy')?.metrics?.debitedTodayMicro, 310_000);
+    assert.equal(byId.get('tenant:t-busy')?.metrics?.requestsWindow, 217, 'window = mirror totals, not the day-row sum');
+    // report present, tenant absent from it → a real zero
+    assert.equal(byId.get('tenant:t-idle')?.metrics?.requestsToday, 0);
+    // failed fan-out leg → unknown, not a lying zero
+    assert.equal(byId.get('tenant:t-broken')?.metrics?.requestsToday, null);
+    assert.equal(byId.get('tenant:t-broken')?.metrics?.requestsWindow, 12);
+    // capped out of the fan-out: window traffic with no day rows → today unknown
+    assert.equal(byId.get('tenant:t-capped')?.metrics?.requestsToday, null);
+    assert.equal(byId.get('tenant:t-capped')?.metrics?.requestsWindow, 30);
+
+    // report unavailable → null, never zero
+    store.setExtra('tiyuvta', state);
+    const without = new Map(crm.pipeline().items.map((i) => [i.id, i]));
+    assert.equal(without.get('tenant:t-busy')?.metrics?.requestsToday, null);
+  });
+});
+
 // The pipeline board renders one column per PIPELINE_STAGES entry. That set is only correct while the
 // server cannot put a lead or a direction into an account-only stage. This pins the server half of
 // that contract: if derivedLeadStage ever starts returning 'signed-up' / 'active' / 'paying', the

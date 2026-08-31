@@ -191,7 +191,9 @@ export async function crmOverview(): Promise<CrmOverview> {
     | undefined;
   const dashboard = tiyuvta?.dashboard;
 
-  const web = extra['webtraffic']?.data as CrmOverview['visitors'] | undefined;
+  const web = extra['webtraffic']?.data as
+    | (NonNullable<CrmOverview['visitors']> & { funnel?: CrmOverview['funnel'] })
+    | undefined;
   const endpoint = extra['endpoint']?.data as
     | (NonNullable<CrmOverview['endpoint']> & { probesPerDay?: Record<string, number> })
     | undefined;
@@ -251,6 +253,7 @@ export async function crmOverview(): Promise<CrmOverview> {
           channels: (web.channels ?? []).slice(0, 10),
         }
       : null,
+    funnel: web?.funnel && Array.isArray(web.funnel.pages) ? web.funnel : null,
     endpoint: endpoint && Array.isArray(endpoint.models)
       ? { models: endpoint.models, series: Array.isArray(endpoint.series) ? endpoint.series : [] }
       : null,

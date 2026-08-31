@@ -261,6 +261,87 @@ export function MoneyTab({ data }: { data: CrmOverview }) {
 // competitors) moved to their own tab: "is the site being found" and "is our
 // selling working" are different questions asked at different moments.
 
+// The conversion funnel for the pages where money enters. Cookieless, so
+// "closed without acting" is an aggregate approximation (views − CTA clicks −
+// onward navigations), never a per-visitor fact — that trade bought the sites
+// their banner-free state and is not up for revision here.
+
+function FunnelWindowRow({ label, w }: { label: string; w: NonNullable<CrmOverview['funnel']>['pages'][number]['today'] }) {
+  const acted = w.ctas.reduce((a, c) => a + c.count, 0);
+  const onward = w.onward.reduce((a, o) => a + o.views, 0);
+  // These buckets are NOT a partition of views: one visitor can act AND browse
+  // on, reloads/back-nav re-count as views, a double-click is two ctas. So the
+  // residue is "unaccounted views" (biased HIGH — re-views land here), never
+  // "people who left"; and a negative residue is shown as overlap, not clamped
+  // away, because it is the signal the approximation broke.
+  const residue = w.views - acted - onward;
+  return (
+    <div className="rounded-lg border border-white/8 px-3 py-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[12px]">
+        <span className="text-mist-faint uppercase text-[10px] tracking-wider">{label}</span>
+        <span className="text-mist">{w.views} views</span>
+        <span className={acted > 0 ? 'text-jade' : 'text-mist-dim'}>{acted} acted</span>
+        <span className="text-mist-dim">{onward} browsed on</span>
+        {residue >= 0
+          ? <span className={residue > 0 && w.views > 0 ? 'text-amber' : 'text-mist-dim'} title="views minus actions minus onward navigations; reloads and back-nav count as extra views, so this reads HIGH">≈{residue} unaccounted</span>
+          : <span className="text-mist-dim" title="more actions+navigations than views: visitors acted and browsed on, or acted twice">overlap</span>}
+        {w.leaves > 0 && (
+          <span className="text-mist-dim">
+            {w.engagedOver10s}/{w.leaves} stayed &gt;10s · avg {w.avgEngagedS}s
+          </span>
+        )}
+      </div>
+      {(w.ctas.length > 0 || w.sources.length > 0 || w.fromPaths.length > 0 || w.onward.length > 0) && (
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-mist-faint">
+          {w.ctas.length > 0 && <span>acted: {w.ctas.map((c) => `${c.label} ${c.count}`).join(' · ')}</span>}
+          {w.sources.length > 0 && (
+            <span>from outside: {w.sources.slice(0, 4).map((s) => `${s.host || s.kind} ${s.views}`).join(' · ')}{w.direct > 0 ? ` · direct ${w.direct}` : ''}</span>
+          )}
+          {w.sources.length === 0 && w.direct > 0 && <span>direct {w.direct}</span>}
+          {w.fromPaths.length > 0 && <span>from our pages: {w.fromPaths.slice(0, 4).map((f) => `${f.path} ${f.views}`).join(' · ')}</span>}
+          {w.onward.length > 0 && <span>went to: {w.onward.slice(0, 4).map((o) => `${o.path} ${o.views}`).join(' · ')}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function FunnelBlock({ funnel }: { funnel: CrmOverview['funnel'] }) {
+  if (!funnel || funnel.pages.length === 0) return null;
+  const pg = funnel.playground;
+  const pgLine = (rows: Array<{ label: string; count: number }>) =>
+    rows.map((r) => `${r.label.replace(/^playground_/, '')} ${r.count}`).join(' · ') || 'nothing';
+  return (
+    <div className="space-y-2">
+      {funnel.pages.map((page) => (
+        <div key={`${page.site}:${page.path}`} className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
+          <div className="mb-1.5 font-mono text-[11px] text-mist">
+            {page.path === '/login' ? 'sign-in page' : page.path}
+            <span className="ml-2 text-mist-faint">{page.site} {page.path}</span>
+          </div>
+          <div className="space-y-1.5">
+            <FunnelWindowRow label="today" w={page.today} />
+            <FunnelWindowRow label="7 days" w={page.week} />
+          </div>
+        </div>
+      ))}
+      {/* The signed-in playground sends only labeled events (the page itself is
+          unbeaconed by design), so it gets an event line, never a views funnel.
+          `rendered` fires on page render — an impression, not a user action. */}
+      {pg && (pg.today.length > 0 || pg.week.length > 0) && (
+        <div className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
+          <div className="mb-1 font-mono text-[11px] text-mist">
+            playground events
+            <span className="ml-2 text-mist-faint">app /app · rendered = impression, first_success = first API call</span>
+          </div>
+          <div className="font-mono text-[11px] text-mist-dim">today: {pgLine(pg.today)}</div>
+          <div className="font-mono text-[11px] text-mist-dim">7 days: {pgLine(pg.week)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TrafficTab({ data }: { data: CrmOverview }) {
   const { visitors, exposure } = data;
 
@@ -272,6 +353,9 @@ export function TrafficTab({ data }: { data: CrmOverview }) {
 
   return (
     <div className="space-y-2">
+      {/* funnel first: "did anyone try to sign in today, and what did they do"
+          outranks every trend line on this tab */}
+      <FunnelBlock funnel={data.funnel} />
       <div className="grid gap-2 lg:grid-cols-2">
         {visitors && days.length > 0 && (
           <TrendChart

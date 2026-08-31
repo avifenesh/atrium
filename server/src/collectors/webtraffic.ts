@@ -13,7 +13,7 @@
 // reports are trailing multi-day windows, so polling faster buys nothing. No flags
 // either — traffic going up or down is information, not an anomaly that pages.
 
-import { readWebTraffic, WebTrafficUnconfigured } from '../core/webtraffic.js';
+import { readWebFunnel, readWebTraffic, WebTrafficUnconfigured } from '../core/webtraffic.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
 import type { ExtraRow } from '../../../shared/types.js';
@@ -32,6 +32,12 @@ const collector: Collector = {
     const now = iso();
     try {
       const report = await readWebTraffic();
+      // The funnel is additive: a query failure there must not cost the traffic
+      // report, so it degrades to null and the overview renders without it.
+      const funnel = await readWebFunnel().catch((err) => {
+        console.error('[webtraffic] funnel read failed:', err instanceof Error ? err.message : err);
+        return null;
+      });
 
       // Summary rows for the generic surfaces (MCP, palette). The bespoke panel
       // renders the full report from `data`.
@@ -51,13 +57,23 @@ const collector: Collector = {
         });
       }
 
+      const login = funnel?.pages.find((p) => p.path === '/login');
+      if (login) {
+        const onward = login.today.onward.reduce((a, o) => a + o.views, 0);
+        const acted = login.today.ctas.reduce((a, c) => a + c.count, 0);
+        rows.push({
+          label: 'login funnel today',
+          value: `${count(login.today.views)} views · ${count(acted)} acted · ${count(onward)} browsed on · ${count(login.today.engagedOver10s)} stayed >10s`,
+        });
+      }
+
       store.setExtra('webtraffic', {
         title: 'web traffic',
         updatedAt: now,
         up: true,
         rows,
         error: null,
-        data: report,
+        data: { ...report, funnel },
       });
     } catch (error) {
       const missingCreds = error instanceof WebTrafficUnconfigured;

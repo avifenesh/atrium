@@ -191,6 +191,60 @@ function accountsFromStore(): DashboardAccount[] {
   return (dashboard?.top ?? []).filter((account) => account.tenantId && !account.internal);
 }
 
+/** The slice of the console activity report the pipeline joins in: per-tenant
+ *  per-day requests/debits plus the mirror totals. Null when the collector could
+ *  not read it, so the UI can say "unknown" instead of a lying zero. */
+interface ActivityTenant {
+  tenantId: string;
+  totals?: { requests?: number; debitedMicro?: number };
+  days?: Array<{ day?: string; requests?: number; debitedMicro?: number }>;
+}
+
+interface TenantToday {
+  requestsToday: number | null;
+  debitedTodayMicro: number | null;
+  requestsWindow: number | null;
+}
+
+function todayByTenant(): Map<string, TenantToday> | null {
+  const extra = store.get().extra['tiyuvta'];
+  const activity = (extra?.data as {
+    activity?: { tenants?: ActivityTenant[]; errors?: Array<{ tenantId?: string }> };
+  } | undefined)?.activity;
+  if (!activity || !Array.isArray(activity.tenants)) return null;
+  // Tenants whose live fan-out legs failed have empty day rows that mean
+  // "unknown", not "silent" — an unreachable box must never render as 0.
+  const failed = new Set((activity.errors ?? []).map((e) => e.tenantId).filter(Boolean));
+  const today = iso().slice(0, 10);
+  const map = new Map<string, TenantToday>();
+  for (const tenant of activity.tenants) {
+    if (!tenant.tenantId) continue;
+    // The WINDOW figure comes from the mirror totals, never from summing day
+    // rows: day rows are live per-box journal exports and under-report after a
+    // box replacement (measured 2026-08-30: 217 window requests read as 8),
+    // and tenants past the console's fan-out cap ship no day rows at all.
+    const windowRequests = tenant.totals?.requests
+      ?? (tenant.days ?? []).reduce((a, row) => a + (row.requests ?? 0), 0);
+    let requestsToday = 0;
+    let debitedTodayMicro = 0;
+    for (const row of tenant.days ?? []) {
+      if (row.day !== today) continue;
+      requestsToday += row.requests ?? 0;
+      debitedTodayMicro += row.debitedMicro ?? 0;
+    }
+    // Day data is unknown (not zero) when the fan-out failed for this tenant,
+    // or when the tenant has window traffic but no day rows (fan-out cap).
+    const daysUnknown = failed.has(tenant.tenantId)
+      || ((tenant.days ?? []).length === 0 && windowRequests > 0);
+    map.set(tenant.tenantId, {
+      requestsToday: daysUnknown ? null : requestsToday,
+      debitedTodayMicro: daysUnknown ? null : debitedTodayMicro,
+      requestsWindow: windowRequests,
+    });
+  }
+  return map;
+}
+
 function researchedAction(action: CrmAction | null): CrmAction | null {
   return isPlaceholderAction(action) ? null : action;
 }
@@ -277,8 +331,12 @@ function assemble(): CrmPipeline {
     );
   }
 
+  const activityToday = todayByTenant();
   for (const account of accountsFromStore()) {
     const id = `tenant:${account.tenantId}`;
+    // Absent from a present report = no activity rows in the window at all: a real zero.
+    const todays = activityToday?.get(account.tenantId)
+      ?? (activityToday ? { requestsToday: 0, debitedTodayMicro: 0, requestsWindow: 0 } as TenantToday : null);
     liveIds.add(id);
     items.push(
       toItem(id, 'account', derivedAccountStage(account), {
@@ -308,6 +366,9 @@ function assemble(): CrmPipeline {
           suspended: account.suspended,
           lastActiveDay: typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null,
           signupRef: account.signupRef ?? null,
+          requestsToday: todays?.requestsToday ?? null,
+          debitedTodayMicro: todays?.debitedTodayMicro ?? null,
+          requestsWindow: todays?.requestsWindow ?? null,
         },
         activityAt: typeof account.lastActiveDay === 'string' ? account.lastActiveDay : null,
         action: null,

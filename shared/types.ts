@@ -786,6 +786,12 @@ export interface CrmItem {
     suspended: boolean;
     lastActiveDay: string | null;
     signupRef: string | null;
+    /** today's traffic, joined from the console activity report; null = report unavailable,
+     *  0 = report available and the account made no request today. Different facts. */
+    requestsToday: number | null;
+    debitedTodayMicro: number | null;
+    /** trailing-window request total from the same report (its `days` window, default 14) */
+    requestsWindow: number | null;
   } | null;
   /** newest activity timestamp the sources know for sorting */
   activityAt: string | null;
@@ -899,6 +905,21 @@ export interface CrmOverview {
   }> | null;
   /** signups by the ?ref= they carried in — which channel actually converts */
   signupSources: Array<{ source: string; count: number }>;
+  /** page-level conversion funnel for the pages where money enters (login,
+   *  post-login app). Cookieless: "closed without acting" is approximated as
+   *  views minus onward navigations minus CTA clicks — there is no visitor id
+   *  and never will be (consent law). */
+  funnel: {
+    pages: Array<{
+      site: string;
+      path: string;
+      today: CrmFunnelWindow;
+      week: CrmFunnelWindow;
+    }>;
+    /** signed-in playground events (labeled ctas on an otherwise unbeaconed page);
+     *  `playground_rendered` is an impression, not an action */
+    playground?: { today: Array<{ label: string; count: number }>; week: Array<{ label: string; count: number }> };
+  } | null;
   /** Google Ads spend joined with the signup funnel per ref (30d spend window,
    *  funnel all-time). costUsd converted at read by the collector; the kill
    *  gate ($150/payer, ads cell) renders from these numbers. */
@@ -980,6 +1001,33 @@ export interface CrmUsageDay {
   cachedPromptTokens: number;
   completionTokens: number;
   debitedMicro: number;
+}
+
+/** One window (today / trailing week) of a funnel page's numbers. All counts are
+ *  pageview-level aggregates from the cookieless dataset — journeys come from
+ *  same-origin referrers, engagement from per-page leave beacons. */
+export interface CrmFunnelWindow {
+  views: number;
+  /** arrivals with no referrer at all */
+  direct: number;
+  /** arrivals from another site (search, social, aggregator, ai, dev, …) */
+  external: number;
+  /** arrivals from another page of the same site */
+  internalIn: number;
+  /** external sources, largest first */
+  sources: Array<{ kind: string; host: string; views: number }>;
+  /** same-site pages that sent visitors here */
+  fromPaths: Array<{ path: string; views: number }>;
+  /** same-site pages visited NEXT — the people who did not close */
+  onward: Array<{ path: string; views: number }>;
+  /** CTA clicks fired on this page, per label (login-google, login-email-submit, …) */
+  ctas: Array<{ label: string; count: number }>;
+  /** leave beacons seen (≈ visits that ended here or navigated away) */
+  leaves: number;
+  /** leave beacons with >10s of visible-and-focused time — read past a glance */
+  engagedOver10s: number;
+  /** mean visible-and-focused seconds on the leave beacon */
+  avgEngagedS: number;
 }
 
 /** One thing that HAPPENED in the pipeline. The board shows state; this feed

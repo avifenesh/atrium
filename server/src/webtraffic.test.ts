@@ -105,3 +105,68 @@ test('foldChannels aggregates both windows and reports deltas, sorted by views',
     { channel: 'social', views: 0, prevViews: 1, delta: -1 },
   ]);
 });
+
+// --- funnel ---------------------------------------------------------------
+// Same positional contract, plus the fold: "closed" is derived downstream as
+// views − acted − onward, so the fold has to split arrivals into the exact
+// buckets (direct / external / internal) that derivation assumes.
+
+test('funnel windows: today is a calendar day, week is trailing', async () => {
+  const { funnelWindowClause, funnelArrivalsSql, funnelOnwardSql, funnelLeavesSql, funnelCtaSql } = await import('./core/webtraffic.js');
+  assert.equal(funnelWindowClause('today'), "timestamp > toStartOfInterval(NOW(), INTERVAL '1' DAY)");
+  assert.equal(funnelWindowClause(7), "timestamp > NOW() - INTERVAL '7' DAY");
+
+  const arrivals = funnelArrivalsSql('tiyuvta_web', 'app', ['/login', '/app'], 'today');
+  assert.match(arrivals, /blob2 = 'view'/);
+  assert.match(arrivals, /blob1 = 'app'/);
+  assert.match(arrivals, /blob3 IN \('\/login', '\/app'\)/);
+  assert.match(arrivals, /blob6 AS from_path/);
+
+  // onward = views whose INTERNAL referrer is the funnel page, excluding reloads
+  const onward = funnelOnwardSql('tiyuvta_web', 'app', ['/login'], 7);
+  assert.match(onward, /blob4 = 'internal'/);
+  assert.match(onward, /blob6 IN \('\/login'\)/);
+  assert.match(onward, /blob3 != blob6/);
+
+  const leaves = funnelLeavesSql('tiyuvta_web', 'app', ['/login'], 7);
+  assert.match(leaves, /blob2 = 'leave'/);
+  assert.match(leaves, /double2 > 10000/);
+
+  const ctas = funnelCtaSql('tiyuvta_web', 'app', ['/login'], 7);
+  assert.match(ctas, /blob2 = 'cta'/);
+  assert.match(ctas, /blob9 AS label/);
+
+  // a config-shaped path with a quote must throw, not reach the SQL
+  assert.throws(() => funnelArrivalsSql('tiyuvta_web', 'app', ["/x' OR 1=1"], 7), /unsafe funnel path/);
+});
+
+test('foldFunnelWindow splits arrivals into direct/external/internal and joins the rest', async () => {
+  const { foldFunnelWindow } = await import('./core/webtraffic.js');
+  const w = foldFunnelWindow(
+    '/login',
+    [
+      { path: '/login', kind: 'direct', host: '', from_path: '', views: '39' },
+      { path: '/login', kind: 'internal', host: '', from_path: '/', views: '15' },
+      { path: '/login', kind: 'internal', host: '', from_path: '/pricing', views: '3' },
+      { path: '/login', kind: 'search', host: 'google.com', from_path: '', views: '6' },
+      { path: '/app', kind: 'direct', host: '', from_path: '', views: '99' }, // other page — ignored
+    ],
+    [
+      { from_path: '/login', path: '/pricing', views: '3' },
+      { from_path: '/app', path: '/', views: '9' }, // other page — ignored
+    ],
+    [{ path: '/login', leaves: '43', engaged10: '7', avg_engaged_ms: '11900' }],
+    [{ path: '/login', label: 'login-google', clicks: '4' }],
+  );
+  assert.equal(w.views, 63);
+  assert.equal(w.direct, 39);
+  assert.equal(w.internalIn, 18);
+  assert.equal(w.external, 6);
+  assert.deepEqual(w.sources, [{ kind: 'search', host: 'google.com', views: 6 }]);
+  assert.deepEqual(w.fromPaths, [{ path: '/', views: 15 }, { path: '/pricing', views: 3 }]);
+  assert.deepEqual(w.onward, [{ path: '/pricing', views: 3 }]);
+  assert.deepEqual(w.ctas, [{ label: 'login-google', count: 4 }]);
+  assert.equal(w.leaves, 43);
+  assert.equal(w.engagedOver10s, 7);
+  assert.equal(w.avgEngagedS, 11.9);
+});
