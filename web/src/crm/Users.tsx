@@ -26,7 +26,7 @@ const dayAge = (day: string | null): number | null => {
 };
 
 type Sort = 'spend' | 'requests' | 'today' | 'balance' | 'recent';
-type Cut = 'all' | 'today' | 'active' | 'quiet' | 'never' | 'paying' | 'suspended';
+type Cut = 'all' | 'today' | 'active' | 'quiet' | 'never' | 'paying';
 
 const SORTS: Array<{ id: Sort; label: string }> = [
   { id: 'spend', label: 'spend' },
@@ -43,7 +43,6 @@ const CUTS: Array<{ id: Cut; label: string }> = [
   { id: 'quiet', label: 'went quiet' },
   { id: 'never', label: 'never used' },
   { id: 'paying', label: 'paid' },
-  { id: 'suspended', label: 'suspended' },
 ];
 
 /** Silent for this many days after real use is the moment worth an email. */
@@ -53,7 +52,6 @@ function cutOf(item: CrmItem): Exclude<Cut, 'all'>[] {
   const m = item.metrics;
   if (!m) return [];
   const out: Exclude<Cut, 'all'>[] = [];
-  if (m.suspended) out.push('suspended');
   if (m.paid) out.push('paying');
   if ((m.requestsToday ?? 0) > 0) out.push('today');
   if (m.requests > 0) {
@@ -77,7 +75,13 @@ export function UsersTab({
   const [cut, setCut] = useState<Cut>('all');
   const [query, setQuery] = useState('');
 
-  const accounts = useMemo(() => items.filter((i) => i.kind === 'account' && i.metrics), [items]);
+  /* Suspended accounts leave the working set entirely (owner ask 2026-08-31:
+   * "hide the suspended, that bothers me"). The 77 farmed signups from the
+   * asashi flood turned every cut into a wall of dead rows. They live in a
+   * collapsed section at the bottom, out of the stats and out of the cuts. */
+  const all = useMemo(() => items.filter((i) => i.kind === 'account' && i.metrics), [items]);
+  const accounts = useMemo(() => all.filter((i) => !i.metrics!.suspended), [all]);
+  const suspendedRows = useMemo(() => all.filter((i) => i.metrics!.suspended), [all]);
 
   const counts = useMemo(() => {
     const map = new Map<Cut, number>([['all', accounts.length]]);
@@ -127,7 +131,7 @@ export function UsersTab({
     return { spend, outstanding, used, activeToday, requestsToday, todayKnown };
   }, [accounts]);
 
-  if (accounts.length === 0) {
+  if (all.length === 0) {
     return (
       <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
         no accounts yet
@@ -241,6 +245,32 @@ export function UsersTab({
         <div className="mt-3 rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
           nothing in this cut
         </div>
+      )}
+
+      {/* Suspended accounts, collapsed by default: mostly the farmed signups.
+          Still one click from the drawer, where restore lives. */}
+      {suspendedRows.length > 0 && (
+        <details className="mt-4 rounded-xl border border-white/8 px-3 py-2">
+          <summary className="cursor-pointer font-mono text-[11px] text-mist-faint">
+            suspended · {suspendedRows.length}
+          </summary>
+          <div className="mt-2 space-y-1">
+            {suspendedRows.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onOpen(item.id)}
+                className="flex w-full cursor-pointer items-baseline gap-3 rounded-lg px-2 py-1 text-left hover:bg-white/[0.03]"
+              >
+                <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-mist-dim">{item.title}</span>
+                <span className="font-mono text-[11px] text-coral">suspended</span>
+                <span className="font-mono text-[11px] text-mist-faint">
+                  {item.metrics!.requests} req · {money(item.metrics!.spentMicro)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

@@ -251,21 +251,46 @@ export const ACTIONS = {
   // smoke traffic stops reading as customer demand. No effect on keys or billing.
   'mark-internal': { method: 'POST', path: '/admin/accounts/{tenant}/mark-internal', label: 'Mark account as owner-internal', needsTenant: true },
   'mark-external': { method: 'POST', path: '/admin/accounts/{tenant}/mark-external', label: 'Unmark owner-internal account', needsTenant: true },
+  // Owner credit through the console's idempotent /admin/grant (owner ask
+  // 2026-08-31: the CRM actions board). Body, not path, so it is special-cased
+  // in runAction below.
+  grant: { method: 'POST', path: '/admin/grant', label: 'Grant owner credit', needsTenant: true },
 } as const;
 
 export type ActionName = keyof typeof ACTIONS;
+
+/** The board's grant ceiling. A bigger grant is a deliberate act that belongs in
+ *  a documented curl with the owner bearer, not one tap from a list row. */
+const GRANT_MAX_MICRO = 50_000_000;
 
 export function isAction(name: string): name is ActionName {
   return Object.hasOwn(ACTIONS, name);
 }
 
-export async function runAction(name: ActionName, tenant?: string): Promise<unknown> {
+export async function runAction(
+  name: ActionName,
+  tenant?: string,
+  opts?: { amountMicro?: number; reason?: string },
+): Promise<unknown> {
   const action = ACTIONS[name];
   const needsTenant = 'needsTenant' in action && action.needsTenant;
   if (needsTenant && !tenant) throw new Error(`${name} needs a tenant id`);
   // Tenant ids are the console's own opaque ids; anything else is a path-injection
   // attempt, so it is rejected here rather than encoded and forwarded.
   if (tenant && !/^[A-Za-z0-9_-]{1,64}$/.test(tenant)) throw new Error(`bad tenant id ${tenant}`);
+  if (name === 'grant') {
+    const amountMicro = opts?.amountMicro;
+    if (!Number.isSafeInteger(amountMicro) || amountMicro! <= 0 || amountMicro! > GRANT_MAX_MICRO) {
+      throw new Error(`grant needs an integer amountMicro in (0, ${GRANT_MAX_MICRO}]`);
+    }
+    const reason = (opts?.reason ?? '').trim() || 'crm-board';
+    if (reason.length > 120) throw new Error('grant reason too long');
+    return request<unknown>('POST', action.path, {
+      tenant_id: tenant,
+      amount_micro: amountMicro,
+      reason,
+    });
+  }
   const path = needsTenant ? action.path.replace('{tenant}', tenant!) : action.path;
   return request<unknown>('POST', path);
 }

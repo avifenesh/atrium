@@ -265,13 +265,26 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    const tiyuvtaAction = path.match(/^\/api\/tiyuvta\/([a-z-]+)$/);
+    // Two paths, one handler and one allowlist. /api/tiyuvta/* is the original
+    // machine-only surface (TiyuvtaPanel); /api/crm/act/* is the same allowlist
+    // reachable from the CRM host, which authenticates every request through
+    // Access + the in-daemon JWT before this code runs (owner ask 2026-08-31:
+    // the CRM admin actions board). It is never a path passthrough: the name
+    // must be in ACTIONS, the tenant id is validated, and grant is bounded.
+    const tiyuvtaAction = path.match(/^\/api\/(?:tiyuvta|crm\/act)\/([a-z-]+)$/);
     if (method === 'POST' && tiyuvtaAction) {
       const name = tiyuvtaAction[1];
       if (!isTiyuvtaAction(name)) return json(res, 404, { error: `unknown action ${name}` });
-      const body = (await readBody(req).catch(() => ({}))) as { tenant?: string };
+      const body = (await readBody(req).catch(() => ({}))) as {
+        tenant?: string;
+        amountMicro?: number;
+        reason?: string;
+      };
       try {
-        const result = await runTiyuvtaAction(name, body?.tenant);
+        const result = await runTiyuvtaAction(name, body?.tenant, {
+          amountMicro: body?.amountMicro,
+          reason: body?.reason,
+        });
         // Re-poll immediately: an action that changes the numbers should not leave a
         // stale panel until the next five-minute cycle.
         void tiyuvtaCollector.run();

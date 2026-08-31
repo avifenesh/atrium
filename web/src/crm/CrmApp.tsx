@@ -129,6 +129,99 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
   );
 }
 
+/**
+ * The admin actions board (owner ask 2026-08-31), for console accounts only.
+ *
+ * Seam rules it keeps, from the 2026-08-17 operator-UI ruling this supersedes
+ * in part: every action is an ALLOWLIST name (never a path), the tenant is the
+ * OPENED account (never a free-text id box), destructive actions take two taps
+ * (the second labeled with what is about to happen), and grant is bounded
+ * server-side ($50 board ceiling; bigger grants stay a documented curl).
+ * Suspension goes through the console suspend endpoint, which revokes engine
+ * keys with it: a direct D1 suspension without key revocation took the whole
+ * API fail-closed for 65 minutes on 2026-08-31.
+ */
+function AdminActions({ item, busy, run }: { item: CrmItem; busy: boolean; run: (work: () => Promise<unknown>) => Promise<void> }) {
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const [grantUsd, setGrantUsd] = useState(5);
+  if (item.kind !== 'account' || !item.metrics || !item.id.startsWith('tenant:')) return null;
+  const m = item.metrics;
+  const tenant = item.id.slice('tenant:'.length);
+  const email = item.title.includes('@') ? item.title : null;
+
+  const act = (name: string, extra?: Record<string, unknown>) =>
+    run(() => post(`/api/crm/act/${name}`, { tenant, ...extra }));
+  // Two taps: the first arms, the second (relabeled) fires; arming decays.
+  const guarded = (name: string, extra?: Record<string, unknown>) => {
+    if (confirm !== name) {
+      setConfirm(name);
+      window.setTimeout(() => setConfirm((c) => (c === name ? null : c)), 5000);
+      return;
+    }
+    setConfirm(null);
+    void act(name, extra);
+  };
+
+  const btn = (armed: boolean, tone: string) =>
+    `cursor-pointer rounded-lg border px-2.5 py-1.5 font-mono text-[11px] ${
+      armed ? 'border-coral/60 bg-coral/10 text-coral' : `border-white/8 ${tone}`
+    }`;
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-mist-faint">admin</div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {!m.suspended && (
+          <button type="button" disabled={busy} onClick={() => guarded('suspend')} className={btn(confirm === 'suspend', 'text-coral')}>
+            {confirm === 'suspend' ? 'really suspend (revokes keys)' : 'suspend'}
+          </button>
+        )}
+        {m.suspended && (
+          <button type="button" disabled={busy} onClick={() => guarded('restore')} className={btn(confirm === 'restore', 'text-jade')}>
+            {confirm === 'restore' ? 'really restore' : 'restore'}
+          </button>
+        )}
+        {!m.enrolled && (
+          <button type="button" disabled={busy} onClick={() => guarded('enroll')} className={btn(confirm === 'enroll', 'text-mist-dim')}>
+            {confirm === 'enroll' ? 'really enroll with the engine' : 'enroll'}
+          </button>
+        )}
+        <span className="ml-1 inline-flex items-center gap-1">
+          <select
+            value={grantUsd}
+            disabled={busy}
+            onChange={(e) => {
+              setGrantUsd(Number(e.target.value));
+              setConfirm(null);
+            }}
+            className="rounded-lg border border-white/10 bg-ink px-1.5 py-1.5 font-mono text-[11px] text-mist"
+          >
+            {[5, 10, 25].map((v) => (
+              <option key={v} value={v}>${v}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => guarded('grant', { amountMicro: grantUsd * 1_000_000, reason: 'crm-board' })}
+            className={btn(confirm === 'grant', 'text-amber')}
+          >
+            {confirm === 'grant' ? `really grant $${grantUsd}` : 'grant credit'}
+          </button>
+        </span>
+        {email && (
+          <a
+            href={`mailto:${email}`}
+            className="cursor-pointer rounded-lg border border-white/8 px-2.5 py-1.5 font-mono text-[11px] text-mist-dim no-underline"
+          >
+            mail
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ActionEditor({ item, busy, run }: { item: CrmItem; busy: boolean; run: (work: () => Promise<unknown>) => Promise<void> }) {
   const [label, setLabel] = useState(item.action?.label ?? '');
   const [brief, setBrief] = useState(item.action?.brief ?? '');
@@ -278,6 +371,8 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
         )}
 
         <ActionEditor item={item} busy={busy} run={run} />
+
+        <AdminActions item={item} busy={busy} run={run} />
 
         {/* stage — one tap per column; tapping the derived stage clears the override */}
         <div className="mt-4">
