@@ -78,6 +78,12 @@ export function Board({
         // but "commented 12" over twelve X leads beats "contacted 12".
         const sample = column[0];
         const header = sample ? stageLabelFor(sample, stage) : stageLabelFor({ kind: 'lead', source: null }, stage);
+        // The funnel is early-stage-heavy by nature: fixed equal columns gave 60%
+        // of the canvas to permanently-empty stages while "new" scrolled 30 cards
+        // inside 260px. Empty stages collapse to a slim rail (still a drop target —
+        // it expands the moment a drag hovers it); populated columns share the
+        // freed width and let cards flow into a second track when wide.
+        const collapsed = column.length === 0 && dropStage !== stage;
         return (
           <div
             key={stage}
@@ -98,24 +104,32 @@ export function Board({
               // dropping onto the derived stage = clear the override, not pin it
               onMove(id, stage === item.derivedStage ? null : stage);
             }}
-            className={`w-60 shrink-0 rounded-xl border bg-white/[0.015] xl:w-64 ${
+            className={`rounded-xl border bg-white/[0.015] transition-all duration-150 ${
               dropStage === stage ? 'border-white/30 bg-white/[0.04]' : 'border-white/8'
-            }`}
+            } ${collapsed ? 'w-28 shrink-0' : 'min-w-64 max-w-2xl flex-1 shrink-0'}`}
           >
-            <div className="flex items-baseline justify-between px-2.5 pb-1 pt-2">
-              <span className={`font-mono text-[11px] ${STAGE_TONE[stage]}`}>{header}</span>
+            <div className="flex items-baseline justify-between gap-1 px-2.5 pb-1 pt-2">
+              <span className={`truncate font-mono text-[11px] ${STAGE_TONE[stage]}`}>{header}</span>
               <span className="font-mono text-[10px] text-mist-faint">{column.length}</span>
             </div>
-            <div className="max-h-[62vh] space-y-1.5 overflow-y-auto p-1.5 pt-0.5">
-              {column.map((item) => (
-                <BoardCard key={item.id} item={item} onOpen={() => onOpen(item.id)} />
-              ))}
-              {column.length === 0 && (
-                <div className="rounded-lg border border-dashed border-white/8 px-2 py-3 text-center font-mono text-[10px] text-mist-faint">
-                  {dropStage === stage ? 'drop here' : 'empty'}
-                </div>
-              )}
-            </div>
+            {!collapsed && (
+              <div
+                className="grid max-h-[62vh] content-start gap-1.5 overflow-y-auto p-1.5 pt-0.5"
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(15rem, 1fr))' }}
+              >
+                {column.map((item) => (
+                  <BoardCard key={item.id} item={item} onOpen={() => onOpen(item.id)} />
+                ))}
+                {column.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-white/20 px-2 py-3 text-center font-mono text-[10px] text-mist">
+                    drop here
+                  </div>
+                )}
+              </div>
+            )}
+            {collapsed && (
+              <div className="px-2.5 pb-3 font-mono text-[10px] text-mist-faint">empty</div>
+            )}
           </div>
         );
       })}
