@@ -921,6 +921,23 @@ export interface CrmOverview {
      *  unbeaconed page); `playground_rendered` is an impression, not an action */
     playground?: Record<string, Array<{ label: string; count: number }>>;
   } | null;
+  /** the traffic explorer's raw-ish material, per window: where visits LAND
+   *  (non-internal-referrer views) with each page's own source breakdown, the
+   *  same-site page→page edges, and the campaign slugs seen on landings */
+  explore: {
+    windows: string[];
+    landings: Record<string, Array<{
+      site: string;
+      path: string;
+      landed: number;
+      direct: number;
+      external: number;
+      campaign: number;
+      sources: Array<{ label: string; views: number }>;
+    }>>;
+    edges: Record<string, Array<{ site: string; from: string; to: string; views: number }>>;
+    campaigns: Record<string, Array<{ site: string; campaign: string; views: number }>>;
+  } | null;
   /** Google Ads spend joined with the signup funnel per ref (30d spend window,
    *  funnel all-time). costUsd converted at read by the collector; the kill
    *  gate ($150/payer, ads cell) renders from these numbers. */

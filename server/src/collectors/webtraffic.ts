@@ -13,7 +13,7 @@
 // reports are trailing multi-day windows, so polling faster buys nothing. No flags
 // either — traffic going up or down is information, not an anomaly that pages.
 
-import { readWebFunnel, readWebTraffic, WebTrafficUnconfigured } from '../core/webtraffic.js';
+import { readWebExplore, readWebFunnel, readWebTraffic, WebTrafficUnconfigured } from '../core/webtraffic.js';
 import { store } from '../state.js';
 import { iso } from '../util.js';
 import type { ExtraRow } from '../../../shared/types.js';
@@ -36,6 +36,10 @@ const collector: Collector = {
       // report, so it degrades to null and the overview renders without it.
       const funnel = await readWebFunnel().catch((err) => {
         console.error('[webtraffic] funnel read failed:', err instanceof Error ? err.message : err);
+        return null;
+      });
+      const explore = await readWebExplore().catch((err) => {
+        console.error('[webtraffic] explore read failed:', err instanceof Error ? err.message : err);
         return null;
       });
 
@@ -73,7 +77,7 @@ const collector: Collector = {
         up: true,
         rows,
         error: null,
-        data: { ...report, funnel },
+        data: { ...report, funnel, explore },
       });
     } catch (error) {
       const missingCreds = error instanceof WebTrafficUnconfigured;

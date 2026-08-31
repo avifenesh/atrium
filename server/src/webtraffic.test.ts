@@ -174,3 +174,34 @@ test('foldFunnelWindow splits arrivals into direct/external/internal and joins t
   assert.equal(w.engagedOver10s, 7);
   assert.equal(w.avgEngagedS, 11.9);
 });
+
+test('explore: landings exclude internal referrers, edges are internal-only moves', async () => {
+  const { exploreLandingsSql, exploreEdgesSql } = await import('./core/webtraffic.js');
+  const landings = exploreLandingsSql('tiyuvta_web', 7);
+  assert.match(landings, /blob4 != 'internal'/);
+  assert.match(landings, /blob10 AS campaign/);
+  const edges = exploreEdgesSql('tiyuvta_web', 'yesterday');
+  assert.match(edges, /blob4 = 'internal'/);
+  assert.match(edges, /blob6 != blob3/);
+  assert.match(edges, /toStartOfInterval/);
+});
+
+test('foldLandings: per-page split, campaign wins the source label, campaigns totalled', async () => {
+  const { foldLandings } = await import('./core/webtraffic.js');
+  const { landings, campaigns } = foldLandings([
+    { site: 'app', path: '/pricing', kind: 'direct', host: '', campaign: '', views: '10' },
+    { site: 'app', path: '/pricing', kind: 'search', host: 'google.com', campaign: '', views: '4' },
+    { site: 'app', path: '/pricing', kind: 'direct', host: '', campaign: 'hn-launch', views: '3' },
+    { site: 'lab', path: '/', kind: 'social', host: 'x.com', campaign: '', views: '2' },
+  ]);
+  const pricing = landings.find((l) => l.path === '/pricing');
+  assert.equal(pricing?.landed, 17);
+  assert.equal(pricing?.direct, 13, 'a tagged direct arrival is still direct by referrer');
+  assert.equal(pricing?.external, 4);
+  assert.equal(pricing?.campaign, 3);
+  assert.deepEqual(pricing?.sources[0], { label: 'direct', views: 10 });
+  assert.ok(pricing?.sources.some((s) => s.label === '?hn-launch' && s.views === 3), 'campaign labels its own source row');
+  assert.ok(pricing?.sources.some((s) => s.label === 'google.com' && s.views === 4));
+  assert.deepEqual(campaigns, [{ site: 'app', campaign: 'hn-launch', views: 3 }]);
+  assert.equal(landings[0]?.path, '/pricing', 'sorted by landed desc');
+});

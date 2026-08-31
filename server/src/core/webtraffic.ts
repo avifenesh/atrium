@@ -407,6 +407,127 @@ export async function readWebFunnel(): Promise<FunnelReport> {
   };
 }
 
+// ---------- the traffic explorer ----------
+//
+// Raw material for playing with the data instead of reading a translation:
+// where people LAND (first pageview of a visit = a view whose referrer is not
+// same-site), where each landing came from, and the same-site EDGES (page →
+// next page). The UI slices these by window/site/path; the folds here only cap
+// list sizes, they do not editorialize.
+
+/** Landings per (site, path, referrer kind, host, campaign). */
+export function exploreLandingsSql(dataset: string, window: 'today' | 'yesterday' | number): string {
+  return `SELECT blob1 AS site, blob3 AS path, blob4 AS kind, blob5 AS host, blob10 AS campaign, SUM(_sample_interval) AS views
+    FROM ${dataset} WHERE ${funnelWindowClause(window)} AND blob2 = 'view' AND blob4 != 'internal'
+    GROUP BY site, path, kind, host, campaign ORDER BY views DESC LIMIT 400`;
+}
+
+/** Same-site page→page moves. */
+export function exploreEdgesSql(dataset: string, window: 'today' | 'yesterday' | number): string {
+  return `SELECT blob1 AS site, blob6 AS from_path, blob3 AS to_path, SUM(_sample_interval) AS views
+    FROM ${dataset} WHERE ${funnelWindowClause(window)} AND blob2 = 'view' AND blob4 = 'internal' AND blob6 != blob3
+    GROUP BY site, from_path, to_path ORDER BY views DESC LIMIT 300`;
+}
+
+export interface ExploreLanding {
+  site: string;
+  path: string;
+  landed: number;
+  direct: number;
+  external: number;
+  campaign: number;
+  /** external+campaign sources for THIS landing page, largest first */
+  sources: Array<{ label: string; views: number }>;
+}
+
+export interface ExploreEdge {
+  site: string;
+  from: string;
+  to: string;
+  views: number;
+}
+
+export interface ExploreReport {
+  windows: FunnelWindowKey[];
+  landings: Record<string, ExploreLanding[]>;
+  edges: Record<string, ExploreEdge[]>;
+  /** campaign slugs seen on landings, per window */
+  campaigns: Record<string, Array<{ site: string; campaign: string; views: number }>>;
+}
+
+/** Fold raw landing rows into per-page stats with their own source breakdown.
+ *  Exported for tests. */
+export function foldLandings(rows: Array<Record<string, unknown>>): {
+  landings: ExploreLanding[];
+  campaigns: Array<{ site: string; campaign: string; views: number }>;
+} {
+  const pages = new Map<string, ExploreLanding & { sourceMap: Map<string, number> }>();
+  const campaignTotals = new Map<string, { site: string; campaign: string; views: number }>();
+  for (const row of rows) {
+    const site = str(row.site);
+    const path = str(row.path) || '/';
+    const kind = str(row.kind);
+    const host = str(row.host);
+    const campaign = str(row.campaign);
+    const views = num(row.views);
+    const key = `${site}|${path}`;
+    const page = pages.get(key) ?? {
+      site, path, landed: 0, direct: 0, external: 0, campaign: 0, sources: [], sourceMap: new Map<string, number>(),
+    };
+    page.landed += views;
+    if (campaign) {
+      page.campaign += views;
+      const ckey = `${site}|${campaign}`;
+      const entry = campaignTotals.get(ckey) ?? { site, campaign, views: 0 };
+      entry.views += views;
+      campaignTotals.set(ckey, entry);
+    }
+    if (kind === 'direct' || kind === '') page.direct += views;
+    else page.external += views;
+    // The source label a human reads: campaign wins (it is deliberate), then
+    // host, then the coarse kind bucket.
+    const label = campaign ? `?${campaign}` : host || kind || 'direct';
+    page.sourceMap.set(label, (page.sourceMap.get(label) ?? 0) + views);
+    pages.set(key, page);
+  }
+  const landings = [...pages.values()]
+    .map(({ sourceMap, ...page }) => ({
+      ...page,
+      sources: [...sourceMap.entries()]
+        .map(([label, views]) => ({ label, views }))
+        .sort((a, b) => b.views - a.views)
+        .slice(0, 8),
+    }))
+    .sort((a, b) => b.landed - a.landed)
+    .slice(0, 40);
+  const campaigns = [...campaignTotals.values()].sort((a, b) => b.views - a.views).slice(0, 12);
+  return { landings, campaigns };
+}
+
+export async function readWebExplore(): Promise<ExploreReport> {
+  const { dataset } = settings();
+  const results = await Promise.all(FUNNEL_WINDOWS.map(async ({ key, window }) => {
+    const [landingRows, edgeRows] = await Promise.all([
+      query(exploreLandingsSql(dataset, window)),
+      query(exploreEdgesSql(dataset, window)),
+    ]);
+    return { key, landingRows, edgeRows };
+  }));
+  const report: ExploreReport = { windows: FUNNEL_WINDOWS.map((w) => w.key), landings: {}, edges: {}, campaigns: {} };
+  for (const r of results) {
+    const folded = foldLandings(r.landingRows);
+    report.landings[r.key] = folded.landings;
+    report.campaigns[r.key] = folded.campaigns;
+    report.edges[r.key] = r.edgeRows.map((row) => ({
+      site: str(row.site),
+      from: str(row.from_path) || '(unknown)',
+      to: str(row.to_path),
+      views: num(row.views),
+    })).slice(0, 200);
+  }
+  return report;
+}
+
 // ---------- the report ----------
 
 export interface WebTrafficReport {

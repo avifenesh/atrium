@@ -315,31 +315,14 @@ const WINDOW_LABEL: Record<string, string> = {
   '7d': '7 days',
 };
 
-export function FunnelBlock({ funnel }: { funnel: CrmOverview['funnel'] }) {
-  const windows = funnel?.windows ?? [];
-  const [win, setWin] = useState('today');
+export function FunnelBlock({ funnel, win }: { funnel: CrmOverview['funnel']; win: string }) {
   if (!funnel || funnel.pages.length === 0) return null;
-  const selected = windows.includes(win) ? win : windows[0] ?? 'today';
-  const pg = funnel.playground?.[selected] ?? [];
+  const pg = funnel.playground?.[win] ?? [];
   const pgLine = pg.map((r) => `${r.label.replace(/^playground_/, '')} ${r.count}`).join(' · ');
   return (
     <div className="space-y-2">
-      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-        {windows.map((w) => (
-          <button
-            key={w}
-            type="button"
-            onClick={() => setWin(w)}
-            className={`shrink-0 cursor-pointer rounded-full border px-3 py-1 font-mono text-[11px] ${
-              selected === w ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
-            }`}
-          >
-            {WINDOW_LABEL[w] ?? w}
-          </button>
-        ))}
-      </div>
       {funnel.pages.map((page) => {
-        const stat = page.byWindow[selected];
+        const stat = page.byWindow[win];
         if (!stat) return null;
         return (
           <div key={`${page.site}:${page.path}`} className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
@@ -347,7 +330,7 @@ export function FunnelBlock({ funnel }: { funnel: CrmOverview['funnel'] }) {
               {page.path === '/login' ? 'sign-in page' : page.path}
               <span className="ml-2 text-mist-faint">{page.site} {page.path}</span>
             </div>
-            <FunnelWindowRow label={WINDOW_LABEL[selected] ?? selected} w={stat} />
+            <FunnelWindowRow label={WINDOW_LABEL[win] ?? win} w={stat} />
           </div>
         );
       })}
@@ -360,7 +343,160 @@ export function FunnelBlock({ funnel }: { funnel: CrmOverview['funnel'] }) {
             playground events
             <span className="ml-2 text-mist-faint">app /app · rendered = impression, first_success = first API call</span>
           </div>
-          <div className="font-mono text-[11px] text-mist-dim">{WINDOW_LABEL[selected] ?? selected}: {pgLine}</div>
+          <div className="font-mono text-[11px] text-mist-dim">{WINDOW_LABEL[win] ?? win}: {pgLine}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- the traffic explorer ------------------------------------------------------
+//
+// Play-with-the-data surface: pick a window and a site, read WHERE VISITS LAND
+// (a landing = a pageview whose referrer is not same-site), sort and search the
+// table, tap a row to see that page's own sources and where those visitors went
+// next. Counts are pageview aggregates from the cookieless dataset — "direct"
+// means the browser sent no referrer (apps, bookmarks, email, most agent UIs),
+// not "untracked": external referrers and ?c=/?ref=/utm_* campaigns are all read.
+
+type LandingSort = 'landed' | 'direct' | 'external' | 'campaign';
+
+function ExploreBlock({ explore, win }: { explore: CrmOverview['explore']; win: string }) {
+  const [site, setSite] = useState<'all' | 'app' | 'lab'>('all');
+  const [sort, setSort] = useState<LandingSort>('landed');
+  const [needle, setNeedle] = useState('');
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  if (!explore) return null;
+
+  const landings = (explore.landings[win] ?? [])
+    .filter((l) => site === 'all' || l.site === site)
+    .filter((l) => !needle || l.path.toLowerCase().includes(needle.toLowerCase()))
+    .sort((a, b) => b[sort] - a[sort]);
+  const edges = (explore.edges[win] ?? []).filter((e) => site === 'all' || e.site === site);
+  const campaigns = (explore.campaigns[win] ?? []).filter((c) => site === 'all' || c.site === site);
+  const open = openPath ? landings.find((l) => `${l.site}|${l.path}` === openPath) ?? null : null;
+  const onwardOf = (l: { site: string; path: string }) =>
+    edges.filter((e) => e.site === l.site && e.from === l.path).sort((a, b) => b.views - a.views).slice(0, 8);
+  const inboundOf = (l: { site: string; path: string }) =>
+    edges.filter((e) => e.site === l.site && e.to === l.path).sort((a, b) => b.views - a.views).slice(0, 8);
+  const totals = landings.reduce(
+    (a, l) => ({ landed: a.landed + l.landed, direct: a.direct + l.direct, external: a.external + l.external, campaign: a.campaign + l.campaign }),
+    { landed: 0, direct: 0, external: 0, campaign: 0 },
+  );
+
+  const header = (key: LandingSort, label: string) => (
+    <th
+      className={`cursor-pointer px-3 py-2 text-right font-normal ${sort === key ? 'text-mist' : ''}`}
+      onClick={() => setSort(key)}
+      title="click to sort"
+    >
+      {label}{sort === key ? ' ↓' : ''}
+    </th>
+  );
+
+  return (
+    <div className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-[11px] text-mist">landings — {WINDOW_LABEL[win] ?? win}</span>
+        {(['all', 'app', 'lab'] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setSite(s)}
+            className={`cursor-pointer rounded-full border px-2.5 py-0.5 font-mono text-[10px] ${
+              site === s ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
+            }`}
+          >
+            {s === 'app' ? 'inference' : s}
+          </button>
+        ))}
+        <span className="font-mono text-[10px] text-mist-faint">
+          {totals.landed} landed · {totals.external} referred · {totals.campaign} tagged · {totals.direct} direct
+        </span>
+        <input
+          value={needle}
+          onChange={(e) => setNeedle(e.target.value)}
+          placeholder="filter paths"
+          className="ml-auto w-28 rounded-full border border-white/10 bg-ink px-3 py-1 font-mono text-[11px] text-mist placeholder:text-mist-faint focus:outline-none"
+        />
+      </div>
+
+      {campaigns.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {campaigns.map((c) => (
+            <Chip key={`${c.site}|${c.campaign}`} tone="border-jade/30 text-jade">?{c.campaign} {c.views}</Chip>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-lg border border-white/8">
+        <table className="w-full border-collapse font-mono text-[12px]">
+          <thead>
+            <tr className="border-b border-white/8 text-left text-mist-faint">
+              <th className="px-3 py-2 font-normal">landing page</th>
+              {header('landed', 'landed')}
+              {header('external', 'referred')}
+              {header('campaign', 'tagged')}
+              {header('direct', 'direct')}
+              <th className="px-3 py-2 text-right font-normal">moved on</th>
+            </tr>
+          </thead>
+          <tbody>
+            {landings.map((l) => {
+              const key = `${l.site}|${l.path}`;
+              const onward = onwardOf(l).reduce((a, e) => a + e.views, 0);
+              return (
+                <tr
+                  key={key}
+                  onClick={() => setOpenPath(openPath === key ? null : key)}
+                  className={`cursor-pointer border-b border-white/5 last:border-0 hover:bg-white/[0.03] ${openPath === key ? 'bg-white/[0.04]' : ''}`}
+                >
+                  <td className="px-3 py-2 text-mist">
+                    {site === 'all' && <span className="mr-1.5 text-mist-faint">{l.site === 'app' ? 'inf' : 'lab'}</span>}
+                    {l.path}
+                  </td>
+                  <td className="px-3 py-2 text-right text-mist">{l.landed}</td>
+                  <td className="px-3 py-2 text-right text-mist-dim">{l.external}</td>
+                  <td className={`px-3 py-2 text-right ${l.campaign > 0 ? 'text-jade' : 'text-mist-faint'}`}>{l.campaign}</td>
+                  <td className="px-3 py-2 text-right text-mist-faint">{l.direct}</td>
+                  <td className="px-3 py-2 text-right text-mist-dim">{onward}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {landings.length === 0 && (
+          <div className="px-3 py-4 text-center font-mono text-xs text-mist-faint">no landings in this cut</div>
+        )}
+      </div>
+
+      {open && (
+        <div className="mt-2 rounded-lg border border-white/12 bg-ink px-3 py-2.5">
+          <div className="mb-1.5 font-mono text-[11px] text-mist">{open.path} — this window</div>
+          <div className="grid gap-2 font-mono text-[11px] text-mist-dim sm:grid-cols-3">
+            <div>
+              <div className="mb-1 text-[10px] uppercase tracking-wider text-mist-faint">landed from</div>
+              {open.sources.map((s) => (
+                <div key={s.label}>{s.label} <span className="text-mist">{s.views}</span></div>
+              ))}
+              {open.sources.length === 0 && <div>only direct</div>}
+              {open.direct > 0 && <div>direct <span className="text-mist">{open.direct}</span></div>}
+            </div>
+            <div>
+              <div className="mb-1 text-[10px] uppercase tracking-wider text-mist-faint">then moved to</div>
+              {onwardOf(open).map((e) => (
+                <div key={e.to}>{e.to} <span className="text-mist">{e.views}</span></div>
+              ))}
+              {onwardOf(open).length === 0 && <div>nowhere recorded</div>}
+            </div>
+            <div>
+              <div className="mb-1 text-[10px] uppercase tracking-wider text-mist-faint">also reached from our pages</div>
+              {inboundOf(open).map((e) => (
+                <div key={e.from}>{e.from} <span className="text-mist">{e.views}</span></div>
+              ))}
+              {inboundOf(open).length === 0 && <div>none</div>}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -369,6 +505,11 @@ export function FunnelBlock({ funnel }: { funnel: CrmOverview['funnel'] }) {
 
 export function TrafficTab({ data }: { data: CrmOverview }) {
   const { visitors, exposure } = data;
+  // One window governs the whole tab: explorer, funnel and playground read the
+  // same slice, so the numbers on screen are always about the same hours.
+  const windows = data.explore?.windows ?? data.funnel?.windows ?? [];
+  const [win, setWin] = useState('today');
+  const selectedWin = windows.includes(win) ? win : windows[0] ?? 'today';
 
   // per-site daily series over the union of days, oldest→newest
   const sites = visitors ? [...new Set(visitors.daily.map((r) => r.site))].sort() : [];
@@ -378,9 +519,27 @@ export function TrafficTab({ data }: { data: CrmOverview }) {
 
   return (
     <div className="space-y-2">
-      {/* funnel first: "did anyone try to sign in today, and what did they do"
-          outranks every trend line on this tab */}
-      <FunnelBlock funnel={data.funnel} />
+      {windows.length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+          {windows.map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={() => setWin(w)}
+              className={`shrink-0 cursor-pointer rounded-full border px-3 py-1 font-mono text-[11px] ${
+                selectedWin === w ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
+              }`}
+              title="calendar windows are UTC"
+            >
+              {WINDOW_LABEL[w] ?? w}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* where visits land, and where they go — the explorer is the tab's centerpiece */}
+      <ExploreBlock explore={data.explore} win={selectedWin} />
+      {/* the money page: "did anyone try to sign in, and what did they do" */}
+      <FunnelBlock funnel={data.funnel} win={selectedWin} />
       <div className="grid gap-2 lg:grid-cols-2">
         {visitors && days.length > 0 && (
           <TrendChart
@@ -431,34 +590,44 @@ export function TrafficTab({ data }: { data: CrmOverview }) {
         )}
       </div>
 
-      {/* AI assistants + external referrers sending people to the sites. The ai
-          rows are floor counts: assistant apps often strip the referrer. */}
-      {visitors && visitors.referrers.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {visitors.referrers
-            .filter((r) => r.kind === 'ai')
-            .map((r) => (
-              <Chip key={`ai-${r.host}`} tone="border-jade/30 text-jade">
-                AI · {r.host || '?'} {r.views}
-              </Chip>
-            ))}
-          {visitors.referrers
-            .filter((r) => r.kind !== 'ai')
-            .slice(0, 8)
-            .map((r) => (
-              <Chip key={`${r.kind}-${r.host}`}>
-                {r.kind}{r.host ? ` · ${r.host}` : ''} {r.views}
-              </Chip>
-            ))}
-        </div>
-      )}
-
-      {exposure && exposure.referrers.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {exposure.referrers.slice(0, 6).map((r) => (
-            <Chip key={r.referrer}>gh ref · {r.referrer} {r.count}</Chip>
-          ))}
-        </div>
+      {/* 7d referrer chips: useful reference, but the explorer above answers the
+          same question per window — so this is a collapsed appendix, not a strip
+          competing with it. AI rows are floor counts (assistant apps strip the
+          referrer more often than not). */}
+      {((visitors && visitors.referrers.length > 0) || (exposure && exposure.referrers.length > 0)) && (
+        <details className="rounded-xl border border-white/8 px-3.5 py-2">
+          <summary className="cursor-pointer font-mono text-[11px] text-mist-faint">
+            referrer appendix — 7d site referrers + GitHub repo referrers
+          </summary>
+          <div className="mt-2 space-y-2">
+            {visitors && visitors.referrers.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {visitors.referrers
+                  .filter((r) => r.kind === 'ai')
+                  .map((r) => (
+                    <Chip key={`ai-${r.host}`} tone="border-jade/30 text-jade">
+                      AI · {r.host || '?'} {r.views}
+                    </Chip>
+                  ))}
+                {visitors.referrers
+                  .filter((r) => r.kind !== 'ai')
+                  .slice(0, 8)
+                  .map((r) => (
+                    <Chip key={`${r.kind}-${r.host}`}>
+                      {r.kind}{r.host ? ` · ${r.host}` : ''} {r.views}
+                    </Chip>
+                  ))}
+              </div>
+            )}
+            {exposure && exposure.referrers.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {exposure.referrers.slice(0, 6).map((r) => (
+                  <Chip key={r.referrer}>gh ref · {r.referrer} {r.count}</Chip>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );
