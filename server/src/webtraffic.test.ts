@@ -114,6 +114,10 @@ test('foldChannels aggregates both windows and reports deltas, sorted by views',
 test('funnel windows: today is a calendar day, week is trailing', async () => {
   const { funnelWindowClause, funnelArrivalsSql, funnelOnwardSql, funnelLeavesSql, funnelCtaSql } = await import('./core/webtraffic.js');
   assert.equal(funnelWindowClause('today'), "timestamp > toStartOfInterval(NOW(), INTERVAL '1' DAY)");
+  assert.equal(
+    funnelWindowClause('yesterday'),
+    "timestamp > toStartOfInterval(NOW(), INTERVAL '1' DAY) - INTERVAL '1' DAY AND timestamp <= toStartOfInterval(NOW(), INTERVAL '1' DAY)",
+  );
   assert.equal(funnelWindowClause(7), "timestamp > NOW() - INTERVAL '7' DAY");
 
   const arrivals = funnelArrivalsSql('tiyuvta_web', 'app', ['/login', '/app'], 'today');

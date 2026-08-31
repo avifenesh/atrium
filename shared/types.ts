@@ -910,15 +910,16 @@ export interface CrmOverview {
    *  views minus onward navigations minus CTA clicks — there is no visitor id
    *  and never will be (consent law). */
   funnel: {
+    /** window keys in display order: 'today', 'yesterday', '24h', '3d', '7d' */
+    windows: string[];
     pages: Array<{
       site: string;
       path: string;
-      today: CrmFunnelWindow;
-      week: CrmFunnelWindow;
+      byWindow: Record<string, CrmFunnelWindow>;
     }>;
-    /** signed-in playground events (labeled ctas on an otherwise unbeaconed page);
-     *  `playground_rendered` is an impression, not an action */
-    playground?: { today: Array<{ label: string; count: number }>; week: Array<{ label: string; count: number }> };
+    /** signed-in playground events per window (labeled ctas on an otherwise
+     *  unbeaconed page); `playground_rendered` is an impression, not an action */
+    playground?: Record<string, Array<{ label: string; count: number }>>;
   } | null;
   /** Google Ads spend joined with the signup funnel per ref (30d spend window,
    *  funnel all-time). costUsd converted at read by the collector; the kill

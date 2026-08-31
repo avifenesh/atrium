@@ -234,16 +234,29 @@ function safePath(path: string): string {
 
 const pathList = (paths: string[]): string => paths.map((p) => `'${safePath(p)}'`).join(', ');
 
-/** Calendar-day-so-far vs trailing window: 'today' answers the owner's morning
- *  question; the week answers whether today is normal. */
-export function funnelWindowClause(window: 'today' | number): string {
-  return window === 'today'
-    ? `timestamp > toStartOfInterval(NOW(), INTERVAL '1' DAY)`
-    : windowClause(window);
+/** The window set the owner reads: the two calendar days answer "this morning"
+ *  and "while I slept"; the trailing windows say whether they are normal. */
+export type FunnelWindowKey = 'today' | 'yesterday' | '24h' | '3d' | '7d';
+export const FUNNEL_WINDOWS: ReadonlyArray<{ key: FunnelWindowKey; window: 'today' | 'yesterday' | number }> = [
+  { key: 'today', window: 'today' },
+  { key: 'yesterday', window: 'yesterday' },
+  { key: '24h', window: 1 },
+  { key: '3d', window: 3 },
+  { key: '7d', window: 7 },
+];
+
+/** Calendar days are UTC (the dataset's clock); trailing windows are NOW()-relative. */
+export function funnelWindowClause(window: 'today' | 'yesterday' | number): string {
+  const dayStart = `toStartOfInterval(NOW(), INTERVAL '1' DAY)`;
+  if (window === 'today') return `timestamp > ${dayStart}`;
+  if (window === 'yesterday') {
+    return `timestamp > ${dayStart} - INTERVAL '1' DAY AND timestamp <= ${dayStart}`;
+  }
+  return windowClause(window);
 }
 
 /** Arrivals onto the funnel pages: one row per (path, referrer kind, host, from-path). */
-export function funnelArrivalsSql(dataset: string, site: string, paths: string[], window: 'today' | number): string {
+export function funnelArrivalsSql(dataset: string, site: string, paths: string[], window: 'today' | 'yesterday' | number): string {
   return `SELECT blob3 AS path, blob4 AS kind, blob5 AS host, blob6 AS from_path, SUM(_sample_interval) AS views
     FROM ${dataset} WHERE ${funnelWindowClause(window)} AND blob2 = 'view' AND blob1 = '${site}'
     AND blob3 IN (${pathList(paths)})
@@ -251,7 +264,7 @@ export function funnelArrivalsSql(dataset: string, site: string, paths: string[]
 }
 
 /** Same-site navigations AWAY from the funnel pages: where people went next. */
-export function funnelOnwardSql(dataset: string, site: string, paths: string[], window: 'today' | number): string {
+export function funnelOnwardSql(dataset: string, site: string, paths: string[], window: 'today' | 'yesterday' | number): string {
   return `SELECT blob6 AS from_path, blob3 AS path, SUM(_sample_interval) AS views
     FROM ${dataset} WHERE ${funnelWindowClause(window)} AND blob2 = 'view' AND blob1 = '${site}'
     AND blob4 = 'internal' AND blob6 IN (${pathList(paths)}) AND blob3 != blob6
@@ -259,7 +272,7 @@ export function funnelOnwardSql(dataset: string, site: string, paths: string[], 
 }
 
 /** Leave beacons per funnel page: how long people actually stayed. */
-export function funnelLeavesSql(dataset: string, site: string, paths: string[], window: 'today' | number): string {
+export function funnelLeavesSql(dataset: string, site: string, paths: string[], window: 'today' | 'yesterday' | number): string {
   // The mean is sample-weighted like every count here: a plain AVG weights
   // stored rows, not represented events, and drifts exactly on the spike days
   // (HN front page) when AE sampling engages and the owner is looking.
@@ -272,7 +285,7 @@ export function funnelLeavesSql(dataset: string, site: string, paths: string[], 
 }
 
 /** CTA clicks on the funnel pages, per label. */
-export function funnelCtaSql(dataset: string, site: string, paths: string[], window: 'today' | number): string {
+export function funnelCtaSql(dataset: string, site: string, paths: string[], window: 'today' | 'yesterday' | number): string {
   return `SELECT blob3 AS path, blob9 AS label, SUM(_sample_interval) AS clicks
     FROM ${dataset} WHERE ${funnelWindowClause(window)} AND blob2 = 'cta' AND blob1 = '${site}'
     AND blob3 IN (${pathList(paths)})
@@ -294,10 +307,12 @@ export interface FunnelWindowStat {
 }
 
 export interface FunnelReport {
-  pages: Array<{ site: string; path: string; today: FunnelWindowStat; week: FunnelWindowStat }>;
+  /** the window keys, in display order — the UI's selector renders from this */
+  windows: FunnelWindowKey[];
+  pages: Array<{ site: string; path: string; byWindow: Record<string, FunnelWindowStat> }>;
   /** playground cta events at /app, per label — impressions and actions named,
    *  never presented as pageviews */
-  playground: { today: Array<{ label: string; count: number }>; week: Array<{ label: string; count: number }> };
+  playground: Record<string, Array<{ label: string; count: number }>>;
 }
 
 const emptyWindow = (): FunnelWindowStat => ({
@@ -367,24 +382,28 @@ export async function readWebFunnel(): Promise<FunnelReport> {
   const site = 'app';
   const paths = FUNNEL_PAGES.map((p) => p.path);
   const ctaPaths = [...paths, PLAYGROUND_PATH];
-  const windows: Array<'today' | number> = ['today', 7];
-  const [today, week] = await Promise.all(windows.map(async (window) => {
+  const results = await Promise.all(FUNNEL_WINDOWS.map(async ({ key, window }) => {
     const [arrivals, onward, leaves, ctas] = await Promise.all([
       query(funnelArrivalsSql(dataset, site, paths, window)),
       query(funnelOnwardSql(dataset, site, paths, window)),
       query(funnelLeavesSql(dataset, site, paths, window)),
       query(funnelCtaSql(dataset, site, ctaPaths, window)),
     ]);
-    return { arrivals, onward, leaves, ctas };
+    return { key, arrivals, onward, leaves, ctas };
   }));
+  const playground: FunnelReport['playground'] = {};
+  for (const r of results) playground[r.key] = playgroundLabels(r.ctas);
   return {
+    windows: FUNNEL_WINDOWS.map((w) => w.key),
     pages: FUNNEL_PAGES.map((page) => ({
       site: page.site,
       path: page.path,
-      today: foldFunnelWindow(page.path, today.arrivals, today.onward, today.leaves, today.ctas),
-      week: foldFunnelWindow(page.path, week.arrivals, week.onward, week.leaves, week.ctas),
+      byWindow: Object.fromEntries(results.map((r) => [
+        r.key,
+        foldFunnelWindow(page.path, r.arrivals, r.onward, r.leaves, r.ctas),
+      ])),
     })),
-    playground: { today: playgroundLabels(today.ctas), week: playgroundLabels(week.ctas) },
+    playground,
   };
 }
 

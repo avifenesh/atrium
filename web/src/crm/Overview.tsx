@@ -7,7 +7,8 @@
 // are therefore ALWAYS separated by mark kind too (bars vs line); slate-glow
 // pairs with mist for same-kind series. Amber stays reserved for attention.
 
-import type { CrmOverview, CrmUsageDay } from '../../../shared/types';
+import { useState } from 'react';
+import type { CrmFunnelWindow, CrmOverview, CrmUsageDay } from '../../../shared/types';
 import { BarList, TrendChart } from './charts';
 
 const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
@@ -266,7 +267,7 @@ export function MoneyTab({ data }: { data: CrmOverview }) {
 // onward navigations), never a per-visitor fact — that trade bought the sites
 // their banner-free state and is not up for revision here.
 
-function FunnelWindowRow({ label, w }: { label: string; w: NonNullable<CrmOverview['funnel']>['pages'][number]['today'] }) {
+function FunnelWindowRow({ label, w }: { label: string; w: CrmFunnelWindow }) {
   const acted = w.ctas.reduce((a, c) => a + c.count, 0);
   const onward = w.onward.reduce((a, o) => a + o.views, 0);
   // These buckets are NOT a partition of views: one visitor can act AND browse
@@ -306,36 +307,60 @@ function FunnelWindowRow({ label, w }: { label: string; w: NonNullable<CrmOvervi
   );
 }
 
+const WINDOW_LABEL: Record<string, string> = {
+  today: 'today',
+  yesterday: 'yesterday',
+  '24h': 'last 24h',
+  '3d': '3 days',
+  '7d': '7 days',
+};
+
 export function FunnelBlock({ funnel }: { funnel: CrmOverview['funnel'] }) {
+  const windows = funnel?.windows ?? [];
+  const [win, setWin] = useState('today');
   if (!funnel || funnel.pages.length === 0) return null;
-  const pg = funnel.playground;
-  const pgLine = (rows: Array<{ label: string; count: number }>) =>
-    rows.map((r) => `${r.label.replace(/^playground_/, '')} ${r.count}`).join(' · ') || 'nothing';
+  const selected = windows.includes(win) ? win : windows[0] ?? 'today';
+  const pg = funnel.playground?.[selected] ?? [];
+  const pgLine = pg.map((r) => `${r.label.replace(/^playground_/, '')} ${r.count}`).join(' · ');
   return (
     <div className="space-y-2">
-      {funnel.pages.map((page) => (
-        <div key={`${page.site}:${page.path}`} className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
-          <div className="mb-1.5 font-mono text-[11px] text-mist">
-            {page.path === '/login' ? 'sign-in page' : page.path}
-            <span className="ml-2 text-mist-faint">{page.site} {page.path}</span>
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+        {windows.map((w) => (
+          <button
+            key={w}
+            type="button"
+            onClick={() => setWin(w)}
+            className={`shrink-0 cursor-pointer rounded-full border px-3 py-1 font-mono text-[11px] ${
+              selected === w ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
+            }`}
+          >
+            {WINDOW_LABEL[w] ?? w}
+          </button>
+        ))}
+      </div>
+      {funnel.pages.map((page) => {
+        const stat = page.byWindow[selected];
+        if (!stat) return null;
+        return (
+          <div key={`${page.site}:${page.path}`} className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
+            <div className="mb-1.5 font-mono text-[11px] text-mist">
+              {page.path === '/login' ? 'sign-in page' : page.path}
+              <span className="ml-2 text-mist-faint">{page.site} {page.path}</span>
+            </div>
+            <FunnelWindowRow label={WINDOW_LABEL[selected] ?? selected} w={stat} />
           </div>
-          <div className="space-y-1.5">
-            <FunnelWindowRow label="today" w={page.today} />
-            <FunnelWindowRow label="7 days" w={page.week} />
-          </div>
-        </div>
-      ))}
+        );
+      })}
       {/* The signed-in playground sends only labeled events (the page itself is
           unbeaconed by design), so it gets an event line, never a views funnel.
           `rendered` fires on page render — an impression, not a user action. */}
-      {pg && (pg.today.length > 0 || pg.week.length > 0) && (
+      {pgLine && (
         <div className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
           <div className="mb-1 font-mono text-[11px] text-mist">
             playground events
             <span className="ml-2 text-mist-faint">app /app · rendered = impression, first_success = first API call</span>
           </div>
-          <div className="font-mono text-[11px] text-mist-dim">today: {pgLine(pg.today)}</div>
-          <div className="font-mono text-[11px] text-mist-dim">7 days: {pgLine(pg.week)}</div>
+          <div className="font-mono text-[11px] text-mist-dim">{WINDOW_LABEL[selected] ?? selected}: {pgLine}</div>
         </div>
       )}
     </div>

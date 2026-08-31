@@ -57,13 +57,13 @@ const collector: Collector = {
         });
       }
 
-      const login = funnel?.pages.find((p) => p.path === '/login');
-      if (login) {
-        const onward = login.today.onward.reduce((a, o) => a + o.views, 0);
-        const acted = login.today.ctas.reduce((a, c) => a + c.count, 0);
+      const loginToday = funnel?.pages.find((p) => p.path === '/login')?.byWindow['today'];
+      if (loginToday) {
+        const onward = loginToday.onward.reduce((a, o) => a + o.views, 0);
+        const acted = loginToday.ctas.reduce((a, c) => a + c.count, 0);
         rows.push({
           label: 'login funnel today',
-          value: `${count(login.today.views)} views · ${count(acted)} acted · ${count(onward)} browsed on · ${count(login.today.engagedOver10s)} stayed >10s`,
+          value: `${count(loginToday.views)} views · ${count(acted)} acted · ${count(onward)} browsed on · ${count(loginToday.engagedOver10s)} stayed >10s`,
         });
       }
 
