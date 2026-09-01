@@ -77,11 +77,13 @@ export function UsersTab({
 
   /* Suspended accounts leave the working set entirely (owner ask 2026-08-31:
    * "hide the suspended, that bothers me"). The 77 farmed signups from the
-   * asashi flood turned every cut into a wall of dead rows. They live in a
-   * collapsed section at the bottom, out of the stats and out of the cuts. */
+   * asashi flood turned every cut into a wall of dead rows. They used to sit in
+   * a collapsed section at the bottom of this screen; the list itself now lives
+   * on the security tab, whose subject they are, and what is left here is the
+   * count, so this screen still says how many accounts it is not showing. */
   const all = useMemo(() => items.filter((i) => i.kind === 'account' && i.metrics), [items]);
   const accounts = useMemo(() => all.filter((i) => !i.metrics!.suspended), [all]);
-  const suspendedRows = useMemo(() => all.filter((i) => i.metrics!.suspended), [all]);
+  const suspendedCount = all.length - accounts.length;
 
   const counts = useMemo(() => {
     const map = new Map<Cut, number>([['all', accounts.length]]);
@@ -247,30 +249,16 @@ export function UsersTab({
         </div>
       )}
 
-      {/* Suspended accounts, collapsed by default: mostly the farmed signups.
-          Still one click from the drawer, where restore lives. */}
-      {suspendedRows.length > 0 && (
-        <details className="mt-4 rounded-xl border border-white/8 px-3 py-2">
-          <summary className="cursor-pointer font-mono text-[11px] text-mist-faint">
-            suspended · {suspendedRows.length}
-          </summary>
-          <div className="mt-2 space-y-1">
-            {suspendedRows.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onOpen(item.id)}
-                className="flex w-full cursor-pointer items-baseline gap-3 rounded-lg px-2 py-1 text-left hover:bg-white/[0.03]"
-              >
-                <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-mist-dim">{item.title}</span>
-                <span className="font-mono text-[11px] text-coral">suspended</span>
-                <span className="font-mono text-[11px] text-mist-faint">
-                  {item.metrics!.requests} req · {money(item.metrics!.spentMicro)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </details>
+      {/* One line, not a list: the rows themselves (and the drawer that restores
+          them) are on the security page now. */}
+      {suspendedCount > 0 && (
+        <a
+          href="#security"
+          className="mt-4 block rounded-xl border border-white/8 px-3 py-2 font-mono text-[11px] text-mist-faint hover:border-white/20"
+        >
+          {suspendedCount} suspended {suspendedCount === 1 ? 'account is' : 'accounts are'} not in these
+          counts, they are on the security page →
+        </a>
       )}
     </div>
   );

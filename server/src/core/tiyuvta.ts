@@ -97,7 +97,22 @@ export interface AdminDashboard {
   internal?: { totals: { requests: number; promptTokens: number; cachedPromptTokens: number; completionTokens: number; debitedMicro: number } };
   promo: { claimed: number; seats: number; remaining: number };
   books: { outOfBalance: number; lastPassAt: number | null; restatedDays: number };
-  top: Array<{ email: string; tenantId: string; creditedMicro: number; spentMicro: number; requests: number; paid: boolean; suspended: boolean; enrolled: boolean; internal?: boolean }>;
+  /** The whole account list, not a top-N cut. createdAt (epoch ms) and consented
+   *  ride on the wire and were simply undeclared here; the security posture is
+   *  the first reader of either. */
+  top: Array<{
+    email: string;
+    tenantId: string;
+    createdAt?: number | null;
+    creditedMicro: number;
+    spentMicro: number;
+    requests: number;
+    paid: boolean;
+    suspended: boolean;
+    enrolled: boolean;
+    consented?: boolean;
+    internal?: boolean;
+  }>;
 }
 
 export interface AdminTraffic {
