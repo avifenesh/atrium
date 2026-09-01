@@ -552,8 +552,9 @@ const matches = (i: CrmItem, needle: string) =>
 // without the work growing, and it buried the rows that still need a reply.
 const CLOSED = new Set<CrmStage>(['lost', 'skipped']);
 
-/** The board's one-line motion chip. Near-miss left the set when it left the
- *  feed's default view; a paying move is the one that had to be added. */
+/** The board's one-line motion chip: the four shapes worth a tap from the board.
+ *  Spend replaced near-miss here because the chip counts signal rows and a near
+ *  miss is a diagnostic to rescue on the activity tab, not motion in the funnel. */
 const TODAY_CHIP_LABEL = {
   'account-new': 'signup',
   'lead-new': 'lead',

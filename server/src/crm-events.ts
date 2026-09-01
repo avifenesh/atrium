@@ -22,6 +22,7 @@ import { mkdir, appendFile, readFile, rename, writeFile } from 'node:fs/promises
 import { join } from 'node:path';
 import { config } from './config.js';
 import { iso, readJson } from './util.js';
+import { stageMovedFrom, stageMovedTo } from '../../shared/crm-feed.js';
 import type { CrmActivity, CrmEvent, CrmEventType, CrmItem, CrmStage } from '../../shared/types.js';
 
 let ledgerFile = join(config.configDir, 'crm-events.jsonl');
@@ -105,13 +106,15 @@ function validEvent(raw: unknown): CrmEvent | null {
 
 const money = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
 
-/** The stage a `stage-change` title moved TO. The title is written as
- *  `<subject>: <from> → <to>`, and the arrow cannot occur in an address or a
- *  stage name, so the tail after the last arrow is the destination. */
-function stageMovedTo(title: string): string | null {
-  const parts = title.split(' → ');
-  return parts.length > 1 ? parts[parts.length - 1].trim() : null;
-}
+/** The detail stamp observe() writes when the stage came from the owner's own
+ *  hand rather than from the sources. It is the only record that a move was a
+ *  decision, so the classifier has to read it. */
+const OWNER_PINNED = 'pinned by owner';
+
+/** Account stages that mean money or traffic already happened: `paying` is a
+ *  purchase, and `active` is the console's own requests-above-one. A `signed-up`
+ *  account never called, which is the shape of every row in a farm sweep. */
+const PAID_OR_TRAFFICKED = new Set(['paying', 'active']);
 
 /**
  * Money an `account-usage` title claims, in cents of print. Two title shapes
@@ -125,29 +128,80 @@ function usageClaimsMoney(title: string): boolean {
 }
 
 /**
+ * What a row's neighbours in the same view say about it.
+ *
+ * Two of the quiet rules are about DUPLICATION rather than shape, and duplication
+ * is only visible across the window: a lead skipped minutes after its own arrival
+ * row prints "it came in" and "you already closed it" as two lines, and the stage
+ * write crm.ts makes when a contact is logged is already reported by the
+ * contact-logged row itself.
+ */
+export interface SignalContext {
+  /** items whose arrival row is inside the same view */
+  arrivals: Set<string>;
+  /** items with a logged touch inside the same view */
+  contacted: Set<string>;
+}
+
+const ARRIVAL_TYPES = new Set<CrmEventType>(['lead-new', 'direction-new', 'account-new']);
+
+export function signalContext(windowed: CrmEvent[]): SignalContext {
+  const ctx: SignalContext = { arrivals: new Set(), contacted: new Set() };
+  for (const e of windowed) {
+    if (!e.itemId) continue;
+    if (ARRIVAL_TYPES.has(e.type)) ctx.arrivals.add(e.itemId);
+    if (e.type === 'contact-logged') ctx.contacted.add(e.itemId);
+  }
+  return ctx;
+}
+
+/**
  * Does this row carry a decision, or is it mechanism?
  *
- * The feed's default view shows signal only. Three shapes are mechanism:
+ * The feed's default view shows signal only. What is mechanism:
  *
- *  - a near miss, which the ingest gate emits as a rescuable diagnostic and
- *    which its own producer marks as never a board row;
  *  - a usage delta with no money in it, which is a request counter ticking, and
  *    which the burst of plus-tagged signups printed once per account per hour;
- *  - an ACCOUNT stage move that is not into `paying`, because every other
- *    account stage is derived arithmetic: `signed-up → active` is the request
- *    counter crossing 1 (the usage row already said it), `→ lost` is the owner's
- *    own suspension echoing back (the security page counts those), and anything
- *    touching `new` is the orphan-baseline flap, a stage a live account cannot
- *    hold. Lead and direction stage moves stay: those the owner makes by hand.
+ *  - an ACCOUNT stage move that is neither owner-pinned, nor money starting, nor
+ *    an account with money or traffic behind it being closed. `signed-up → active`
+ *    is the request counter crossing 1 (the usage row already said it),
+ *    `signed-up → lost` is a farm signup that never called being swept, and
+ *    anything touching `new` is the orphan-baseline flap, a stage a live account
+ *    cannot hold;
+ *  - a NON-ACCOUNT move out of `new` that the machine wrote, or that duplicates
+ *    the item's own arrival row in this same view.
+ *
+ * A suspension is never quiet when the account had paid or served traffic. The
+ * security page counts standing suspensions, but it cannot date one (the console
+ * reports suspended as a bare boolean), so the dated row in this feed is the only
+ * place a suspension nobody performed can be noticed. That is not hypothetical:
+ * the 2026-08-31 key-containment incident was a suspension without key revocation
+ * and it 503'd the whole fleet for 65 minutes.
+ *
+ * A near miss stays signal. Its own producer (collectors/demand.ts) emits it as
+ * "visible, rescuable, but never a board row", deduped once per status id, and
+ * this feed is the only surface that names it.
  *
  * Nothing is dropped from the payload. This only sets the flag the view filters
  * on, and the view has a toggle that shows everything.
  */
-export function eventSignal(e: CrmEvent): boolean {
-  if (e.type === 'near-miss') return false;
+export function eventSignal(e: CrmEvent, ctx?: SignalContext): boolean {
   if (e.type === 'account-usage') return usageClaimsMoney(e.title);
-  if (e.type === 'stage-change' && e.itemId?.startsWith('tenant:')) {
-    return stageMovedTo(e.title) === 'paying';
+  if (e.type !== 'stage-change') return true;
+
+  const pinned = e.detail === OWNER_PINNED;
+  if (e.itemId?.startsWith('tenant:')) {
+    if (pinned) return true;
+    const to = stageMovedTo(e.title);
+    if (to === 'paying') return true;
+    if (to === 'lost') return PAID_OR_TRAFFICKED.has(stageMovedFrom(e.title) ?? '');
+    return false;
+  }
+
+  if (stageMovedFrom(e.title) === 'new') {
+    if (!pinned) return false;
+    if (e.itemId && ctx?.arrivals.has(e.itemId)) return false;
+    if (stageMovedTo(e.title) === 'contacted' && e.itemId && ctx?.contacted.has(e.itemId)) return false;
   }
   return true;
 }
@@ -307,11 +361,15 @@ export const crmEvents = {
         // usage delta, coalesced: measure against the counters the LAST EVENT
         // reported, not the last poll, so an hour of traffic prints once with
         // its full sum instead of twelve fragments.
-        const anchor = state.usage[item.id] ?? {
-          at: state.seededAt ?? now,
-          requests: prev.requests ?? 0,
-          spentMicro: prev.spentMicro ?? 0,
-        };
+        let anchor = state.usage[item.id];
+        if (!anchor) {
+          // A first sighting has no window of its own. Falling back to the seed
+          // time gave it no coalescing at all, and that is the normal state, not
+          // the corner: 511 of the 519 baselined items have never fired a usage
+          // event. Open the window here and let the delta ride to the next pass.
+          anchor = { at: now, requests: prev.requests ?? 0, spentMicro: prev.spentMicro ?? 0 };
+          state.usage[item.id] = anchor;
+        }
         const dReq = (item.metrics.requests ?? 0) - anchor.requests;
         const dSpend = (item.metrics.spentMicro ?? 0) - anchor.spentMicro;
         const windowOpen = Date.parse(now) - Date.parse(anchor.at) >= USAGE_COALESCE_MS;
@@ -319,9 +377,15 @@ export const crmEvents = {
           // `+$0.00` was a lie in two directions at once: it printed for a true
           // zero and for any sub-cent debit, and it read as "money moved" in a
           // feed where money moving is the whole point. A delta under one cent
-          // now prints requests only, and the detail line still carries the
-          // lifetime spend, so nothing is lost.
-          const spendClause = dSpend >= 10_000 ? ` · +${money(dSpend)}` : '';
+          // prints requests only.
+          //
+          // The cent is the print unit, so the report is a WHOLE number of cents
+          // and the remainder below one stays owed to the next window. Advancing
+          // the anchor to the live counter instead threw the remainder away
+          // permanently, and at today's volume that is the normal customer: an
+          // account spending $0.009/hour spends ~$78/year with every row hidden.
+          const reportedMicro = Math.max(0, Math.floor(dSpend / 10_000) * 10_000);
+          const spendClause = reportedMicro > 0 ? ` · +${money(reportedMicro)}` : '';
           emitted.push(this.emit({
             type: 'account-usage',
             itemId: item.id,
@@ -329,7 +393,13 @@ export const crmEvents = {
             detail: `now ${item.metrics.requests} req lifetime · ${money(item.metrics.spentMicro)} spent`,
             url: null,
           }));
-          state.usage[item.id] = { at: now, requests: item.metrics.requests, spentMicro: item.metrics.spentMicro };
+          state.usage[item.id] = {
+            at: now,
+            requests: item.metrics.requests,
+            // min() covers a restated book: when lifetime spend goes DOWN the
+            // carry is meaningless and the live counter is the honest anchor.
+            spentMicro: Math.min(item.metrics.spentMicro, anchor.spentMicro + reportedMicro),
+          };
         }
       }
 
@@ -356,17 +426,18 @@ export const crmEvents = {
     // The signal flag is attached here rather than at emit time: the ledger is
     // append-only, so a rule that lived in the written row could never be
     // corrected for the 200-odd rows already on disk.
-    const windowed = events
-      .filter((e) => Date.parse(e.at) >= cutoff)
-      .reverse()
-      .map((e) => ({ ...e, signal: eventSignal(e) }));
+    const inWindow = events.filter((e) => Date.parse(e.at) >= cutoff);
+    // Duplication is a property of the VIEW, so the context is built over the
+    // same window that is served. The day digest counts a subset of it.
+    const ctx = signalContext(inWindow);
+    const windowed = [...inWindow].reverse().map((e) => ({ ...e, signal: eventSignal(e, ctx) }));
     const today: Partial<Record<CrmEventType, number>> = {};
     const todaySignal: Partial<Record<CrmEventType, number>> = {};
     const day = now.slice(0, 10);
     for (const e of events) {
       if (e.at.slice(0, 10) !== day) continue;
       today[e.type] = (today[e.type] ?? 0) + 1;
-      if (eventSignal(e)) todaySignal[e.type] = (todaySignal[e.type] ?? 0) + 1;
+      if (eventSignal(e, ctx)) todaySignal[e.type] = (todaySignal[e.type] ?? 0) + 1;
     }
     return { updatedAt: now, events: windowed, today, todaySignal };
   },

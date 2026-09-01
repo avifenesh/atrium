@@ -7,17 +7,16 @@
 // ledger is still append-only raw):
 //
 //  1. QUIET BY DEFAULT. Rows the server marked signal: false are hidden behind
-//     one toggle. Those are the mechanical ones — a request counter ticking, an
-//     account stage move arithmetic made, a near miss the ingest gate logged for
-//     itself. The abuse-shaped material they used to bury now has its own page.
-//  2. ONE IDENTITY, ONE ROW. A burst of plus-tagged signups was four accounts
+//     one toggle. Those are the mechanical ones: a request counter ticking, a
+//     stage move arithmetic made, a lead move that duplicates its own arrival
+//     row. The abuse-shaped material they used to bury now has its own page.
+//  2. ONE THING, ONE ROW. A burst of plus-tagged signups was four accounts
 //     wearing one gmail mailbox, and it printed four rows plus their usage and
-//     stage rows. A consecutive run of same-type account rows now collapses onto
-//     the strongest handle its members share: one folded mailbox, else one
-//     private email domain (the shape a plus-tag fold cannot see).
+//     stage rows. The fold that collapses them lives in shared/crm-feed.ts,
+//     because a folded row sums money and that arithmetic is pinned by a test.
 
-import { useMemo, useState } from 'react';
-import { addressIn, foldMailboxIn, isPublicProvider, mailboxDomain } from '../../../shared/mailbox';
+import { useEffect, useMemo, useState } from 'react';
+import { feedRowDetail, feedRowTitle, foldFeedRows, type FeedRow } from '../../../shared/crm-feed';
 import type { CrmActivity, CrmEvent, CrmEventType } from '../../../shared/types';
 
 const TYPE_LABEL: Record<CrmEventType, string> = {
@@ -52,9 +51,6 @@ const DIGEST_ORDER: CrmEventType[] = [
   'lead-new', 'near-miss', 'stage-change', 'direction-new', 'contact-logged', 'do-launched',
 ];
 
-/** Addresses printed inside one folded row before it says "and N more". */
-const MEMBER_PREVIEW = 3;
-
 function dayLabel(day: string, today: string): string {
   if (day === today) return 'today';
   const days = Math.round((Date.parse(today) - Date.parse(day)) / 86_400_000);
@@ -62,94 +58,12 @@ function dayLabel(day: string, today: string): string {
   return day;
 }
 
-/** One printed line: a single event, or a run of them about one identity handle. */
-interface FeedRow {
-  key: string;
-  /** the newest event in the run: its timestamp, its type, its drawer target */
-  head: CrmEvent;
-  count: number;
-  /** the handle every member of the run shares, and what kind of handle it is */
-  handle: string | null;
-  handleKind: 'mailbox' | 'domain';
-  /** the folded mailbox all members share, null once the run widened to a domain */
-  mailbox: string | null;
-  domain: string | null;
-  /** the distinct addresses behind a folded row, newest first */
-  members: string[];
-}
-
-function handlesOf(e: CrmEvent): { address: string | null; mailbox: string | null; domain: string | null } {
-  // Only account rows fold: an itemId starting with `tenant:` is the guarantee
-  // that the address in the title belongs to an account, and is not a word
-  // inside a lead's thread title.
-  if (!e.itemId?.startsWith('tenant:')) return { address: null, mailbox: null, domain: null };
-  const address = addressIn(e.title);
-  if (!address) return { address: null, mailbox: null, domain: null };
-  const domain = mailboxDomain(address);
-  return {
-    address,
-    mailbox: foldMailboxIn(e.title),
-    // A public provider is not a handle: two gmail addresses with different
-    // local parts are two people, and folding them would hide a real signup.
-    domain: domain && !isPublicProvider(domain) ? domain : null,
-  };
-}
-
-/**
- * Collapse a consecutive run of same-type account rows onto the strongest handle
- * its members share: one folded mailbox, else one private email domain.
- *
- * Both shapes were in the same flood. Four signups wearing plus tags on one gmail
- * mailbox are one person; eighty-six signups on one throwaway domain are one
- * arrival, and no plus-tag fold can see them because every local part differs.
- * The run never crosses a type, so a line can say "signup x86" and mean it.
- */
-function foldRows(events: CrmEvent[]): FeedRow[] {
-  const rows: FeedRow[] = [];
-  for (const e of events) {
-    const { address, mailbox, domain } = handlesOf(e);
-    const last = rows[rows.length - 1];
-    const sameMailbox = last != null && mailbox != null && last.mailbox === mailbox;
-    const sameDomain = last != null && domain != null && last.domain === domain;
-    if (last && last.head.type === e.type && (sameMailbox || sameDomain)) {
-      last.count += 1;
-      if (!sameMailbox) {
-        // the run outgrew one mailbox, so the handle it can honestly name is the domain
-        last.mailbox = null;
-        last.handle = domain;
-        last.handleKind = 'domain';
-      }
-      if (address && !last.members.includes(address)) last.members.push(address);
-      continue;
-    }
-    rows.push({
-      key: `${e.at}-${e.type}-${rows.length}`,
-      head: e,
-      count: 1,
-      handle: mailbox,
-      handleKind: 'mailbox',
-      mailbox,
-      domain,
-      members: address ? [address] : [],
-    });
-  }
-  return rows;
-}
-
-function foldedDetail(row: FeedRow): string {
-  const shown = row.members.slice(0, MEMBER_PREVIEW).join(' · ');
-  const rest = row.count - Math.min(row.members.length, MEMBER_PREVIEW);
-  return rest > 0 ? `${shown} and ${rest} more` : shown;
-}
-
 function EventRow({ row, onOpen }: { row: FeedRow; onOpen: (id: string) => void }) {
   const e = row.head;
   const folded = row.count > 1;
   const openable = e.itemId != null && e.type !== 'near-miss';
-  const title = folded
-    ? `${TYPE_LABEL[e.type]} x${row.count}, ${row.handle} (one ${row.handleKind})`
-    : e.title;
-  const detail = folded ? foldedDetail(row) : e.detail;
+  const title = feedRowTitle(row, TYPE_LABEL[e.type]);
+  const detail = feedRowDetail(row);
   return (
     <div
       role={openable ? 'button' : undefined}
@@ -213,7 +127,14 @@ export function ActivityTab({
     return map;
   }, [inMode]);
 
-  const visible = filter === 'all' ? inMode : inMode.filter((e) => e.type === filter);
+  // A filter whose chip is gone from the bar is a filter nobody can see or clear:
+  // picking a type with the quiet view off and then turning it on emptied the feed
+  // and blamed the emptiness on mechanism, with no control on screen to undo it.
+  useEffect(() => {
+    if (filter !== 'all' && !counts.has(filter)) setFilter('all');
+  }, [counts, filter]);
+
+  const visible = filter === 'all' || !counts.has(filter) ? inMode : inMode.filter((e) => e.type === filter);
 
   const today = activity.updatedAt.slice(0, 10);
   const byDay = useMemo(() => {
@@ -224,9 +145,9 @@ export function ActivityTab({
       if (last && last.day === day) last.events.push(e);
       else groups.push({ day, events: [e] });
     }
-    // The fold runs per day, so a run never spans midnight and a folded count is
-    // always a count within the day its label names.
-    return groups.map((g) => ({ day: g.day, rows: foldRows(g.events) }));
+    // The fold runs per day group, so a folded count is always a count within the
+    // day its label names, and it never spans midnight.
+    return groups.map((g) => ({ day: g.day, rows: foldFeedRows(g.events) }));
   }, [visible]);
 
   // The digest counts the same set the reader can see: advertising rows the
@@ -250,7 +171,7 @@ export function ActivityTab({
         <button
           type="button"
           onClick={() => onShowAll(!showAll)}
-          title="the quiet view hides mechanical rows: request-only usage deltas, derived account stage moves, ingest-gate near misses"
+          title="the quiet view hides mechanical rows: request-only usage deltas, derived account stage moves, and stage moves that duplicate an item's own arrival row"
           className={`shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
             showAll ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
           }`}

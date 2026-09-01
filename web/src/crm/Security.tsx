@@ -1,4 +1,4 @@
-// Security tab — the abuse-shaped material, off the motion feed.
+// Security tab: the abuse-shaped material, off the motion feed.
 //
 // It used to live nowhere and everywhere: a farm of plus-tagged signups arrived
 // as ninety-odd rows in the activity feed, the suspended accounts it produced sat
@@ -15,16 +15,21 @@
 // documented curl.
 //
 // The header verdict exists so the page can be IGNORED. "clear" means every
-// cluster it found is already dealt with.
+// cluster it found is already dealt with AND no account with money behind it is
+// sitting suspended.
 
 import type { CrmItem, CrmOverview, CrmSecurityCluster } from '../../../shared/types';
 
+/** Nothing to report. A dash-shaped glyph, not a dash: the owner's writing rule
+ *  bans em dashes, and a bare hyphen reads as a minus sign in a money column. */
+const NONE = '·';
+
 const money = (micro: number | null | undefined): string =>
-  micro == null ? '—' : `$${(micro / 1_000_000).toFixed(2)}`;
+  micro == null ? NONE : `$${(micro / 1_000_000).toFixed(2)}`;
 
 /** `2026-08-31T11:05:12Z` reads as `08-31 11:05Z`: the date and the hour are the
  *  whole signal, and the seconds made every column wrap on a phone. */
-const stamp = (iso: string | null): string => (iso ? `${iso.slice(5, 10)} ${iso.slice(11, 16)}Z` : '—');
+const stamp = (iso: string | null): string => (iso ? `${iso.slice(5, 10)} ${iso.slice(11, 16)}Z` : NONE);
 
 /**
  * Which sentinel incidents are security-shaped rather than infrastructure.
@@ -148,15 +153,26 @@ export function SecurityTab({
   }
 
   const clear = sec.attention === 0;
+  /* Two things can want a look, and the verdict names both. A suspended account
+   * that had money behind it is in here because the ledger row for it is dated
+   * and this page's count is not: the console reports no suspension time, reason
+   * or actor, so "clear" while one of those is standing would be a lie in the one
+   * place the owner looks after a containment scare. */
+  const wants = [
+    sec.attentionClusters > 0
+      ? `${sec.attentionClusters} ${sec.attentionClusters === 1 ? 'cluster wants' : 'clusters want'} a look`
+      : null,
+    sec.attentionSuspensions > 0
+      ? `${sec.attentionSuspensions} suspended ${sec.attentionSuspensions === 1 ? 'account' : 'accounts'} had money`
+      : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div>
       <div className={`rounded-xl border px-3.5 py-3 ${clear ? 'border-jade/30 bg-ink-2' : 'border-amber/40 bg-ink-2'}`}>
         <div className="font-mono text-[10px] uppercase tracking-wider text-mist-faint">verdict</div>
         <div className={`mt-1 font-display text-xl ${clear ? 'text-jade' : 'text-amber'}`}>
-          {clear
-            ? 'clear'
-            : `${sec.attention} ${sec.attention === 1 ? 'cluster wants' : 'clusters want'} a look`}
+          {clear ? 'clear' : wants}
         </div>
         <div className="mt-1 text-xs text-mist-dim">
           {sec.accounts.external} external accounts scanned · {sec.mailboxes.length} shared{' '}
@@ -170,7 +186,7 @@ export function SecurityTab({
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat
           label="promo seats"
-          value={sec.promo ? `${sec.promo.claimed} of ${sec.promo.seats}` : '—'}
+          value={sec.promo ? `${sec.promo.claimed} of ${sec.promo.seats}` : NONE}
           sub={sec.promo ? `${sec.promo.remaining} remaining` : 'not reported'}
         />
         <Stat label="new today" value={String(sec.accounts.newToday)} sub={`${sec.accounts.newWeek} in 7d`} />
@@ -183,11 +199,13 @@ export function SecurityTab({
           label="suspended"
           value={`${sec.accounts.suspended} of ${sec.accounts.total}`}
           sub={
-            sec.accounts.suspendedWithTraffic > 0
-              ? `${sec.accounts.suspendedWithTraffic} had already served traffic`
-              : 'none served traffic first'
+            sec.accounts.suspendedWithMoney > 0
+              ? `${sec.accounts.suspendedWithMoney} had paid or spent a cent`
+              : sec.accounts.suspendedWithTraffic > 0
+                ? `${sec.accounts.suspendedWithTraffic} had served traffic, all sub-cent`
+                : 'none served traffic first'
           }
-          tone={sec.accounts.suspendedWithTraffic > 0 ? 'text-amber' : 'text-mist'}
+          tone={sec.accounts.suspendedWithMoney > 0 ? 'text-amber' : 'text-mist'}
         />
         <Stat
           label="never used it"
@@ -198,7 +216,7 @@ export function SecurityTab({
         <Stat label="consented" value={String(sec.accounts.consented)} sub="marketing consent given" />
         <Stat
           label="purchases pending"
-          value={sec.pendingPurchases == null ? '—' : String(sec.pendingPurchases)}
+          value={sec.pendingPurchases == null ? NONE : String(sec.pendingPurchases)}
           sub="checkout started, no money yet"
         />
       </div>

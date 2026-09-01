@@ -1,4 +1,4 @@
-// Security posture — the abuse-shaped slice of the console dashboard.
+// Security posture: the abuse-shaped slice of the console dashboard.
 //
 // Why it is its own module and not a block inside crm-overview.ts: this is the
 // one part of the overview that has to be pinned by a test, because it decides
@@ -51,6 +51,7 @@ interface TopAccount {
   creditedMicro?: number | null;
   spentMicro?: number | null;
   requests?: number | null;
+  paid?: boolean;
   suspended?: boolean;
   enrolled?: boolean;
   consented?: boolean;
@@ -69,6 +70,22 @@ export interface SecurityDashboard {
   money?: { grantedMicro?: number; pendingPurchases?: number };
   promo?: { claimed?: number; seats?: number; remaining?: number };
   top?: TopAccount[];
+}
+
+/**
+ * A suspension the verdict has to name: the account had bought, or had spent at
+ * least a cent, before it was closed.
+ *
+ * The bar is money rather than requests on purpose. `suspendedWithTraffic` (any
+ * request at all) is 9 accounts today and every one of them is a farm probe with
+ * a sub-cent debit, the largest $0.000115. Counting those would leave the page
+ * permanently yellow with nothing to do about it, and a verdict that is always
+ * yellow is a verdict nobody reads. A suspension carries no timestamp from the
+ * console, so this count cannot age out either way: it has to be tight.
+ */
+function suspendedWithMoney(account: TopAccount): boolean {
+  if (account.suspended !== true) return false;
+  return account.paid === true || (account.spentMicro ?? 0) >= GRANT_FLOOR_MICRO;
 }
 
 function createdMs(account: TopAccount): number | null {
@@ -171,6 +188,9 @@ export function securityPosture(
     .sort(rank)
     .slice(0, CLUSTER_CAP);
 
+  const attentionClusters = [...mailboxes, ...domains].filter((c) => c.wantsLook).length;
+  const attentionSuspensions = external.filter(suspendedWithMoney).length;
+
   const promo = dashboard.promo
     ? {
         claimed: dashboard.promo.claimed ?? 0,
@@ -194,11 +214,14 @@ export function securityPosture(
       newWeek: dashboard.accounts?.new7d ?? 0,
       neverUsed: external.filter((a) => (a.requests ?? 0) === 0).length,
       suspendedWithTraffic: external.filter((a) => a.suspended === true && (a.requests ?? 0) > 0).length,
+      suspendedWithMoney: external.filter(suspendedWithMoney).length,
       ageUnknown: external.filter((a) => createdMs(a) === null).length,
     },
     grantedMicro: dashboard.money?.grantedMicro ?? null,
     pendingPurchases: dashboard.money?.pendingPurchases ?? null,
     // A cluster whose every member is already suspended is history, not work.
-    attention: [...mailboxes, ...domains].filter((c) => c.wantsLook).length,
+    attentionClusters,
+    attentionSuspensions,
+    attention: attentionClusters + attentionSuspensions,
   };
 }

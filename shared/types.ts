@@ -1028,13 +1028,23 @@ export interface CrmSecurity {
     neverUsed: number;
     /** suspended after already serving traffic, so the fence closed late */
     suspendedWithTraffic: number;
+    /** suspended after buying, or after spending at least a cent: the shape of a
+     *  suspension nobody meant to perform, as opposed to a farm probe */
+    suspendedWithMoney: number;
     /** accounts the console reported without a createdAt, so no timing signal */
     ageUnknown: number;
   };
   /** lifetime credit granted, micro-dollars: the ceiling of what a farm could take */
   grantedMicro: number | null;
   pendingPurchases: number | null;
-  /** open clusters: the number the page's verdict line names */
+  /** open clusters over their list's attention bar */
+  attentionClusters: number;
+  /** suspended accounts that had money behind them. It counts toward the verdict
+   *  because the console reports no suspension time, reason or actor: there is no
+   *  way to age one of these out, and a suspension the owner did not perform is
+   *  the shape that took the fleet down for 65 minutes on 2026-08-31. */
+  attentionSuspensions: number;
+  /** everything the verdict hangs on. Zero is what lets the page be ignored. */
   attention: number;
 }
 
@@ -1140,10 +1150,12 @@ export interface CrmEvent {
   /**
    * false = a row that carries no decision, hidden by the feed's default signal
    * view (a request-only usage delta, an account stage move the request counter
-   * or a suspension made mechanically, an ingest-gate near miss). Classified at
-   * serve time by server/src/crm-events.ts, never written to the ledger: the
-   * ledger stays raw so the rule can change without rewriting history. Absent on
-   * a row the classifier never saw, which reads as signal.
+   * made, the sweep of a signup that never called, a lead move that duplicates
+   * its own arrival row). A suspension of an account that had paid or served
+   * traffic is never quiet, and neither is a near miss. Classified at serve time
+   * by server/src/crm-events.ts, never written to the ledger: the ledger stays raw
+   * so the rule can change without rewriting history. Absent on a row the
+   * classifier never saw, which reads as signal.
    */
   signal?: boolean;
 }

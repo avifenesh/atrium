@@ -152,6 +152,42 @@ test('the counters an abuse story needs, including the fence closing late', () =
   assert.equal(posture?.grantedMicro, 20_000_000);
 });
 
+test('a suspended account with money behind it stops the verdict reading clear', () => {
+  // The header said "clear" through a real suspension, because attention counted
+  // clusters only. A suspension the owner did not perform is the shape that took
+  // the fleet down for 65 minutes, and the console reports no suspension time, so
+  // there is nothing else on the page that could notice one.
+  const posture = securityPosture(
+    dash([
+      account('paid@acme.io', { requests: 400, spentMicro: 2_620_000, paid: true, suspended: true }),
+      account('probe@asashi.my.id', { requests: 2, spentMicro: 115, suspended: true }),
+      account('spender@other.example', { requests: 90, spentMicro: 270_000, suspended: true }),
+    ]),
+    NOW,
+  );
+  assert.equal(posture?.attentionClusters, 0, 'no cluster here is over its bar');
+  assert.equal(posture?.attentionSuspensions, 2, 'the buyer and the account that spent real cents');
+  assert.equal(posture?.attention, 2, 'so the header cannot say clear');
+  assert.equal(posture?.accounts.suspendedWithMoney, 2);
+  assert.equal(posture?.accounts.suspendedWithTraffic, 3, 'the looser counter still reports the probe');
+});
+
+test('a suspended farm probe does not keep the page permanently yellow', () => {
+  // Nine accounts today are suspended with at least one request and every one of
+  // them is a sub-cent farm probe, the largest $0.000115. Counting those as
+  // attention would leave a verdict that is always yellow, which is a verdict
+  // nobody reads, and there is no suspension timestamp to age them out with.
+  const posture = securityPosture(
+    dash(Array.from({ length: 9 }, (_, i) => account(`p${i}@probe${i}.example`, {
+      requests: 2, spentMicro: 115, suspended: true,
+    }))),
+    NOW,
+  );
+  assert.equal(posture?.accounts.suspendedWithTraffic, 9);
+  assert.equal(posture?.accounts.suspendedWithMoney, 0);
+  assert.equal(posture?.attention, 0, 'nothing to do about them, so nothing is claimed');
+});
+
 test('no dashboard yet reads as null, not as a page full of confident zeroes', () => {
   assert.equal(securityPosture(undefined), null);
   assert.equal(securityPosture(null), null);
