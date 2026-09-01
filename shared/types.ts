@@ -1001,6 +1001,12 @@ export interface CrmSecurityCluster {
   members: string[];
   /** at least one member is not suspended */
   open: boolean;
+  /** several accounts on one domain is a company as often as a farm. True when a
+   *  member paid or spent a real cent and the cluster is not majority-suspended,
+   *  which is what separates an approved team from a signup ring without an
+   *  allowlist that rots. A customer cluster still shows; it never counts toward
+   *  the verdict. */
+  customer: boolean;
   /** open AND over this list's attention bar, so it counts toward the page's
    *  verdict. Decided server-side so the row's colour and the verdict line can
    *  never disagree. */

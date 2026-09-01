@@ -95,7 +95,13 @@ function ClusterTable({
               {rows.map((c) => (
                 <tr key={c.label} className="border-b border-white/5 align-top last:border-0">
                   <td className="max-w-[30ch] px-3 py-2" title={c.members.join(' ')}>
-                    <div className={`truncate ${c.wantsLook ? 'text-amber' : 'text-mist-dim'}`}>{c.label}</div>
+                    <div className={`truncate ${c.wantsLook ? 'text-amber' : c.customer ? 'text-jade' : 'text-mist-dim'}`}>
+                      {c.label}
+                      {/* Says WHY it is not amber. Several accounts on one domain
+                          is a company as often as a ring, and a page that shows a
+                          real customer in the same colour as a farm gets ignored. */}
+                      {c.customer && <span className="ml-1.5 text-[10px] text-mist-faint">customer team</span>}
+                    </div>
                     <div className="truncate text-[10px] text-mist-faint">
                       {c.members.slice(0, 3).join(' · ')}
                       {c.accounts > 3 ? ` and ${c.accounts - 3} more` : ''}

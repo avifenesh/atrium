@@ -219,3 +219,34 @@ test('a one-micro enrolment credit is not a grant', () => {
   assert.equal(cluster?.granted, 1, 'only the account that actually took $5');
   assert.equal(cluster?.grantedMicro, 5_000_003, 'the sum still reports every micro it holds');
 });
+
+test('a real company on one domain is a customer team, not a farm', () => {
+  // nivision.co.il: the owner approved these accounts himself, and at the
+  // 3-account domain bar they would otherwise arrive wearing a farm's colour.
+  const team = [
+    account('ofek@nivision.co.il', { requests: 28, spentMicro: 266_149 }),
+    account('dev@nivision.co.il', { requests: 4 }),
+    account('ops@nivision.co.il'),
+  ];
+  const posture = securityPosture(dash(team), NOW);
+  assert.ok(posture);
+  const cluster = posture.domains.find((d) => d.label === 'nivision.co.il');
+  assert.ok(cluster, 'the team still SHOWS: seeing it is useful, flagging it is not');
+  assert.equal(cluster.accounts, 3);
+  assert.equal(cluster.customer, true, 'one member spent a real cent and nobody is suspended');
+  assert.equal(cluster.wantsLook, false, 'so it never reaches the verdict');
+  assert.equal(posture.attention, 0, 'the page stays green for a customer');
+});
+
+test('a farm cannot buy quiet with one cent through one member', () => {
+  const ring = [
+    account('paid@asashi.my.id', { requests: 3, spentMicro: 50_000 }),
+    ...Array.from({ length: 8 }, (_, i) => account(`n${i}@asashi.my.id`, { suspended: true })),
+  ];
+  const posture = securityPosture(dash(ring), NOW);
+  assert.ok(posture);
+  const cluster = posture.domains.find((d) => d.label === 'asashi.my.id');
+  assert.ok(cluster);
+  assert.equal(cluster.customer, false, 'majority suspended overrides the money test');
+  assert.equal(cluster.wantsLook, true);
+});
