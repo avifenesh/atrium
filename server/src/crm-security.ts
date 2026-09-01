@@ -88,6 +88,28 @@ function suspendedWithMoney(account: TopAccount): boolean {
   return account.paid === true || (account.spentMicro ?? 0) >= GRANT_FLOOR_MICRO;
 }
 
+/**
+ * A domain with several accounts is a farm OR a company, and the page is worthless
+ * if it cannot tell them apart: nivision.co.il is a real customer whose accounts
+ * the owner approved himself, and at the 3-account bar it would have arrived on
+ * this page wearing the same colour as an 86-account signup ring.
+ *
+ * The separator is money that was actually spent, not a list of blessed domains:
+ * an allowlist keeps matching long after its reason dies (and nobody remembers to
+ * add the next customer before their third signup). Today the two shapes are
+ * unmistakable on that test - the farms are 86 and 19 accounts with 0 and 11
+ * requests and no real debit, while the one nivision account has 28 requests and
+ * $0.266 spent.
+ *
+ * Majority-suspended overrides it, so a ring cannot buy quiet with one cent of
+ * traffic through one member.
+ */
+function looksLikeCustomer(members: TopAccount[]): boolean {
+  const suspended = members.filter((m) => m.suspended === true).length;
+  if (suspended * 2 >= members.length) return false;
+  return members.some((m) => m.paid === true || (m.spentMicro ?? 0) >= GRANT_FLOOR_MICRO);
+}
+
 function createdMs(account: TopAccount): number | null {
   const raw = account.createdAt;
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
@@ -102,7 +124,9 @@ function clusterOf(label: string, members: TopAccount[], attentionBar: number): 
   const stamps = members.map(createdMs).filter((ms): ms is number => ms !== null).sort((a, b) => a - b);
   const suspended = members.filter((m) => m.suspended === true).length;
   const open = suspended < members.length;
+  const customer = looksLikeCustomer(members);
   return {
+    customer,
     label,
     accounts: members.length,
     suspended,
@@ -117,7 +141,9 @@ function clusterOf(label: string, members: TopAccount[], attentionBar: number): 
       .slice(0, MEMBER_CAP)
       .map((m) => m.email ?? '?'),
     open,
-    wantsLook: open && members.length >= attentionBar,
+    // A customer's own team never counts toward the verdict: this page is only
+    // worth opening because green means there is nothing to do.
+    wantsLook: open && !customer && members.length >= attentionBar,
   };
 }
 
