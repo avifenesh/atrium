@@ -110,8 +110,8 @@ test('"and N more" counts addresses, not events', () => {
   assert.equal(one[0].count, 4);
   assert.equal(
     feedRowDetail(one[0]),
-    'now 4 req lifetime · $0.00 spent',
-    'four rows about one address asserted three addresses that do not exist',
+    'one@acme.io · now 4 req lifetime · $0.00 spent',
+    'four rows about one address asserted three addresses that do not exist; the one real address is named and its lifetime line kept',
   );
 
   const five = foldFeedRows(
@@ -140,4 +140,41 @@ test('the same item acted on twice hours apart stays two rows', () => {
     ev({ at: '2026-09-01T01:37:09Z', type: 'do-launched', itemId: 'direction:langflow', title: 'do: prepare a patch' }),
   ]);
   assert.equal(rows.length, 2, 'two decisions, not a double fire');
+});
+
+test('a customer suspension never folds into a direction the owner closed', () => {
+  // Same words, different kinds: "active → lost" is a routine close on a
+  // direction and a paying customer going dark on an account. Folding them hid
+  // the customer inside a row whose click target was the direction.
+  const rows = foldFeedRows([
+    ev({
+      at: '2026-09-01T10:02:00Z', type: 'stage-change', itemId: 'direction:ttl-pricing',
+      title: 'TTL price shape ruling: active → lost', detail: 'pinned by owner',
+    }),
+    ev({
+      at: '2026-09-01T10:00:00Z', type: 'stage-change', itemId: 'tenant:whale',
+      title: 'whale@bigcorp.com: active → lost', detail: 'account · derived from sources',
+    }),
+  ]);
+  assert.equal(rows.length, 2, 'an account and a direction are two acts, whatever the words say');
+  const account = rows.find((r) => r.head.itemId === 'tenant:whale');
+  assert.ok(account, 'the account keeps its own row and its own click target');
+  assert.match(feedRowTitle(account, 'stage'), /whale@bigcorp\.com/);
+});
+
+test('a fold covering one address prints that address, not just the head detail', () => {
+  const rows = foldFeedRows([
+    ev({
+      at: '2026-09-01T10:02:00Z', type: 'stage-change', itemId: 'tenant:whale',
+      title: 'whale@bigcorp.com: paying → lost', detail: 'account · derived from sources',
+    }),
+    ev({
+      at: '2026-09-01T10:00:00Z', type: 'stage-change', itemId: 'tenant:whale',
+      title: 'whale@bigcorp.com: paying → lost', detail: 'account · derived from sources',
+    }),
+  ]);
+  assert.equal(rows.length, 1);
+  const detail = feedRowDetail(rows[0]) ?? '';
+  assert.match(detail, /whale@bigcorp\.com/, 'the one account in the fold has to appear on the line');
+  assert.match(detail, /derived from sources/, 'and the head detail still describes that identity');
 });

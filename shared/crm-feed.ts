@@ -29,7 +29,14 @@ import type { CrmEvent } from './types.js';
 
 /** Addresses printed inside one folded row before it says "and N more". */
 export const MEMBER_PREVIEW = 3;
-/** Rows further apart than this are two acts by the owner, not one sweep. */
+/**
+ * How large a GAP between two rows breaks a sweep. The window slides: each row
+ * that joins becomes the run's oldest member, so a steadily paced sweep folds
+ * however long it runs (the real 90-account one took 46 minutes at 31s a row)
+ * while two suspensions with a quiet hour between them stay two rows. The key
+ * carries the item kind and the transition, so a chain can only ever absorb
+ * more of the same act.
+ */
 const SWEEP_WINDOW_MS = 600_000;
 /** Same item, same type, this close together: one thing that fired twice. */
 const DUPLICATE_WINDOW_MS = 300_000;
@@ -130,8 +137,12 @@ function candidatesFor(e: CrmEvent, mailbox: string | null, domain: string | nul
   const to = e.type === 'stage-change' ? stageMovedTo(e.title) : null;
   if (to && SWEEP_STAGES.has(to)) {
     const from = stageMovedFrom(e.title) ?? '?';
+    // The item KIND is part of the key: closing a direction and suspending a
+    // customer are the same words ("active to lost") and folding them together
+    // buried the customer inside a row whose click target was the direction.
+    const itemKind = e.itemId?.split(':')[0] ?? 'none';
     out.push({
-      key: `sweep|${from}|${to}`,
+      key: `sweep|${itemKind}|${from}|${to}`,
       kind: 'transition',
       label: `${from} → ${to}`,
       windowMs: SWEEP_WINDOW_MS,
@@ -233,8 +244,13 @@ export function feedRowTitle(row: FeedRow, typeLabel: string): string {
  *  remainder in addresses too: subtracting a deduped address count from an event
  *  count made four rows about one address claim three more that do not exist. */
 export function feedRowDetail(row: FeedRow): string | null {
-  if (row.count === 1 || row.members.length <= 1) return row.head.detail;
+  if (row.count === 1 || row.members.length === 0) return row.head.detail;
   const shown = row.members.slice(0, MEMBER_PREVIEW);
   const rest = row.members.length - shown.length;
-  return rest > 0 ? `${shown.join(' · ')} and ${rest} more` : shown.join(' · ');
+  const list = rest > 0 ? `${shown.join(' · ')} and ${rest} more` : shown.join(' · ');
+  // A fold covering ONE address used to print only the head's detail, so the
+  // single account inside a mixed fold appeared nowhere on the row. The head's
+  // detail still describes that one identity, so print both rather than either.
+  if (row.members.length === 1 && row.head.detail) return `${list} · ${row.head.detail}`;
+  return list;
 }

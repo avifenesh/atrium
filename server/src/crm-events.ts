@@ -137,22 +137,30 @@ function usageClaimsMoney(title: string): boolean {
  * contact-logged row itself.
  */
 export interface SignalContext {
-  /** items whose arrival row is inside the same view */
-  arrivals: Set<string>;
-  /** items with a logged touch inside the same view */
-  contacted: Set<string>;
+  /** items whose arrival row is inside the same view, by the UTC day it landed on */
+  arrivals: Map<string, string>;
+  /** items with a logged touch inside the same view, by the UTC day of the touch */
+  contacted: Map<string, string>;
 }
 
 const ARRIVAL_TYPES = new Set<CrmEventType>(['lead-new', 'direction-new', 'account-new']);
 
 export function signalContext(windowed: CrmEvent[]): SignalContext {
-  const ctx: SignalContext = { arrivals: new Set(), contacted: new Set() };
+  const ctx: SignalContext = { arrivals: new Map(), contacted: new Map() };
   for (const e of windowed) {
     if (!e.itemId) continue;
-    if (ARRIVAL_TYPES.has(e.type)) ctx.arrivals.add(e.itemId);
-    if (e.type === 'contact-logged') ctx.contacted.add(e.itemId);
+    if (ARRIVAL_TYPES.has(e.type)) ctx.arrivals.set(e.itemId, e.at.slice(0, 10));
+    if (e.type === 'contact-logged') ctx.contacted.set(e.itemId, e.at.slice(0, 10));
   }
   return ctx;
+}
+
+/** The feed is grouped by UTC day, so "already on screen next to it" means the
+ *  same group. A decision the owner made hours later, in a different group, is
+ *  the only row that day holds about the item: suppressing it there loses the
+ *  owner's own work instead of deduplicating it. */
+function sameDayGroup(at: string, other: string | undefined): boolean {
+  return other != null && at.slice(0, 10) === other;
 }
 
 /**
@@ -200,8 +208,8 @@ export function eventSignal(e: CrmEvent, ctx?: SignalContext): boolean {
 
   if (stageMovedFrom(e.title) === 'new') {
     if (!pinned) return false;
-    if (e.itemId && ctx?.arrivals.has(e.itemId)) return false;
-    if (stageMovedTo(e.title) === 'contacted' && e.itemId && ctx?.contacted.has(e.itemId)) return false;
+    if (e.itemId && sameDayGroup(e.at, ctx?.arrivals.get(e.itemId))) return false;
+    if (stageMovedTo(e.title) === 'contacted' && e.itemId && sameDayGroup(e.at, ctx?.contacted.get(e.itemId))) return false;
   }
   return true;
 }

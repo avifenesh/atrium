@@ -370,3 +370,23 @@ test('the today digest is counted twice: every row, and the signal rows only', a
     assert.equal(activity.todaySignal['account-new'], 1);
   });
 });
+
+test('an owner decision in a later day group is never suppressed by yesterday arrival', () => {
+  // The dedup exists so "it arrived" and "you already closed it" are not two
+  // rows side by side. The feed groups by UTC day, so an arrival in yesterday's
+  // group is not next to anything: suppressing there loses the only row today
+  // holds about that item.
+  const arrival: CrmEvent = {
+    at: '2026-08-31T20:12:00Z', type: 'lead-new', itemId: 'lead:qwen-tools',
+    title: 'Tool call issues - Qwen3.8 27B NVFP4', detail: null, url: null,
+  };
+  const sameDay: CrmEvent = {
+    at: '2026-08-31T20:30:00Z', type: 'stage-change', itemId: 'lead:qwen-tools',
+    title: 'Tool call issues - Qwen3.8 27B NVFP4: new → skipped', detail: 'pinned by owner', url: null,
+  };
+  const nextDay: CrmEvent = { ...sameDay, at: '2026-09-01T01:38:00Z' };
+
+  const ctx = signalContext([arrival, sameDay, nextDay]);
+  assert.equal(eventSignal(sameDay, ctx), false, 'next to its own arrival row it is a duplicate');
+  assert.equal(eventSignal(nextDay, ctx), true, 'a day later it is the only row about the item');
+});
