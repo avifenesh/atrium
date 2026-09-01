@@ -1029,21 +1029,25 @@ export interface CrmSecurity {
     /** suspended after already serving traffic, so the fence closed late */
     suspendedWithTraffic: number;
     /** suspended after buying, or after spending at least a cent: the shape of a
-     *  suspension nobody meant to perform, as opposed to a farm probe */
-    suspendedWithMoney: number;
+     *  suspension nobody meant to perform, as opposed to a farm probe. Optional
+     *  across a web-build-before-restart window, like the attention fields. */
+    suspendedWithMoney?: number;
     /** accounts the console reported without a createdAt, so no timing signal */
     ageUnknown: number;
   };
   /** lifetime credit granted, micro-dollars: the ceiling of what a farm could take */
   grantedMicro: number | null;
   pendingPurchases: number | null;
-  /** open clusters over their list's attention bar */
-  attentionClusters: number;
+  /** open clusters over their list's attention bar. Optional for the same reason
+   *  todaySignal is: the daemon serves web/dist off disk, so a build can land
+   *  before the restart that ships the server half, and in that window the page
+   *  must fall back rather than print an empty verdict. */
+  attentionClusters?: number;
   /** suspended accounts that had money behind them. It counts toward the verdict
    *  because the console reports no suspension time, reason or actor: there is no
    *  way to age one of these out, and a suspension the owner did not perform is
    *  the shape that took the fleet down for 65 minutes on 2026-08-31. */
-  attentionSuspensions: number;
+  attentionSuspensions?: number;
   /** everything the verdict hangs on. Zero is what lets the page be ignored. */
   attention: number;
 }

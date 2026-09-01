@@ -157,13 +157,17 @@ export function SecurityTab({
    * that had money behind it is in here because the ledger row for it is dated
    * and this page's count is not: the console reports no suspension time, reason
    * or actor, so "clear" while one of those is standing would be a lie in the one
-   * place the owner looks after a containment scare. */
+   * place the owner looks after a containment scare.
+   *
+   * The breakdown falls back to the total across a build-before-restart window: a
+   * yellow card with no sentence on it would be worse than naming clusters only,
+   * which is all the total used to mean. */
+  const suspensions = sec.attentionSuspensions ?? 0;
+  const clusters = sec.attentionClusters ?? Math.max(0, sec.attention - suspensions);
   const wants = [
-    sec.attentionClusters > 0
-      ? `${sec.attentionClusters} ${sec.attentionClusters === 1 ? 'cluster wants' : 'clusters want'} a look`
-      : null,
-    sec.attentionSuspensions > 0
-      ? `${sec.attentionSuspensions} suspended ${sec.attentionSuspensions === 1 ? 'account' : 'accounts'} had money`
+    clusters > 0 ? `${clusters} ${clusters === 1 ? 'cluster wants' : 'clusters want'} a look` : null,
+    suspensions > 0
+      ? `${suspensions} suspended ${suspensions === 1 ? 'account' : 'accounts'} had money`
       : null,
   ].filter(Boolean).join(' · ');
 
@@ -199,13 +203,13 @@ export function SecurityTab({
           label="suspended"
           value={`${sec.accounts.suspended} of ${sec.accounts.total}`}
           sub={
-            sec.accounts.suspendedWithMoney > 0
+            (sec.accounts.suspendedWithMoney ?? 0) > 0
               ? `${sec.accounts.suspendedWithMoney} had paid or spent a cent`
               : sec.accounts.suspendedWithTraffic > 0
                 ? `${sec.accounts.suspendedWithTraffic} had served traffic, all sub-cent`
                 : 'none served traffic first'
           }
-          tone={sec.accounts.suspendedWithMoney > 0 ? 'text-amber' : 'text-mist'}
+          tone={(sec.accounts.suspendedWithMoney ?? 0) > 0 ? 'text-amber' : 'text-mist'}
         />
         <Stat
           label="never used it"
