@@ -128,6 +128,28 @@ function usageClaimsMoney(title: string): boolean {
 }
 
 /**
+ * The money floor's twin, in requests.
+ *
+ * A money-only quiet rule hides the abuse shape we have actually been hit by:
+ * volume without dollars. The 2026-08-31 ring drained credit across 26 accounts,
+ * and at roughly $0.0001 a request an account can serve hundreds an hour while
+ * every window's debit rounds under the one-cent print floor, so `+$0.00` (or no
+ * money clause at all) is what a busy attacker looks like. The fan-out defect
+ * makes it worse: credit is replicated per serving box and spend is not
+ * aggregated, so each box's share of the same traffic rounds smaller still.
+ *
+ * 100 requests is the same bar as the money floor rather than a new opinion: at
+ * list prices that is about a cent of traffic, so a window trips this exactly
+ * when it would have tripped the dollar test had the spend been counted whole.
+ */
+const REQUEST_FLOOR = 100;
+
+function usageClaimsVolume(title: string): boolean {
+  const hit = title.match(/\+(\d+) req/u);
+  return hit ? Number(hit[1]) >= REQUEST_FLOOR : false;
+}
+
+/**
  * What a row's neighbours in the same view say about it.
  *
  * Two of the quiet rules are about DUPLICATION rather than shape, and duplication
@@ -194,13 +216,21 @@ function sameDayGroup(at: string, other: string | undefined): boolean {
  * on, and the view has a toggle that shows everything.
  */
 export function eventSignal(e: CrmEvent, ctx?: SignalContext): boolean {
-  if (e.type === 'account-usage') return usageClaimsMoney(e.title);
+  if (e.type === 'account-usage') return usageClaimsMoney(e.title) || usageClaimsVolume(e.title);
   if (e.type !== 'stage-change') return true;
 
   const pinned = e.detail === OWNER_PINNED;
   if (e.itemId?.startsWith('tenant:')) {
     if (pinned) return true;
     const to = stageMovedTo(e.title);
+    // Anything LEAVING a stage that had money or traffic behind it is signal,
+    // whatever it moves to, EXCEPT into `new`: a live account cannot hold `new`,
+    // so that edge is the orphan-baseline flap rather than a downgrade. Today
+    // only `lost` is reachable anyway (derivedAccountStage sends a suspended
+    // account there, and `paid` never un-sets, so there is no paying -> active),
+    // but the catch-all below fails SILENT, and a downgrade that stops being
+    // unreachable should arrive as noise rather than as nothing.
+    if (to !== 'new' && PAID_OR_TRAFFICKED.has(stageMovedFrom(e.title) ?? '')) return true;
     if (to === 'paying') return true;
     if (to === 'lost') return PAID_OR_TRAFFICKED.has(stageMovedFrom(e.title) ?? '');
     return false;

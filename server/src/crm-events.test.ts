@@ -390,3 +390,33 @@ test('an owner decision in a later day group is never suppressed by yesterday ar
   assert.equal(eventSignal(sameDay, ctx), false, 'next to its own arrival row it is a duplicate');
   assert.equal(eventSignal(nextDay, ctx), true, 'a day later it is the only row about the item');
 });
+
+test('volume without money is signal: the ring shape spends nothing per window', () => {
+  // The abuse we have actually been hit by is requests, not dollars: at list
+  // prices a busy account's hourly debit rounds under the one-cent print floor,
+  // so a money-only rule reads a farm as quiet.
+  const usage = (title: string): CrmEvent => ({
+    at: '2026-09-01T10:00:00Z', type: 'account-usage', itemId: 'tenant:t-1', title, detail: null, url: null,
+  });
+  assert.equal(eventSignal(usage('a@b.com: +6 req')), false, 'a handful of requests and no money is still mechanism');
+  assert.equal(eventSignal(usage('a@b.com: +99 req')), false, 'just under the floor');
+  assert.equal(eventSignal(usage('a@b.com: +100 req')), true, 'at the floor, money or not');
+  assert.equal(eventSignal(usage('a@b.com: +4210 req')), true, 'a ring serving thousands for free is not quiet');
+  assert.equal(eventSignal(usage('a@b.com: +3 req · +$0.02')), true, 'money still signals on its own');
+  assert.equal(eventSignal(usage('a@b.com: +3 req · +$0.00')), false, 'a legacy zero-dollar row with no volume stays quiet');
+});
+
+test('leaving a stage that had money or traffic is signal whatever it moves to', () => {
+  // Guards the catch-all rather than a reachable transition: paid never un-sets
+  // today, so paying -> active cannot occur. If derivation ever changes, this
+  // must not fail silent.
+  const move = (title: string): CrmEvent => ({
+    at: '2026-09-01T10:00:00Z', type: 'stage-change', itemId: 'tenant:t-1',
+    title, detail: 'account · derived from sources', url: null,
+  });
+  assert.equal(eventSignal(move('a@b.com: paying → active')), true, 'a customer who stops paying without being closed');
+  assert.equal(eventSignal(move('a@b.com: active → signed-up')), true, 'a trafficked account going backwards');
+  assert.equal(eventSignal(move('a@b.com: signed-up → active')), false, 'the ordinary first request stays mechanism');
+  assert.equal(eventSignal(move('a@b.com: signed-up → lost')), false, 'a farm sweep is still mechanism');
+  assert.equal(eventSignal(move('a@b.com: active → new')), false, 'into new is the orphan-baseline flap, not a downgrade');
+});
