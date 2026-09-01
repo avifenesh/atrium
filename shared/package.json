@@ -1,0 +1,6 @@
+{
+  "//": "Not a workspace. This file exists for one reason: tsc picks a file's module format from the nearest package.json, and the repo root has no type field, so shared/*.ts compiled to CommonJS. That was invisible while shared/ held types only (nothing was emitted that anyone imported at runtime) and became a load-bearing bug the moment mailbox.ts arrived. server/ and mcp/ are both ESM, so shared/ is too.",
+  "name": "@atrium/shared",
+  "private": true,
+  "type": "module"
+}

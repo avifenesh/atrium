@@ -971,6 +971,71 @@ export interface CrmOverview {
   /** the serving watchdog's incidents — the rig-side sentinel's alerts, collapsed.
    *  null = the serving collector is disabled or has not run yet. */
   serving: ServingSnapshot | null;
+  /** abuse posture: the account-farm shapes and the grant exposure behind them.
+   *  null = the console dashboard has not been read yet. */
+  security: CrmSecurity | null;
+}
+
+// ---------- security posture ----------
+
+/** A set of accounts that share one identity handle: a folded mailbox, or an
+ *  email domain. Two accounts sharing a mailbox is the plus-tag farm shape; a
+ *  pile sharing a private domain is the shape a plus-tag fold cannot see. */
+export interface CrmSecurityCluster {
+  /** the folded mailbox, or the domain, depending on which list this came from */
+  label: string;
+  accounts: number;
+  suspended: number;
+  /** accounts carrying a credit grant worth at least a cent: what a farm is after.
+   *  Not "any positive credit": the console writes a one-micro credit on
+   *  enrolment, so that test counted every account that ever existed. */
+  granted: number;
+  grantedMicro: number;
+  requests: number;
+  spentMicro: number;
+  /** signup times, from the console's per-account createdAt; null when it did
+   *  not report one for any member of the cluster */
+  firstSeen: string | null;
+  lastSeen: string | null;
+  /** the addresses themselves, newest first, capped for display */
+  members: string[];
+  /** at least one member is not suspended */
+  open: boolean;
+  /** open AND over this list's attention bar, so it counts toward the page's
+   *  verdict. Decided server-side so the row's colour and the verdict line can
+   *  never disagree. */
+  wantsLook: boolean;
+}
+
+export interface CrmSecurity {
+  mailboxes: CrmSecurityCluster[];
+  domains: CrmSecurityCluster[];
+  /** UTC hours that took a burst of signups, newest first. Per-hour because a
+   *  paced farm (a signup every 31 seconds) never trips a per-minute bar. */
+  bursts: Array<{ hour: string; signups: number; suspended: number }>;
+  promo: { claimed: number; seats: number; remaining: number } | null;
+  accounts: {
+    /** the console's own total, internal accounts included */
+    total: number;
+    /** rows this posture actually scanned: external accounts only */
+    external: number;
+    enrolled: number;
+    consented: number;
+    suspended: number;
+    newToday: number;
+    newWeek: number;
+    /** never made one request: a signup that only wanted the credit */
+    neverUsed: number;
+    /** suspended after already serving traffic, so the fence closed late */
+    suspendedWithTraffic: number;
+    /** accounts the console reported without a createdAt, so no timing signal */
+    ageUnknown: number;
+  };
+  /** lifetime credit granted, micro-dollars: the ceiling of what a farm could take */
+  grantedMicro: number | null;
+  pendingPurchases: number | null;
+  /** open clusters: the number the page's verdict line names */
+  attention: number;
 }
 
 // ---------- serving alerts ----------
@@ -1072,14 +1137,28 @@ export interface CrmEvent {
   title: string;
   detail: string | null;
   url: string | null;
+  /**
+   * false = a row that carries no decision, hidden by the feed's default signal
+   * view (a request-only usage delta, an account stage move the request counter
+   * or a suspension made mechanically, an ingest-gate near miss). Classified at
+   * serve time by server/src/crm-events.ts, never written to the ledger: the
+   * ledger stays raw so the rule can change without rewriting history. Absent on
+   * a row the classifier never saw, which reads as signal.
+   */
+  signal?: boolean;
 }
 
 export interface CrmActivity {
   updatedAt: string;
+  /** counts for the current UTC day, keyed by event type: EVERY row */
+  today: Partial<Record<CrmEventType, number>>;
+  /** the same day counted over signal rows only, so a digest above a quieted
+   *  feed does not advertise rows the reader cannot see. Optional because the
+   *  daemon serves web/dist off disk: a build can land before the restart that
+   *  ships the server half, and the page must not crash in that window. */
+  todaySignal?: Partial<Record<CrmEventType, number>>;
   /** newest first */
   events: CrmEvent[];
-  /** counts for the current UTC day, keyed by event type */
-  today: Partial<Record<CrmEventType, number>>;
 }
 
 /** One direction file under ~/.config/atrium/directions/ — written by the hermes

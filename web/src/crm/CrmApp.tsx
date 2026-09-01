@@ -22,6 +22,7 @@ import { DoLink, isPlaceholderAction } from './Action';
 import { Board } from './Board';
 import { ModelsTab } from './Models';
 import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
+import { SecurityTab } from './Security';
 import { UsersTab } from './Users';
 import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE, stageLabelFor } from './stages';
 
@@ -519,14 +520,28 @@ type StageFilter = 'any' | 'due' | CrmStage;
 
 // Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
 // One tab per question: work the pipeline, see what changed, read the users,
-// count the models, read the money, see who visits, judge the outreach, check for fire.
-const TABS = ['pipeline', 'activity', 'users', 'models', 'money', 'traffic', 'outreach', 'health'] as const;
+// count the models, read the money, see who visits, judge the outreach, check for
+// fire, read the abuse shapes.
+const TABS = ['pipeline', 'activity', 'users', 'models', 'money', 'traffic', 'outreach', 'health', 'security'] as const;
 type Tab = (typeof TABS)[number];
-const readTab = (): Tab => {
-  const h = window.location.hash.replace('#', '');
-  if (h === 'growth') return 'traffic'; // the old growth tab split into traffic + outreach
-  return (TABS as readonly string[]).includes(h) ? (h as Tab) : 'pipeline';
+
+/**
+ * The hash carries the tab and, for the activity feed, whether the quiet view is
+ * off: `#activity` is quiet, `#activity/all` shows everything. The toggle rides
+ * the hash rather than component state for the same reason the tab does, so a
+ * refresh, a bookmark and the phone's back button all keep it.
+ */
+const readHash = (): { tab: Tab; feedAll: boolean } => {
+  const [head, option] = window.location.hash.replace('#', '').split('/');
+  // the old growth tab split into traffic + outreach
+  const name = head === 'growth' ? 'traffic' : head;
+  return {
+    tab: (TABS as readonly string[]).includes(name) ? (name as Tab) : 'pipeline',
+    feedAll: option === 'all',
+  };
 };
+const writeHash = (tab: Tab, feedAll: boolean): string =>
+  tab === 'activity' && feedAll ? 'activity/all' : tab === 'pipeline' ? '' : tab;
 
 const matches = (i: CrmItem, needle: string) =>
   `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''} ${i.action?.label ?? ''} ${i.action?.brief ?? ''}`
@@ -536,6 +551,15 @@ const matches = (i: CrmItem, needle: string) =>
 // A skipped or lost row is a decision already made. Showing it forever means the list grows
 // without the work growing, and it buried the rows that still need a reply.
 const CLOSED = new Set<CrmStage>(['lost', 'skipped']);
+
+/** The board's one-line motion chip. Near-miss left the set when it left the
+ *  feed's default view; a paying move is the one that had to be added. */
+const TODAY_CHIP_LABEL = {
+  'account-new': 'signup',
+  'lead-new': 'lead',
+  'account-usage': 'spend',
+  'stage-change': 'move',
+} as const;
 
 const chipClass = (active: boolean, extra = '') =>
   `shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
@@ -554,16 +578,25 @@ export function CrmApp() {
   const [showClosed, setShowClosed] = useState(false);
   const [onlyQualified, setOnlyQualified] = useState(false);
   const [needsAction, setNeedsAction] = useState(false);
-  const [tab, setTab] = useState<Tab>(readTab);
+  const [tab, setTab] = useState<Tab>(() => readHash().tab);
+  const [feedAll, setFeedAll] = useState(() => readHash().feedAll);
 
   useEffect(() => {
-    const onHash = () => setTab(readTab());
+    const onHash = () => {
+      const next = readHash();
+      setTab(next.tab);
+      setFeedAll(next.feedAll);
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
   const goTab = (next: Tab) => {
-    window.location.hash = next === 'pipeline' ? '' : next;
+    window.location.hash = writeHash(next, feedAll);
     setTab(next);
+  };
+  const goFeedAll = (next: boolean) => {
+    window.location.hash = writeHash('activity', next);
+    setFeedAll(next);
   };
 
   const refresh = useCallback(async () => {
@@ -668,14 +701,15 @@ export function CrmApp() {
       {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
 
       {/* tab bar — one screen per question: work the pipeline, read the money,
-          read the growth, check the serving */}
-      <div className="mb-3 flex gap-1 border-b border-white/8">
+          read the growth, check the serving, read the abuse shapes.
+          It scrolls: nine 12px monospace labels are wider than a phone. */}
+      <div className="mb-3 flex gap-1 overflow-x-auto border-b border-white/8">
         {TABS.map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => goTab(t)}
-            className={`cursor-pointer border-b-2 px-3 py-2 font-mono text-[12px] transition-colors ${
+            className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 font-mono text-[12px] transition-colors ${
               tab === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
             }`}
           >
@@ -696,7 +730,7 @@ export function CrmApp() {
       )}
       {tab === 'activity' && (
         activity
-          ? <ActivityTab activity={activity} onOpen={setOpenId} />
+          ? <ActivityTab activity={activity} showAll={feedAll} onShowAll={goFeedAll} onOpen={setOpenId} />
           : !error && (
             <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
           )
@@ -706,22 +740,27 @@ export function CrmApp() {
       {tab === 'traffic' && overview && <TrafficTab data={overview} />}
       {tab === 'outreach' && overview && <OutreachTab data={overview} />}
       {tab === 'health' && overview && <HealthTab data={overview} />}
+      {/* The security page needs both feeds: the posture comes from the overview,
+          the suspended rows and the drawer come from the pipeline. */}
+      {tab === 'security' && overview && <SecurityTab data={overview} items={allItems} onOpen={setOpenId} />}
 
       {tab === 'pipeline' && (
         <>
       {overview && (
         <div className="mb-3 flex flex-wrap items-center gap-1.5">
           <PulseStrip data={overview} dueCount={due.length} />
-          {/* today's motion, one tap from the board — the feed itself lives on the activity tab */}
-          {activity && Object.values(activity.today).some((n) => (n ?? 0) > 0) && (
+          {/* Today's motion, one tap from the board (the feed itself is the activity
+              tab). It counts todaySignal, not today: this chip and the feed it links
+              to have to agree, and the feed hides the mechanical rows. */}
+          {activity && Object.values(activity.todaySignal ?? activity.today).some((n) => (n ?? 0) > 0) && (
             <button
               type="button"
               onClick={() => goTab('activity')}
               className="cursor-pointer rounded-full border border-slate-glow/40 px-2.5 py-1 font-mono text-[10px] text-slate-glow"
             >
-              today: {(['account-new', 'lead-new', 'near-miss', 'stage-change'] as const)
-                .filter((t) => (activity.today[t] ?? 0) > 0)
-                .map((t) => `${activity.today[t]} ${t === 'account-new' ? 'signup' : t === 'lead-new' ? 'lead' : t === 'near-miss' ? 'near-miss' : 'move'}`)
+              today: {(['account-new', 'lead-new', 'account-usage', 'stage-change'] as const)
+                .filter((t) => ((activity.todaySignal ?? activity.today)[t] ?? 0) > 0)
+                .map((t) => `${(activity.todaySignal ?? activity.today)[t]} ${TODAY_CHIP_LABEL[t]}`)
                 .join(' · ') || 'activity'} →
             </button>
           )}

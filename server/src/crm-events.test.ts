@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { crmEvents } from './crm-events.js';
-import type { CrmItem } from '../../shared/types.js';
+import { crmEvents, eventSignal } from './crm-events.js';
+import type { CrmEvent, CrmItem } from '../../shared/types.js';
 
 // The differ is the CRM's memory of motion. These pin its three contracts:
 // a first run seeds silently (no 300-event flood on deploy), a restart does
@@ -170,5 +170,84 @@ test('emit + activity: caps, today digest, and the ledger file shape', async () 
 
     const raw = await readFile(join(dir, 'crm-events.jsonl'), 'utf8');
     assert.equal(raw.trim().split('\n').length, 2, 'one JSONL line per event');
+  });
+});
+
+// The signal flag is what "make it quiet" hangs on. It is computed at serve time
+// over the raw ledger, so it has to read rows written before it existed the same
+// way it reads new ones, and it must never quiet money or a person arriving.
+
+test('a request-only usage delta prints no money clause and is not signal', async () => {
+  await withEvents(async (dir) => {
+    const past = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const today = new Date().toISOString().slice(0, 10);
+    await writeFile(join(dir, 'crm-events-state.json'), JSON.stringify({
+      seededAt: past,
+      items: {
+        'tenant:t-farm': { kind: 'account', stage: 'signed-up', requests: 0, spentMicro: 0, lastActiveDay: today, quiet: false },
+      },
+      usage: {},
+    }));
+    crmEvents._resetForTest(dir);
+    await crmEvents.load();
+
+    const fired = await crmEvents.observe([
+      account('tenant:t-farm', { requests: 2, spentMicro: 0 }, { stage: 'signed-up', derivedStage: 'signed-up' }),
+    ]);
+    assert.deepEqual(fired.map((e) => e.type), ['account-usage']);
+    assert.equal(fired[0]?.title, 't-tenant:t-farm: +2 req', 'no +$0.00: the print was a zero wearing a money sign');
+
+    const [served] = crmEvents.activity().events;
+    assert.equal(served?.signal, false, 'a request counter ticking is not a decision');
+  });
+});
+
+test('usage with real cents stays signal', () => {
+  assert.equal(eventSignal({
+    at: '2026-08-31T13:22:16.427Z', type: 'account-usage', itemId: 'tenant:t-real',
+    title: 'ofek@nivision.co.il: +28 req · +$0.27', detail: null, url: null,
+  }), true);
+  assert.equal(eventSignal({
+    at: '2026-09-01T10:58:20.655Z', type: 'account-usage', itemId: 'tenant:t-farm',
+    title: 'danimsibads+tv217@gmail.com: +1 req · +$0.00', detail: null, url: null,
+  }), false, 'the rows already on disk read the same way as the new shape');
+});
+
+test('account stage moves are mechanism unless money starts', () => {
+  const move = (title: string, itemId = 'tenant:t-1') => eventSignal({
+    at: '2026-09-01T10:58:20.654Z', type: 'stage-change', itemId, title, detail: null, url: null,
+  });
+  assert.equal(move('a@b.com: signed-up → active'), false, 'the request counter crossed 1, the usage row said it');
+  assert.equal(move('a@b.com: signed-up → lost'), false, 'the owner suspended it; the security page counts those');
+  assert.equal(move('a@b.com: active → new'), false, 'a live account cannot hold new: orphan-baseline flap');
+  assert.equal(move('a@b.com: new → active'), false);
+  assert.equal(move('a@b.com: active → paying'), true, 'money starting is always news');
+  assert.equal(move('acme wants an api: contacted → replied', 'x:2089854486'), true, 'lead moves are hand work');
+});
+
+test('near misses leave the motion feed, arrivals and churn never do', () => {
+  const row = (type: CrmEvent['type'], title = 'x') =>
+    eventSignal({ at: '2026-09-01T00:00:00Z', type, itemId: 'tenant:t-1', title, detail: null, url: null });
+  assert.equal(row('near-miss'), false);
+  assert.equal(row('account-new', 'signup: a@b.com'), true);
+  assert.equal(row('account-quiet', 'gone quiet: a@b.com'), true);
+  assert.equal(row('account-resumed', 'back: a@b.com'), true);
+  assert.equal(row('lead-new'), true);
+  assert.equal(row('direction-new'), true);
+  assert.equal(row('contact-logged'), true);
+  assert.equal(row('do-launched'), true);
+});
+
+test('the today digest is counted twice: every row, and the signal rows only', async () => {
+  await withEvents(async () => {
+    crmEvents.emit({ type: 'near-miss', itemId: 'x:9', title: 'we spend a lot', detail: null, url: null });
+    crmEvents.emit({ type: 'account-new', itemId: 'tenant:t-9', title: 'signup: a@b.com', detail: null, url: null });
+    await crmEvents.flush();
+
+    const activity = crmEvents.activity();
+    assert.equal(activity.today['near-miss'], 1, 'nothing is deleted from the payload');
+    assert.ok(activity.todaySignal, 'the daemon always serves the signal digest');
+    assert.equal(activity.todaySignal['near-miss'], undefined, 'but the quiet digest does not advertise it');
+    assert.equal(activity.todaySignal['account-new'], 1);
   });
 });

@@ -105,6 +105,53 @@ function validEvent(raw: unknown): CrmEvent | null {
 
 const money = (micro: number): string => `$${(micro / 1_000_000).toFixed(2)}`;
 
+/** The stage a `stage-change` title moved TO. The title is written as
+ *  `<subject>: <from> → <to>`, and the arrow cannot occur in an address or a
+ *  stage name, so the tail after the last arrow is the destination. */
+function stageMovedTo(title: string): string | null {
+  const parts = title.split(' → ');
+  return parts.length > 1 ? parts[parts.length - 1].trim() : null;
+}
+
+/**
+ * Money an `account-usage` title claims, in cents of print. Two title shapes
+ * exist and both have to read the same way: rows written before this classifier
+ * printed `+$0.00` for a true zero AND for any sub-cent debit, and rows written
+ * after it omit the money clause entirely when it would round to nothing.
+ */
+function usageClaimsMoney(title: string): boolean {
+  const hit = title.match(/\+\$(\d+(?:\.\d+)?)/u);
+  return hit ? Number(hit[1]) > 0 : false;
+}
+
+/**
+ * Does this row carry a decision, or is it mechanism?
+ *
+ * The feed's default view shows signal only. Three shapes are mechanism:
+ *
+ *  - a near miss, which the ingest gate emits as a rescuable diagnostic and
+ *    which its own producer marks as never a board row;
+ *  - a usage delta with no money in it, which is a request counter ticking, and
+ *    which the burst of plus-tagged signups printed once per account per hour;
+ *  - an ACCOUNT stage move that is not into `paying`, because every other
+ *    account stage is derived arithmetic: `signed-up → active` is the request
+ *    counter crossing 1 (the usage row already said it), `→ lost` is the owner's
+ *    own suspension echoing back (the security page counts those), and anything
+ *    touching `new` is the orphan-baseline flap, a stage a live account cannot
+ *    hold. Lead and direction stage moves stay: those the owner makes by hand.
+ *
+ * Nothing is dropped from the payload. This only sets the flag the view filters
+ * on, and the view has a toggle that shows everything.
+ */
+export function eventSignal(e: CrmEvent): boolean {
+  if (e.type === 'near-miss') return false;
+  if (e.type === 'account-usage') return usageClaimsMoney(e.title);
+  if (e.type === 'stage-change' && e.itemId?.startsWith('tenant:')) {
+    return stageMovedTo(e.title) === 'paying';
+  }
+  return true;
+}
+
 function daysSilent(lastActiveDay: string | null, now: string): number | null {
   if (!lastActiveDay) return null;
   const days = Math.floor((Date.parse(now.slice(0, 10)) - Date.parse(lastActiveDay)) / 86_400_000);
@@ -269,10 +316,16 @@ export const crmEvents = {
         const dSpend = (item.metrics.spentMicro ?? 0) - anchor.spentMicro;
         const windowOpen = Date.parse(now) - Date.parse(anchor.at) >= USAGE_COALESCE_MS;
         if (windowOpen && (dReq >= USAGE_MIN_REQUESTS || dSpend > 0)) {
+          // `+$0.00` was a lie in two directions at once: it printed for a true
+          // zero and for any sub-cent debit, and it read as "money moved" in a
+          // feed where money moving is the whole point. A delta under one cent
+          // now prints requests only, and the detail line still carries the
+          // lifetime spend, so nothing is lost.
+          const spendClause = dSpend >= 10_000 ? ` · +${money(dSpend)}` : '';
           emitted.push(this.emit({
             type: 'account-usage',
             itemId: item.id,
-            title: `${item.title}: +${dReq} req · +${money(dSpend)}`,
+            title: `${item.title}: +${dReq} req${spendClause}`,
             detail: `now ${item.metrics.requests} req lifetime · ${money(item.metrics.spentMicro)} spent`,
             url: null,
           }));
@@ -300,14 +353,22 @@ export const crmEvents = {
   activity(days = 7): CrmActivity {
     const now = iso();
     const cutoff = Date.parse(now) - days * 86_400_000;
-    const windowed = events.filter((e) => Date.parse(e.at) >= cutoff).reverse();
+    // The signal flag is attached here rather than at emit time: the ledger is
+    // append-only, so a rule that lived in the written row could never be
+    // corrected for the 200-odd rows already on disk.
+    const windowed = events
+      .filter((e) => Date.parse(e.at) >= cutoff)
+      .reverse()
+      .map((e) => ({ ...e, signal: eventSignal(e) }));
     const today: Partial<Record<CrmEventType, number>> = {};
+    const todaySignal: Partial<Record<CrmEventType, number>> = {};
     const day = now.slice(0, 10);
     for (const e of events) {
       if (e.at.slice(0, 10) !== day) continue;
       today[e.type] = (today[e.type] ?? 0) + 1;
+      if (eventSignal(e)) todaySignal[e.type] = (todaySignal[e.type] ?? 0) + 1;
     }
-    return { updatedAt: now, events: windowed, today };
+    return { updatedAt: now, events: windowed, today, todaySignal };
   },
 
   /** test hook: reset and redirect files */

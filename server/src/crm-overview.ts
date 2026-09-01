@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { burnPerDay } from './collectors/vast.js';
 import { config } from './config.js';
 import { crm } from './crm.js';
+import { securityPosture, type SecurityDashboard } from './crm-security.js';
 import { store } from './state.js';
 import { iso, readJson } from './util.js';
 import type { CrmItem, CrmOverview, CrmUsageDay } from '../../shared/types.js';
@@ -79,8 +80,28 @@ async function exposure(): Promise<CrmOverview['exposure']> {
 }
 
 interface DashboardShape {
-  accounts?: { total?: number; withPurchase?: number; suspended?: number; internal?: number; new7d?: number };
-  money?: { purchasedMicro?: number; grantedMicro?: number; spentMicro?: number; outstandingMicro?: number; purchases?: number };
+  // enrolled/consented/newToday and promo are read by the security posture only;
+  // they were fetched all along and stopped at the machine boundary.
+  accounts?: {
+    total?: number;
+    withPurchase?: number;
+    suspended?: number;
+    internal?: number;
+    enrolled?: number;
+    consented?: number;
+    newToday?: number;
+    new7d?: number;
+  };
+  money?: {
+    purchasedMicro?: number;
+    grantedMicro?: number;
+    spentMicro?: number;
+    outstandingMicro?: number;
+    purchases?: number;
+    pendingPurchases?: number;
+  };
+  promo?: { claimed?: number; seats?: number; remaining?: number };
+  top?: SecurityDashboard['top'];
   usage?: Array<Partial<CrmUsageDay>>;
   internal?: { usage?: Array<Partial<CrmUsageDay>> };
 }
@@ -325,5 +346,9 @@ export async function crmOverview(): Promise<CrmOverview> {
     // deliberately not: its state file carries ssh endpoints and host provider addresses,
     // and none of that belongs on a surface that leaves the machine, Access or no Access.
     serving: (extra['serving']?.data as CrmOverview['serving']) ?? null,
+    // Same read-only posture as the serving block above: this names shapes and
+    // counts, and every account-scoped move (suspend, restore, enroll, grant)
+    // stays where it already is, behind the fixed action allowlist.
+    security: securityPosture(dashboard),
   };
 }
