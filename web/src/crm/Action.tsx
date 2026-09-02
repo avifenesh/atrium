@@ -34,11 +34,18 @@ export function awaitingYou(item: CrmItem): boolean {
   return true;
 }
 
-/** Line-item spend or a hard score. Everything else is comment-the-link. */
+/** Vendor of a non-SOTA API product. Coding-agent spend is never this. */
 export function isOpportunity(item: CrmItem): boolean {
-  const score = item.relevance?.score ?? 0;
-  const labels = item.relevance?.labels ?? [];
-  return score >= 12 || labels.includes('line-item spend') || labels.includes('names a company bill');
+  const text = [item.title, item.subtitle, item.detail, ...(item.relevance?.labels ?? [])].filter(Boolean).join(' ');
+  if (
+    /\b(?:claude code|cursor|copilot|cline|aider|opencode|codex|coding agent|codebase|pair program)\b/i.test(text)
+  ) {
+    return false;
+  }
+  return (
+    /\b(?:legal|lawyer|attorneys?|contract review|document intake|call notes?|transcript|summar(?:y|ies|ize|isation)|ticket(?:s|ing)?|classif(?:y|ication)|extract(?:ion)?|kyc|onboarding packet|claims? processing)\b/i.test(text)
+    || /\b(?:our (?:product|app|platform|customers|clients) (?:use|uses|using|run|pay)|we sell|our users (?:pay|buy|run))\b/i.test(text)
+  );
 }
 
 const PRODUCT_LINK = 'https://inference.tiyuvta.ai';
