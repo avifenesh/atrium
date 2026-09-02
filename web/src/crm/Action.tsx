@@ -69,10 +69,12 @@ function displayLabel(raw: string, compact: boolean): string {
 export function DoLink({
   item,
   compact = false,
+  row = false,
   showMissing = true,
 }: {
   item: CrmItem;
   compact?: boolean;
+  row?: boolean;
   showMissing?: boolean;
 }) {
   const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'err'>('idle');
@@ -87,21 +89,28 @@ export function DoLink({
   }
 
   const banked = isBankedSend(item);
+  const idleLabel = banked
+    ? row
+      ? 'Send'
+      : `Send · ${displayLabel(item.action.label, compact).replace(/^Do · /u, '')}`
+    : row
+      ? 'Do'
+      : displayLabel(item.action.label, compact);
   const label = banked
     ? state === 'ok'
-      ? 'copied, tweet open'
+      ? row ? 'Copied' : 'copied, tweet open'
       : state === 'err'
-        ? 'copy failed, tweet open'
+        ? row ? 'Opened' : 'copy failed, tweet open'
         : state === 'busy'
           ? 'opening…'
-          : `Send · ${displayLabel(item.action.label, compact).replace(/^Do · /u, '')}`
+          : idleLabel
     : state === 'busy'
       ? 'launching…'
       : state === 'ok'
         ? 'launched'
         : state === 'err'
           ? 'launch failed'
-          : displayLabel(item.action.label, compact);
+          : idleLabel;
 
   return (
     <button
@@ -140,15 +149,23 @@ export function DoLink({
           .catch(() => setState('err'));
       }}
       className={`cursor-pointer text-left font-mono leading-snug ${
-        compact
-          ? 'mt-1.5 line-clamp-2 text-[11px] underline-offset-2 hover:underline'
-          : 'mt-1 w-full rounded-lg border px-3 py-3 text-[15px]'
+        row
+          ? 'shrink-0 rounded-md border px-2.5 py-1.5 text-[11px]'
+          : compact
+            ? 'mt-1.5 line-clamp-2 text-[11px] underline-offset-2 hover:underline'
+            : 'mt-1 w-full rounded-lg border px-3 py-3 text-[15px]'
       } ${
         state === 'ok'
-          ? compact ? 'text-jade' : 'border-jade/40 bg-jade/10 text-jade'
+          ? row || !compact
+            ? 'border-jade/40 bg-jade/10 text-jade'
+            : 'text-jade'
           : state === 'err'
-            ? compact ? 'text-coral' : 'border-coral/40 bg-coral/10 text-coral'
-            : compact ? 'text-amber' : 'border-amber/40 bg-amber/10 text-amber hover:border-amber'
+            ? row || !compact
+              ? 'border-coral/40 bg-coral/10 text-coral'
+              : 'text-coral'
+            : row || !compact
+              ? 'border-amber/35 bg-amber/10 text-amber hover:border-amber'
+              : 'text-amber'
       }`}
     >
       {label}

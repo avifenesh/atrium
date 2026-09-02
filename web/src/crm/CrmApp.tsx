@@ -20,19 +20,16 @@ import type { CrmActivity, CrmItem, CrmOverview, CrmPipeline, CrmStage } from '.
 import { ActivityTab } from './Activity';
 import { awaitingYou, DoLink, RelevanceBits } from './Action';
 import { Board } from './Board';
+import { LeadList } from './LeadList';
 import { ModelsTab } from './Models';
 import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
 import { SecurityTab } from './Security';
 import { UsersTab } from './Users';
 import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE, stageLabelFor } from './stages';
+import { age, relDay } from './time';
 
 const POLL_MS = 60_000;
 
-const KIND_LABEL: Record<CrmItem['kind'], string> = {
-  direction: 'directions',
-  lead: 'leads',
-  account: 'accounts',
-};
 const KIND_TONE: Record<CrmItem['kind'], string> = {
   direction: 'text-amber',
   lead: 'text-slate-glow',
@@ -54,25 +51,6 @@ const post = (path: string, body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-
-function relDay(iso: string | null): string {
-  if (!iso) return '';
-  const days = Math.round((Date.parse(iso) - Date.now()) / 86_400_000);
-  if (Number.isNaN(days)) return iso;
-  if (days === 0) return 'today';
-  if (days < 0) return `${-days}d overdue`;
-  if (days === 1) return 'tomorrow';
-  return `in ${days}d`;
-}
-
-function age(iso: string | null): string {
-  if (!iso) return '';
-  const hours = (Date.now() - Date.parse(iso)) / 3_600_000;
-  if (Number.isNaN(hours) || hours < 0) return '';
-  if (hours < 1) return `${Math.round(hours * 60)}m`;
-  if (hours < 48) return `${Math.round(hours)}h`;
-  return `${Math.round(hours / 24)}d`;
-}
 
 function StageBadge({ item, stage, overridden }: { item: Pick<CrmItem, 'kind' | 'source'>; stage: CrmStage; overridden: boolean }) {
   return (
@@ -511,11 +489,12 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
 type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
-// Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
-// One tab per question: work the pipeline, see what changed, read the users,
-// count the models, read the money, see who visits, judge the outreach, check for
-// fire, read the abuse shapes.
-const TABS = ['pipeline', 'activity', 'users', 'models', 'money', 'traffic', 'outreach', 'health', 'security'] as const;
+// Work tabs are the daily job. Number tabs are the weekly read. Hash-routed so
+// refresh and the phone's back button keep the page. Old hashes (`pipeline`,
+// `users`) still land on the renamed screens.
+const WORK_TABS = ['send', 'directions', 'customers', 'activity'] as const;
+const NUM_TABS = ['money', 'traffic', 'outreach', 'models', 'health', 'security'] as const;
+const TABS = [...WORK_TABS, ...NUM_TABS] as const;
 type Tab = (typeof TABS)[number];
 
 /**
@@ -525,16 +504,15 @@ type Tab = (typeof TABS)[number];
  */
 const readHash = (): { tab: Tab; feedAll: boolean; week: boolean } => {
   const [head, option] = window.location.hash.replace('#', '').split('/');
-  // the old growth tab split into traffic + outreach
-  const name = head === 'growth' ? 'traffic' : head;
+  const alias = head === 'growth' ? 'traffic' : head === 'pipeline' || head === '' ? 'send' : head === 'users' ? 'customers' : head;
   return {
-    tab: (TABS as readonly string[]).includes(name) ? (name as Tab) : 'pipeline',
+    tab: (TABS as readonly string[]).includes(alias) ? (alias as Tab) : 'send',
     feedAll: option === 'all',
     week: option === 'week' || option === 'all',
   };
 };
 const writeHash = (tab: Tab, feedAll: boolean, week: boolean): string => {
-  if (tab !== 'activity') return tab === 'pipeline' ? '' : tab;
+  if (tab !== 'activity') return tab === 'send' ? '' : tab;
   if (feedAll) return 'activity/all';
   if (week) return 'activity/week';
   return 'activity';
@@ -580,7 +558,6 @@ export function CrmApp() {
   const [overview, setOverview] = useState<CrmOverview | null>(null);
   const [activity, setActivity] = useState<CrmActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [kind, setKind] = useState<KindFilter>('lead');
   const [stage, setStage] = useState<StageFilter>('any');
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -638,6 +615,7 @@ export function CrmApp() {
     return () => clearInterval(timer);
   }, [refresh]);
 
+  const kind: KindFilter = tab === 'send' ? 'lead' : tab === 'directions' ? 'direction' : 'all';
   const allItems = pipeline?.items ?? [];
   // The pipeline is for things you chase through stages. An account is a customer whose numbers you
   // read, and it has its own screen now, so it is not a pipeline card. Keeping both here forced one
@@ -647,13 +625,11 @@ export function CrmApp() {
     () => (showClosed ? workable : workable.filter((i) => !CLOSED.has(i.stage))),
     [workable, showClosed],
   );
-  const closedCount = useMemo(() => workable.filter((i) => CLOSED.has(i.stage)).length, [workable]);
+  const closedCount = useMemo(
+    () => workable.filter((i) => CLOSED.has(i.stage) && (kind === 'all' || i.kind === kind)).length,
+    [workable, kind],
+  );
   const due = useMemo(() => items.filter((i) => i.followUpDue), [items]);
-  const kindCounts = useMemo(() => {
-    const map = new Map<CrmItem['kind'], number>();
-    for (const item of items) map.set(item.kind, (map.get(item.kind) ?? 0) + 1);
-    return map;
-  }, [items]);
 
   // stage counts respect the kind filter, so "leads → new 12" answers the real
   // question ("how many untouched leads"), not a blended number
@@ -684,10 +660,6 @@ export function CrmApp() {
     });
     return rows;
   }, [ranked, stage]);
-  const nextSend = useMemo(
-    () => (kind === 'lead' && stage === 'any' ? ranked.filter((i) => awaitingYou(i)).slice(0, 3) : []),
-    [kind, stage, ranked],
-  );
   const qualifiedCount = useMemo(
     () => inKind.filter((i) => i.kind === 'lead' && (i.relevance?.qualified ?? false)).length,
     [inKind],
@@ -697,9 +669,22 @@ export function CrmApp() {
   // which `items` deliberately excludes.
   const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
 
+  const tabBtn = (t: Tab) => (
+    <button
+      key={t}
+      type="button"
+      onClick={() => goTab(t)}
+      className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 text-[13px] transition-colors ${
+        tab === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
+      }`}
+    >
+      {t}
+    </button>
+  );
+
   return (
-    <div className="mx-auto max-w-7xl px-3 pb-16 pt-4 sm:px-5">
-      <header className="mb-3 flex items-baseline gap-3">
+    <div className="mx-auto max-w-7xl px-3 pb-16 pt-5 sm:px-5">
+      <header className="mb-4 flex items-baseline gap-3">
         <h1 className="font-display text-2xl text-mist">
           tiyuvta <span className="italic text-mist-dim">crm</span>
         </h1>
@@ -713,32 +698,27 @@ export function CrmApp() {
 
       {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
 
-      {/* tab bar — one screen per question: work the pipeline, read the money,
-          read the growth, check the serving, read the abuse shapes.
-          It scrolls: nine 12px monospace labels are wider than a phone. */}
-      <div className="mb-3 flex gap-1 overflow-x-auto border-b border-white/8">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => goTab(t)}
-            className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 font-mono text-[12px] transition-colors ${
-              tab === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <nav className="mb-6 flex flex-wrap items-end gap-x-10 gap-y-1 border-b border-white/8">
+        <div className="flex gap-0.5">{WORK_TABS.map(tabBtn)}</div>
+        <div className="flex gap-0.5">{NUM_TABS.map(tabBtn)}</div>
+      </nav>
 
-      {tab !== 'pipeline' && tab !== 'users' && tab !== 'activity' && !overview && !error && (
-        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+      {tab !== 'send' && tab !== 'directions' && tab !== 'customers' && tab !== 'activity' && !overview && !error && (
+        <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
       )}
-      {tab === 'users' && (
+      {tab === 'customers' && (
         pipeline
-          ? <UsersTab items={allItems} onOpen={setOpenId} />
+          ? (
+            <>
+              <div className="mb-5">
+                <h2 className="text-xl text-mist">Customers</h2>
+                <p className="mt-1 text-sm text-mist-dim">Who is using it, who has money left, who went quiet.</p>
+              </div>
+              <UsersTab items={allItems} onOpen={setOpenId} />
+            </>
+          )
           : !error && (
-            <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+            <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
           )
       )}
       {tab === 'activity' && (
@@ -754,7 +734,7 @@ export function CrmApp() {
             />
           )
           : !error && (
-            <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+            <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
           )
       )}
       {tab === 'money' && overview && <MoneyTab data={overview} />}
@@ -766,141 +746,127 @@ export function CrmApp() {
           the suspended rows and the drawer come from the pipeline. */}
       {tab === 'security' && overview && <SecurityTab data={overview} items={allItems} onOpen={setOpenId} />}
 
-      {tab === 'pipeline' && (
+      {(tab === 'send' || tab === 'directions') && (
         <>
-      {overview && (
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          <PulseStrip data={overview} dueCount={due.length} />
-          {/* Today's motion, one tap from the board (the feed itself is the activity
-              tab). It counts todaySignal, not today: this chip and the feed it links
-              to have to agree, and the feed hides the mechanical rows. */}
-          {activity && Object.values(activity.todaySignal ?? activity.today).some((n) => (n ?? 0) > 0) && (
-            <button
-              type="button"
-              onClick={() => goTab('activity')}
-              className="cursor-pointer rounded-full border border-slate-glow/40 px-2.5 py-1 font-mono text-[10px] text-slate-glow"
-            >
-              today: {(['account-new', 'lead-new', 'account-usage', 'stage-change'] as const)
-                .filter((t) => ((activity.todaySignal ?? activity.today)[t] ?? 0) > 0)
-                .map((t) => `${(activity.todaySignal ?? activity.today)[t]} ${TODAY_CHIP_LABEL[t]}`)
-                .join(' · ') || 'activity'} →
-            </button>
+          <div className="mb-5">
+            <h2 className="text-xl text-mist">{tab === 'send' ? 'Send' : 'Directions'}</h2>
+            <p className="mt-1 text-sm text-mist-dim">
+              {tab === 'send'
+                ? `${awaitingCount} draft${awaitingCount === 1 ? '' : 's'} waiting. Ranked by score.`
+                : `${items.filter((i) => i.kind === 'direction' && !CLOSED.has(i.stage)).length} open hunts.`}
+            </p>
+          </div>
+
+          {tab === 'send' && overview && (
+            <div className="mb-4 flex flex-wrap items-center gap-1.5">
+              <PulseStrip data={overview} dueCount={due.length} />
+              {activity && Object.values(activity.todaySignal ?? activity.today).some((n) => (n ?? 0) > 0) && (
+                <button
+                  type="button"
+                  onClick={() => goTab('activity')}
+                  className="cursor-pointer rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] text-mist-dim hover:text-mist"
+                >
+                  today {(['account-new', 'lead-new', 'account-usage', 'stage-change'] as const)
+                    .filter((t) => ((activity.todaySignal ?? activity.today)[t] ?? 0) > 0)
+                    .map((t) => `${(activity.todaySignal ?? activity.today)[t]} ${TODAY_CHIP_LABEL[t]}`)
+                    .join(' · ')}
+                </button>
+              )}
+            </div>
           )}
-        </div>
-      )}
 
-      {/* kind row — which job am I doing right now */}
-      <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
-        <button type="button" onClick={() => setKind('all')} className={chipClass(kind === 'all')}>
-          all {items.length}
-        </button>
-        {(['direction', 'lead'] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setKind(kind === k ? 'all' : k)}
-            className={chipClass(kind === k, kind === k ? '' : KIND_TONE[k])}
-          >
-            {KIND_LABEL[k]} {kindCounts.get(k) ?? 0}
-          </button>
-        ))}
-        {due.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
-            className={chipClass(stage === 'due', 'text-amber')}
-          >
-            ⏰ due {due.length}
-          </button>
-        )}
-        {/* Default on: the board is the work queue, not the firehose. Score-0
-            rows never reach the pipeline; this chip hides the remaining
-            unqualified (1–4) ones. Click off to see weak-signal leftovers. */}
-        <button
-          type="button"
-          onClick={() => setOnlyQualified(!onlyQualified)}
-          className={chipClass(onlyQualified, onlyQualified ? '' : 'text-jade')}
-        >
-          ◆ qualified {qualifiedCount}
-        </button>
-        <button
-          type="button"
-          onClick={() => setAwaitingOnly(!awaitingOnly)}
-          className={chipClass(awaitingOnly, awaitingOnly ? '' : 'text-amber')}
-        >
-          awaiting you {awaitingCount}
-        </button>
-        {closedCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowClosed(!showClosed)}
-            className={chipClass(showClosed, 'text-mist-faint')}
-          >
-            closed {closedCount}
-          </button>
-        )}
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="search"
-          className="ml-auto w-28 min-w-0 shrink rounded-full border border-white/10 bg-ink px-3 py-1.5 font-mono text-[11px] text-mist placeholder:text-mist-faint focus:w-44 focus:outline-none sm:w-40"
-        />
-      </div>
-
-      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
-        <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
-          any stage
-        </button>
-        {PIPELINE_STAGES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => setStage(stage === s ? 'any' : s)}
-            className={chipClass(stage === s)}
-          >
-            {STAGE_LABEL[s]} {stageCounts.get(s) ?? 0}
-          </button>
-        ))}
-      </div>
-
-      {nextSend.length > 0 && (
-        <div className="mb-3 hidden rounded-xl border border-amber/25 bg-amber/[0.04] px-3 py-2.5 lg:block">
-          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-amber">send next</div>
-          <div className="space-y-1.5">
-            {nextSend.map((item) => (
-              <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
-            ))}
+          <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+            {due.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
+                className={chipClass(stage === 'due', 'text-amber')}
+              >
+                due {due.length}
+              </button>
+            )}
+            {tab === 'send' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setOnlyQualified(!onlyQualified)}
+                  className={chipClass(onlyQualified, onlyQualified ? '' : 'text-jade')}
+                >
+                  qualified {qualifiedCount}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAwaitingOnly(!awaitingOnly)}
+                  className={chipClass(awaitingOnly, awaitingOnly ? '' : 'text-amber')}
+                >
+                  awaiting {awaitingCount}
+                </button>
+              </>
+            )}
+            {closedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowClosed(!showClosed)}
+                className={chipClass(showClosed, 'text-mist-faint')}
+              >
+                closed {closedCount}
+              </button>
+            )}
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="search"
+              className="ml-auto w-28 min-w-0 shrink rounded-full border border-white/10 bg-ink px-3 py-1.5 font-mono text-[11px] text-mist placeholder:text-mist-faint focus:w-44 focus:outline-none sm:w-40"
+            />
           </div>
-        </div>
-      )}
 
-      <div className="hidden lg:block">
-        <Board
-          items={stage === 'due' ? visible : ranked}
-          onOpen={setOpenId}
-          onMove={(id, nextStage) => {
-            void post('/api/crm/entry', { id, stage: nextStage })
-              .then(refresh)
-              .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-          }}
-        />
-      </div>
+          {tab === 'directions' && (
+            <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
+              <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
+                any stage
+              </button>
+              {PIPELINE_STAGES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStage(stage === s ? 'any' : s)}
+                  className={chipClass(stage === s)}
+                >
+                  {STAGE_LABEL[s]} {stageCounts.get(s) ?? 0}
+                </button>
+              ))}
+            </div>
+          )}
 
-      <div className="space-y-1.5 lg:hidden">
-        {visible.map((item) => (
-          <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
-        ))}
-        {pipeline && visible.length === 0 && (
-          <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
-            nothing here
-          </div>
-        )}
-      </div>
-      {!pipeline && !error && (
-        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
-          loading…
-        </div>
-      )}
+          {tab === 'send' && <LeadList items={visible} onOpen={setOpenId} />}
+
+          {tab === 'directions' && (
+            <>
+              <div className="hidden lg:block">
+                <Board
+                  items={stage === 'due' ? visible : ranked}
+                  onOpen={setOpenId}
+                  onMove={(id, nextStage) => {
+                    void post('/api/crm/entry', { id, stage: nextStage })
+                      .then(refresh)
+                      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5 lg:hidden">
+                {visible.map((item) => (
+                  <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
+                ))}
+                {pipeline && visible.length === 0 && (
+                  <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">nothing here</div>
+                )}
+              </div>
+            </>
+          )}
+
+          {!pipeline && !error && (
+            <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
+          )}
         </>
       )}
 
