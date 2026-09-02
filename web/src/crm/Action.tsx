@@ -99,7 +99,7 @@ export function CommentLink({
   item: CrmItem;
   compact?: boolean;
   row?: boolean;
-  onDone?: () => void;
+  onDone?: (result: 'ok' | 'err') => void;
 }) {
   const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'err'>('idle');
   const href = threadUrl(item);
@@ -128,7 +128,7 @@ export function CommentLink({
         void commentTheLink(item)
           .then((result) => {
             setState(result);
-            onDone?.();
+            onDone?.(result);
           })
           .catch(() => setState('err'));
       }}

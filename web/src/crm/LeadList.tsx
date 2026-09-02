@@ -21,8 +21,10 @@ export function LeadList({
   onTouched?: () => void;
 }) {
   const [flash, setFlash] = useState<string | null>(null);
-  const touched = () => {
-    setFlash('Link copied. Paste on the tweet. Marked commented.');
+  const touched = (result: 'ok' | 'err' = 'ok') => {
+    setFlash(result === 'ok'
+      ? 'Link copied. Paste on the tweet. Marked commented.'
+      : 'Thread is open. Copy https://inference.tiyuvta.ai if the clipboard is locked.');
     onTouched?.();
   };
 
@@ -112,7 +114,7 @@ function LeadRow({
   selected: boolean;
   onSelect: () => void;
   onOpen: () => void;
-  onTouched?: () => void;
+  onTouched?: (result: 'ok' | 'err') => void;
 }) {
   const opportunity = isOpportunity(item);
   return (

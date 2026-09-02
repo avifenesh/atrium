@@ -4,7 +4,7 @@
 import type { CrmItem } from '../../../shared/types';
 
 const CODING =
-  /\b(?:claude code|cursor|copilot|cline|aider|opencode|codex|coding agent|codebase|pair program)\b/i;
+  /\b(?:claude ?code|claudecode|cursor|copilot|cline|aider|opencode|codex|openhands|coderabbit|coding(?: agent)?|codebase|pair program|for coding)\b/i;
 const PRODUCT_JOB =
   /\b(?:legal|lawyer|attorneys?|contract review|document intake|call notes?|transcript|summar(?:y|ies|ize|isation)|ticket(?:s|ing)?|classif(?:y|ication)|extract(?:ion)?|kyc|onboarding packet|claims? processing|sdr|hosted sdr)\b/i;
 const SELLS =

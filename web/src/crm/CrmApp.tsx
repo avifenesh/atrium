@@ -721,7 +721,8 @@ export function CrmApp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key >= '1' && e.key <= '4') {
         e.preventDefault();
         goTab(WORK_TABS[Number(e.key) - 1] ?? 'send');
