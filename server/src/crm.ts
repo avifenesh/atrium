@@ -302,6 +302,7 @@ function keepLeadOnBoard(item: CrmItem): boolean {
   if (item.notes.length > 0 || item.contacts.length > 0) return true;
   if (item.followUpAt != null) return true;
   if (item.action != null) return true;
+  if (item.derivedStage === 'contacted') return true;
   return false;
 }
 

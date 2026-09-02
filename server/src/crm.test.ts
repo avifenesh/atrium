@@ -179,6 +179,14 @@ test('score-0 leads stay off the board unless the owner already touched them', a
     assert.ok((byId.get('s-zero')?.relevance?.score ?? 1) <= 0);
 
     seedStore(
+      [signal('s-engaged-zero', 'mention', { status: 'engaged', note: 'auto: avi commented', updatedAt: '2026-08-19T00:00:00Z' }, 'weekly release notes for the kernel')],
+      [],
+    );
+    const engaged = crm.pipeline().items.find((i) => i.id === 's-engaged-zero');
+    assert.equal(engaged?.stage, 'contacted');
+    assert.ok((engaged?.relevance?.score ?? 1) <= 0);
+
+    seedStore(
       [signal('s-skip', 'prospect-thread', undefined, 'weekly release notes for the kernel')],
       [],
     );

@@ -21,6 +21,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
+import { crm } from '../crm.js';
 import { crmEvents } from '../crm-events.js';
 import { QUALIFIED_AT, scoreLead } from '../lead-relevance.js';
 import { signals } from '../signals.js';
@@ -179,6 +180,19 @@ interface XHit {
 
 /** Same create-bar the board re-scores. A miss within 2 points of QUALIFIED_AT
  *  goes to the activity feed once, never the pipeline. */
+/** Already-worked rows must stay in the store so assemble() keeps live title/url. */
+function alreadyWorked(id: string): boolean {
+  if (signals.lead(id)?.status === 'engaged') return true;
+  const item = crm.item(id);
+  if (!item || item.kind !== 'lead') return false;
+  return item.notes.length > 0
+    || item.contacts.length > 0
+    || item.followUpAt != null
+    || item.action != null
+    || item.overridden
+    || item.derivedStage === 'contacted';
+}
+
 function qualifyOrNearMiss(
   id: string,
   title: string,
@@ -233,7 +247,7 @@ async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
     const title = hit.text.replace(/\s+/g, ' ').slice(0, 280);
     const entity = hit.family ?? 'inference';
     if (!qualifyOrNearMiss(`x:${statusId}`, title, entity, hit.author ?? null, hit.url ?? null)
-      && signals.lead(`x:${statusId}`)?.status !== 'engaged') continue;
+      && !alreadyWorked(`x:${statusId}`)) continue;
     out.push({
       id: `x:${statusId}`,
       source: 'x',
@@ -365,7 +379,7 @@ const collector: Collector = {
           seen.add(candidate.id);
           const title = candidate.title.slice(0, 160);
           if (!qualifyOrNearMiss(candidate.id, title, entry.family, candidate.detail, candidate.url)
-            && signals.lead(candidate.id)?.status !== 'engaged') continue;
+            && !alreadyWorked(candidate.id)) continue;
           kept += 1;
           items.push({
             id: candidate.id,
@@ -413,7 +427,7 @@ const collector: Collector = {
           const title = candidate.title.slice(0, 160);
           const entity = `buyer hunt · ${query}`;
           if (!qualifyOrNearMiss(candidate.id, title, entity, candidate.detail, candidate.url)
-            && signals.lead(candidate.id)?.status !== 'engaged') continue;
+            && !alreadyWorked(candidate.id)) continue;
           kept += 1;
           items.push({
             id: candidate.id,

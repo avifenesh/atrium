@@ -381,6 +381,7 @@ export const crmEvents = {
         // still announce, matching keepLeadOnBoard.
         if (item.kind === 'lead' && (item.relevance?.score ?? 1) <= 0
           && !(item.subtitle ?? '').startsWith('own card')
+          && item.derivedStage !== 'contacted'
           && item.notes.length === 0 && item.contacts.length === 0
           && item.followUpAt == null && item.action == null) {
           state.items[item.id] = next;
