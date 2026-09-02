@@ -577,7 +577,7 @@ export function CrmApp() {
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showClosed, setShowClosed] = useState(false);
-  const [onlyQualified, setOnlyQualified] = useState(false);
+  const [onlyQualified, setOnlyQualified] = useState(true);
   const [needsAction, setNeedsAction] = useState(false);
   const [tab, setTab] = useState<Tab>(() => readHash().tab);
   const [feedAll, setFeedAll] = useState(() => readHash().feedAll);
@@ -792,7 +792,9 @@ export function CrmApp() {
             ⏰ due {due.length}
           </button>
         )}
-        {/* The cut that answers "what is actually worth my next tick". */}
+        {/* Default on: the board is the work queue, not the firehose. Score-0
+            rows never reach the pipeline; this chip hides the remaining
+            unqualified (1–4) ones. Click off to see weak-signal leftovers. */}
         <button
           type="button"
           onClick={() => setOnlyQualified(!onlyQualified)}

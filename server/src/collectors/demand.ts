@@ -177,6 +177,29 @@ interface XHit {
   kind?: string;
 }
 
+/** Same create-bar the board re-scores. A miss within 2 points of QUALIFIED_AT
+ *  goes to the activity feed once, never the pipeline. */
+function qualifyOrNearMiss(
+  id: string,
+  title: string,
+  entity: string,
+  detail: string | null,
+  url: string | null,
+): boolean {
+  const relevance = scoreLead({ kind: 'lead', title, subtitle: entity, detail });
+  if (relevance.qualified) return true;
+  if (relevance.score >= QUALIFIED_AT - 2 && !crmEvents.seen('near-miss', id)) {
+    crmEvents.emit({
+      type: 'near-miss',
+      itemId: id,
+      title,
+      detail: `scored ${relevance.score}/${QUALIFIED_AT}${relevance.labels.length ? ` — ${relevance.labels.join(', ')}` : ''}${detail ? ` · ${detail}` : ''}`,
+      url,
+    });
+  }
+  return false;
+}
+
 /** X hits are gated twice: x-lead-scan's create-bar, then scoreLead here.
  *  Personal weekly-cap vents and brand mentions do not become signals. */
 async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
@@ -209,24 +232,7 @@ async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
     // hidden behind the board's own filter.
     const title = hit.text.replace(/\s+/g, ' ').slice(0, 280);
     const entity = hit.family ?? 'inference';
-    const relevance = scoreLead({ kind: 'lead', title, subtitle: entity, detail: hit.author ?? null });
-    if (!relevance.qualified) {
-      // The gate's false negatives used to be invisible: a hit that failed the
-      // bar by a hair vanished without a trace, so a mistuned rule cost leads
-      // nobody could see. A near-miss (within 2 points) goes to the activity
-      // feed — visible, rescuable, but never a board row. Once per status id.
-      const missId = `x:${statusId}`;
-      if (relevance.score >= QUALIFIED_AT - 2 && !crmEvents.seen('near-miss', missId)) {
-        crmEvents.emit({
-          type: 'near-miss',
-          itemId: missId,
-          title,
-          detail: `scored ${relevance.score}/${QUALIFIED_AT}${relevance.labels.length ? ` — ${relevance.labels.join(', ')}` : ''}${hit.author ? ` · ${hit.author}` : ''}`,
-          url: hit.url ?? null,
-        });
-      }
-      continue;
-    }
+    if (!qualifyOrNearMiss(`x:${statusId}`, title, entity, hit.author ?? null, hit.url ?? null)) continue;
     out.push({
       id: `x:${statusId}`,
       source: 'x',
@@ -356,13 +362,15 @@ const collector: Collector = {
           const kind = classify(candidate.title, demand, prospect, disqualify);
           if (!kind) continue;
           seen.add(candidate.id);
+          const title = candidate.title.slice(0, 160);
+          if (!qualifyOrNearMiss(candidate.id, title, entry.family, candidate.detail, candidate.url)) continue;
           kept += 1;
           items.push({
             id: candidate.id,
             source: candidate.source,
             kind,
             entity: entry.family,
-            title: candidate.title.slice(0, 160),
+            title,
             detail: candidate.detail,
             url: candidate.url,
             count: candidate.count,
@@ -400,13 +408,16 @@ const collector: Collector = {
           const lower = candidate.title.toLowerCase();
           if (disqualify.some((word) => lower.includes(word))) continue;
           seen.add(candidate.id);
+          const title = candidate.title.slice(0, 160);
+          const entity = `buyer hunt · ${query}`;
+          if (!qualifyOrNearMiss(candidate.id, title, entity, candidate.detail, candidate.url)) continue;
           kept += 1;
           items.push({
             id: candidate.id,
             source: candidate.source,
             kind: 'prospect-thread',
-            entity: `buyer hunt · ${query}`,
-            title: candidate.title.slice(0, 160),
+            entity,
+            title,
             detail: candidate.detail,
             url: candidate.url,
             count: candidate.count,
