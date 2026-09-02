@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmActivity, CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { ActivityTab } from './Activity';
-import { DoLink, isPlaceholderAction } from './Action';
+import { awaitingYou, DoLink, RelevanceBits } from './Action';
 import { Board } from './Board';
 import { ModelsTab } from './Models';
 import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
@@ -105,14 +105,7 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
       </div>
       <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-mist-faint">
         <span className={KIND_TONE[item.kind]}>{item.kind}</span>
-        {item.relevance && item.relevance.labels.length > 0 && (
-          <span
-            className={item.relevance.qualified ? 'text-jade' : 'text-mist-faint'}
-            title={item.relevance.labels.join(', ')}
-          >
-            {item.relevance.qualified ? '◆' : '·'} {item.relevance.labels[0]}
-          </span>
-        )}
+        <RelevanceBits item={item} />
         {item.source && item.source !== 'seller' && <span>{item.source}</span>}
         {item.subtitle && <span className="min-w-0 truncate">{item.subtitle}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-2">
@@ -526,22 +519,37 @@ const TABS = ['pipeline', 'activity', 'users', 'models', 'money', 'traffic', 'ou
 type Tab = (typeof TABS)[number];
 
 /**
- * The hash carries the tab and, for the activity feed, whether the quiet view is
- * off: `#activity` is quiet, `#activity/all` shows everything. The toggle rides
- * the hash rather than component state for the same reason the tab does, so a
- * refresh, a bookmark and the phone's back button all keep it.
+ * The hash carries the tab and the activity window: `#activity` is today + quiet,
+ * `#activity/week` is seven days + quiet, `#activity/all` is seven days with
+ * mechanical rows. Toggles ride the hash so refresh and back keep them.
  */
-const readHash = (): { tab: Tab; feedAll: boolean } => {
+const readHash = (): { tab: Tab; feedAll: boolean; week: boolean } => {
   const [head, option] = window.location.hash.replace('#', '').split('/');
   // the old growth tab split into traffic + outreach
   const name = head === 'growth' ? 'traffic' : head;
   return {
     tab: (TABS as readonly string[]).includes(name) ? (name as Tab) : 'pipeline',
     feedAll: option === 'all',
+    week: option === 'week' || option === 'all',
   };
 };
-const writeHash = (tab: Tab, feedAll: boolean): string =>
-  tab === 'activity' && feedAll ? 'activity/all' : tab === 'pipeline' ? '' : tab;
+const writeHash = (tab: Tab, feedAll: boolean, week: boolean): string => {
+  if (tab !== 'activity') return tab === 'pipeline' ? '' : tab;
+  if (feedAll) return 'activity/all';
+  if (week) return 'activity/week';
+  return 'activity';
+};
+
+function rankWorkQueue(rows: CrmItem[]): CrmItem[] {
+  return [...rows].sort((a, b) => {
+    const aReady = awaitingYou(a) ? 0 : 1;
+    const bReady = awaitingYou(b) ? 0 : 1;
+    if (aReady !== bReady) return aReady - bReady;
+    const byScore = (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0);
+    if (byScore !== 0) return byScore;
+    return (b.activityAt ?? '').localeCompare(a.activityAt ?? '');
+  });
+}
 
 const matches = (i: CrmItem, needle: string) =>
   `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''} ${i.action?.label ?? ''} ${i.action?.brief ?? ''}`
@@ -572,32 +580,40 @@ export function CrmApp() {
   const [overview, setOverview] = useState<CrmOverview | null>(null);
   const [activity, setActivity] = useState<CrmActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [kind, setKind] = useState<KindFilter>('all');
+  const [kind, setKind] = useState<KindFilter>('lead');
   const [stage, setStage] = useState<StageFilter>('any');
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const [onlyQualified, setOnlyQualified] = useState(true);
-  const [needsAction, setNeedsAction] = useState(false);
+  const [awaitingOnly, setAwaitingOnly] = useState(false);
   const [tab, setTab] = useState<Tab>(() => readHash().tab);
   const [feedAll, setFeedAll] = useState(() => readHash().feedAll);
+  const [feedWeek, setFeedWeek] = useState(() => readHash().week);
 
   useEffect(() => {
     const onHash = () => {
       const next = readHash();
       setTab(next.tab);
       setFeedAll(next.feedAll);
+      setFeedWeek(next.week);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
   const goTab = (next: Tab) => {
-    window.location.hash = writeHash(next, feedAll);
+    window.location.hash = writeHash(next, feedAll, feedWeek);
     setTab(next);
   };
   const goFeedAll = (next: boolean) => {
-    window.location.hash = writeHash('activity', next);
+    window.location.hash = writeHash('activity', next, next || feedWeek);
     setFeedAll(next);
+    if (next) setFeedWeek(true);
+  };
+  const goFeedWeek = (next: boolean) => {
+    window.location.hash = writeHash('activity', next ? feedAll : false, next);
+    setFeedWeek(next);
+    if (!next) setFeedAll(false);
   };
 
   const refresh = useCallback(async () => {
@@ -654,33 +670,29 @@ export function CrmApp() {
   // filtering the phone list only made the desktop chips look active and do nothing.
   const chipFiltered = useMemo(
     () => inKind.filter((i) => {
-      if (onlyQualified && i.relevance && !i.relevance.qualified) return false;
-      if (needsAction && !isPlaceholderAction(i)) return false;
+      if (onlyQualified && i.kind === 'lead' && i.relevance && !i.relevance.qualified) return false;
+      if (awaitingOnly && !awaitingYou(i)) return false;
       return !needle || matches(i, needle);
     }),
-    [inKind, onlyQualified, needsAction, needle],
+    [inKind, onlyQualified, awaitingOnly, needle],
   );
+  const ranked = useMemo(() => rankWorkQueue(chipFiltered), [chipFiltered]);
   const visible = useMemo(() => {
-    const rows = chipFiltered.filter((i) => {
+    const rows = ranked.filter((i) => {
       if (stage === 'due') return i.followUpDue;
       return stage === 'any' || i.stage === stage;
     });
-    // Relevance first, then recency. An unranked list of 150 rows makes the owner do the triage the
-    // collector should already have done, and the highest-value row was sorting arbitrarily.
-    return [...rows].sort((a, b) => {
-      const aDummy = isPlaceholderAction(a) ? 1 : 0;
-      const bDummy = isPlaceholderAction(b) ? 1 : 0;
-      if (aDummy !== bDummy) return aDummy - bDummy;
-      const byScore = (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0);
-      if (byScore !== 0) return byScore;
-      return (b.activityAt ?? '').localeCompare(a.activityAt ?? '');
-    });
-  }, [chipFiltered, stage]);
+    return rows;
+  }, [ranked, stage]);
+  const nextSend = useMemo(
+    () => (kind === 'lead' && stage === 'any' ? ranked.filter((i) => awaitingYou(i)).slice(0, 3) : []),
+    [kind, stage, ranked],
+  );
   const qualifiedCount = useMemo(
-    () => inKind.filter((i) => i.relevance?.qualified ?? true).length,
+    () => inKind.filter((i) => i.kind === 'lead' && (i.relevance?.qualified ?? false)).length,
     [inKind],
   );
-  const needsActionCount = useMemo(() => inKind.filter((i) => isPlaceholderAction(i)).length, [inKind]);
+  const awaitingCount = useMemo(() => inKind.filter((i) => awaitingYou(i)).length, [inKind]);
   // Resolve against allItems, not the pipeline-narrowed list: the users screen opens accounts,
   // which `items` deliberately excludes.
   const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
@@ -731,7 +743,16 @@ export function CrmApp() {
       )}
       {tab === 'activity' && (
         activity
-          ? <ActivityTab activity={activity} showAll={feedAll} onShowAll={goFeedAll} onOpen={setOpenId} />
+          ? (
+            <ActivityTab
+              activity={activity}
+              showAll={feedAll}
+              week={feedWeek}
+              onShowAll={goFeedAll}
+              onShowWeek={goFeedWeek}
+              onOpen={setOpenId}
+            />
+          )
           : !error && (
             <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
           )
@@ -804,10 +825,10 @@ export function CrmApp() {
         </button>
         <button
           type="button"
-          onClick={() => setNeedsAction(!needsAction)}
-          className={chipClass(needsAction, needsAction ? '' : 'text-amber')}
+          onClick={() => setAwaitingOnly(!awaitingOnly)}
+          className={chipClass(awaitingOnly, awaitingOnly ? '' : 'text-amber')}
         >
-          needs research {needsActionCount}
+          awaiting you {awaitingCount}
         </button>
         {closedCount > 0 && (
           <button
@@ -842,9 +863,20 @@ export function CrmApp() {
         ))}
       </div>
 
+      {nextSend.length > 0 && (
+        <div className="mb-3 hidden rounded-xl border border-amber/25 bg-amber/[0.04] px-3 py-2.5 lg:block">
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-amber">send next</div>
+          <div className="space-y-1.5">
+            {nextSend.map((item) => (
+              <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="hidden lg:block">
         <Board
-          items={stage === 'due' ? visible : chipFiltered}
+          items={stage === 'due' ? visible : ranked}
           onOpen={setOpenId}
           onMove={(id, nextStage) => {
             void post('/api/crm/entry', { id, stage: nextStage })

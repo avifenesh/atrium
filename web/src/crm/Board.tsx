@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import type { CrmItem, CrmStage } from '../../../shared/types';
-import { DoLink } from './Action';
+import { DoLink, RelevanceBits } from './Action';
 import { PIPELINE_STAGES, STAGE_TONE, stageLabelFor } from './stages';
 
 const KIND_TONE: Record<CrmItem['kind'], string> = {
@@ -40,8 +40,8 @@ function BoardCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
       <div className="line-clamp-2 text-xs leading-snug text-mist">{item.title}</div>
       <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-mist-faint">
         <span className={KIND_TONE[item.kind]}>{item.kind}</span>
+        <RelevanceBits item={item} />
         {item.source && item.source !== 'seller' && <span>{item.source}</span>}
-        {item.subtitle && <span className="min-w-0 truncate">{item.subtitle}</span>}
         {item.followUpAt && (
           <span className={`ml-auto shrink-0 ${item.followUpDue ? 'text-amber' : ''}`}>⏰</span>
         )}

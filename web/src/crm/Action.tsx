@@ -26,6 +26,39 @@ export function isPlaceholderAction(item: CrmItem): boolean {
   return !item.action;
 }
 
+/** Draft is sitting. Nobody has logged a send. That is the work on the lead board. */
+export function awaitingYou(item: CrmItem): boolean {
+  if (item.kind !== 'lead' || !item.action) return false;
+  if (item.contacts.length > 0) return false;
+  if (item.stage === 'lost' || item.stage === 'skipped') return false;
+  return true;
+}
+
+export function RelevanceBits({ item }: { item: CrmItem }) {
+  if (!item.relevance) return null;
+  return (
+    <span
+      className={item.relevance.qualified ? 'text-jade' : 'text-mist-faint'}
+      title={item.relevance.labels.join(', ')}
+    >
+      score {item.relevance.score}
+      {item.relevance.labels[0] ? ` · ${item.relevance.labels[0]}` : ''}
+    </span>
+  );
+}
+
+function bankedDraft(item: CrmItem): string | null {
+  for (const note of item.notes) {
+    const match = note.text.match(/^outreach draft \(seller\):\s*/iu);
+    if (match) return note.text.slice(match[0].length).trim();
+  }
+  return item.action?.brief?.trim() || null;
+}
+
+function isBankedSend(item: CrmItem): boolean {
+  return item.kind === 'lead' && !!item.action?.href && !!bankedDraft(item);
+}
+
 function displayLabel(raw: string, compact: boolean): string {
   const text = raw.replace(/^\s*do\s+/iu, '').replace(/\s+/gu, ' ').trim();
   const head = text.split('—')[0]?.trim() || text;
@@ -53,8 +86,16 @@ export function DoLink({
     );
   }
 
-  const label =
-    state === 'busy'
+  const banked = isBankedSend(item);
+  const label = banked
+    ? state === 'ok'
+      ? 'copied, tweet open'
+      : state === 'err'
+        ? 'copy failed, tweet open'
+        : state === 'busy'
+          ? 'opening…'
+          : `Send · ${displayLabel(item.action.label, compact).replace(/^Do · /u, '')}`
+    : state === 'busy'
       ? 'launching…'
       : state === 'ok'
         ? 'launched'
@@ -66,9 +107,9 @@ export function DoLink({
     <button
       type="button"
       draggable={false}
-      // 'launched' is terminal: a second launch would kill the session still working
-      // on this card (tmux kills a name collision), so the button stops being a button.
-      disabled={state === 'busy' || state === 'ok'}
+      // Agent launch is terminal (tmux name collision). A banked send can be
+      // copied again if the first paste missed.
+      disabled={state === 'busy' || (!banked && state === 'ok')}
       title={item.action.brief ?? item.action.label}
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
@@ -76,6 +117,24 @@ export function DoLink({
         e.stopPropagation();
         e.preventDefault();
         setState('busy');
+        if (banked) {
+          const href = item.action!.href!;
+          const draft = bankedDraft(item);
+          const open = () => window.open(href, '_blank', 'noopener');
+          const copy = navigator.clipboard?.writeText
+            ? navigator.clipboard.writeText(draft ?? '')
+            : Promise.reject(new Error('no clipboard'));
+          void copy
+            .then(() => {
+              open();
+              setState('ok');
+            })
+            .catch(() => {
+              open();
+              setState('err');
+            });
+          return;
+        }
         void postDo(item.id)
           .then(() => setState('ok'))
           .catch(() => setState('err'));

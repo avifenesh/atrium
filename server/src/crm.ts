@@ -257,7 +257,11 @@ function toItem(
   now: string,
 ): CrmItem {
   const entry = persisted.entries[id];
-  const stage = entry?.stage ?? derivedStage;
+  const contacts = entry?.contacts ?? [];
+  let stage = entry?.stage ?? derivedStage;
+  // Contacted means a logged touch. An engaged flag or a pin with an empty
+  // contact log is still new work, not a conversation.
+  if (kind === 'lead' && stage === 'contacted' && contacts.length === 0) stage = 'new';
   const followUpAt = entry?.followUpAt ?? null;
   const relevance = kind === 'lead'
     ? scoreLead({ kind, title: base.title, subtitle: base.subtitle, detail: base.detail })
@@ -269,11 +273,11 @@ function toItem(
     ...base,
     stage,
     derivedStage,
-    overridden: entry?.stage != null && entry.stage !== derivedStage,
+    overridden: entry?.stage != null && entry.stage === stage && entry.stage !== derivedStage,
     followUpAt,
     followUpDue: followUpAt != null && followUpAt <= now,
     notes: entry?.notes ?? [],
-    contacts: entry?.contacts ?? [],
+    contacts,
     action: researchedAction(parseAction(entry?.action))
       ?? researchedAction(base.action)
       ?? actionFromOutreachNotes(entry?.notes ?? [], base.url),

@@ -104,22 +104,31 @@ function EventRow({ row, onOpen }: { row: FeedRow; onOpen: (id: string) => void 
 export function ActivityTab({
   activity,
   showAll,
+  week,
   onShowAll,
+  onShowWeek,
   onOpen,
 }: {
   activity: CrmActivity;
   /** the quiet toggle, held by CrmApp so the hash remembers it like the tab */
   showAll: boolean;
+  week: boolean;
   onShowAll: (next: boolean) => void;
+  onShowWeek: (next: boolean) => void;
   onOpen: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<CrmEventType | 'all'>('all');
+  const today = activity.updatedAt.slice(0, 10);
 
-  const inMode = useMemo(
-    () => (showAll ? activity.events : activity.events.filter((e) => e.signal !== false)),
-    [activity.events, showAll],
+  const inWindow = useMemo(
+    () => (week ? activity.events : activity.events.filter((e) => e.at.slice(0, 10) === today)),
+    [activity.events, week, today],
   );
-  const hidden = activity.events.length - inMode.length;
+  const inMode = useMemo(
+    () => (showAll ? inWindow : inWindow.filter((e) => e.signal !== false)),
+    [inWindow, showAll],
+  );
+  const hidden = inWindow.length - inMode.length;
 
   const counts = useMemo(() => {
     const map = new Map<CrmEventType, number>();
@@ -136,7 +145,6 @@ export function ActivityTab({
 
   const visible = filter === 'all' || !counts.has(filter) ? inMode : inMode.filter((e) => e.type === filter);
 
-  const today = activity.updatedAt.slice(0, 10);
   const byDay = useMemo(() => {
     const groups: Array<{ day: string; events: CrmEvent[] }> = [];
     for (const e of visible) {
@@ -168,6 +176,15 @@ export function ActivityTab({
       </div>
 
       <div className="flex gap-1.5 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => onShowWeek(!week)}
+          className={`shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
+            week ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
+          }`}
+        >
+          {week ? '7 days' : 'today'}
+        </button>
         <button
           type="button"
           onClick={() => onShowAll(!showAll)}
