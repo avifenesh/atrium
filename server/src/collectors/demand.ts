@@ -232,7 +232,8 @@ async function readXDemand(): Promise<Array<Omit<SignalItem, 'firstSeenAt'>>> {
     // hidden behind the board's own filter.
     const title = hit.text.replace(/\s+/g, ' ').slice(0, 280);
     const entity = hit.family ?? 'inference';
-    if (!qualifyOrNearMiss(`x:${statusId}`, title, entity, hit.author ?? null, hit.url ?? null)) continue;
+    if (!qualifyOrNearMiss(`x:${statusId}`, title, entity, hit.author ?? null, hit.url ?? null)
+      && signals.lead(`x:${statusId}`)?.status !== 'engaged') continue;
     out.push({
       id: `x:${statusId}`,
       source: 'x',
@@ -363,7 +364,8 @@ const collector: Collector = {
           if (!kind) continue;
           seen.add(candidate.id);
           const title = candidate.title.slice(0, 160);
-          if (!qualifyOrNearMiss(candidate.id, title, entry.family, candidate.detail, candidate.url)) continue;
+          if (!qualifyOrNearMiss(candidate.id, title, entry.family, candidate.detail, candidate.url)
+            && signals.lead(candidate.id)?.status !== 'engaged') continue;
           kept += 1;
           items.push({
             id: candidate.id,
@@ -410,7 +412,8 @@ const collector: Collector = {
           seen.add(candidate.id);
           const title = candidate.title.slice(0, 160);
           const entity = `buyer hunt · ${query}`;
-          if (!qualifyOrNearMiss(candidate.id, title, entity, candidate.detail, candidate.url)) continue;
+          if (!qualifyOrNearMiss(candidate.id, title, entity, candidate.detail, candidate.url)
+            && signals.lead(candidate.id)?.status !== 'engaged') continue;
           kept += 1;
           items.push({
             id: candidate.id,

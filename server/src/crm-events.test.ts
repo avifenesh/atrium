@@ -350,7 +350,11 @@ test('score-0 lead arrivals are not signal and stay off the feed', async () => {
     title: 'we spend five figures a month on OpenRouter',
     detail: 'x · score 6 — company voice', url: null,
   };
+  const ownCard: CrmEvent = {
+    ...noise, itemId: 'hf-hub:thread:own#1', detail: 'hf-hub · score 0 · own card',
+  };
   assert.equal(isNoiseLeadArrival(noise), true);
+  assert.equal(isNoiseLeadArrival(ownCard), false, 'own-card inbound is kept on the board and in the feed');
   assert.equal(isNoiseLeadArrival(real), false);
   assert.equal(eventSignal(noise), false);
   assert.equal(eventSignal(real), true);
@@ -360,9 +364,10 @@ test('score-0 lead arrivals are not signal and stay off the feed', async () => {
     const moved = await crmEvents.observe([
       item('seed'),
       item('zero', { relevance: { score: 0, labels: [], qualified: false } }),
+      item('own', { relevance: { score: 0, labels: [], qualified: false }, subtitle: 'own card · qwen3-8b' }),
       item('real'),
     ]);
-    assert.deepEqual(moved.map((e) => e.itemId), ['real']);
+    assert.deepEqual(moved.map((e) => e.itemId), ['own', 'real']);
     crmEvents.emit({
       type: 'lead-new', itemId: noise.itemId, title: noise.title, detail: noise.detail, url: noise.url,
     });

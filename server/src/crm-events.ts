@@ -272,6 +272,7 @@ function baselineOf(item: CrmItem, now: string): ItemBaseline {
 /** lead-new detail is written `source · score N` by arrivalEvent. */
 export function isNoiseLeadArrival(e: CrmEvent): boolean {
   if (e.type !== 'lead-new') return false;
+  if (/\bown card\b/i.test(e.detail ?? '')) return false;
   const hit = e.detail?.match(/\bscore (-?\d+)\b/u);
   return hit != null && Number(hit[1]) <= 0;
 }
@@ -299,6 +300,7 @@ function arrivalEvent(item: CrmItem, now: string): CrmEvent {
     detail: [
       item.source,
       rel ? `score ${rel.score}${rel.labels.length ? ` — ${rel.labels.join(', ')}` : ''}` : null,
+      (item.subtitle ?? '').startsWith('own card') ? 'own card' : null,
     ].filter(Boolean).join(' · ') || null,
     url: item.url,
   };
@@ -375,9 +377,12 @@ export const crmEvents = {
       const next = baselineOf(item, now);
 
       if (!prev) {
-        // Score-0 leads never enter the pipeline now, but a flap or an older
-        // baseline still has to be recorded silently so they do not re-announce.
-        if (item.kind === 'lead' && (item.relevance?.score ?? 1) <= 0) {
+        // Score-0 noise stays silent. Own-card inbound and owner-touched zeros
+        // still announce, matching keepLeadOnBoard.
+        if (item.kind === 'lead' && (item.relevance?.score ?? 1) <= 0
+          && !(item.subtitle ?? '').startsWith('own card')
+          && item.notes.length === 0 && item.contacts.length === 0
+          && item.followUpAt == null && item.action == null) {
           state.items[item.id] = next;
           continue;
         }

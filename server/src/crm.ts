@@ -259,13 +259,14 @@ function toItem(
   const entry = persisted.entries[id];
   const contacts = entry?.contacts ?? [];
   let stage = entry?.stage ?? derivedStage;
-  // An engaged flag with no owner pin and no contact log is still new. An
-  // owner tap on commented/contacted is a pin and must stick.
+  // Empty contacted with no owner pin and no self-comment is still new.
+  // Derived engaged (we replied) and an owner tap both stay contacted.
   if (
     kind === 'lead'
     && stage === 'contacted'
     && contacts.length === 0
     && entry?.stage !== 'contacted'
+    && derivedStage !== 'contacted'
   ) {
     stage = 'new';
   }

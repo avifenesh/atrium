@@ -585,9 +585,15 @@ export function CrmApp() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+  useEffect(() => {
+    setAwaitingOnly(false);
+    setStage('any');
+  }, [tab]);
   const goTab = (next: Tab) => {
     window.location.hash = writeHash(next, feedAll, feedWeek);
     setTab(next);
+    setAwaitingOnly(false);
+    setStage('any');
   };
   const goFeedAll = (next: boolean) => {
     window.location.hash = writeHash('activity', next, next || feedWeek);
