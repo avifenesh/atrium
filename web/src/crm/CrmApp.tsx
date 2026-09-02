@@ -18,21 +18,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmActivity, CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { ActivityTab } from './Activity';
-import { DoLink, isPlaceholderAction } from './Action';
+import { awaitingYou, canCommentLink, CommentLink, DoLink, isOpportunity, RelevanceBits } from './Action';
 import { Board } from './Board';
+import { LeadList } from './LeadList';
 import { ModelsTab } from './Models';
 import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
 import { SecurityTab } from './Security';
 import { UsersTab } from './Users';
 import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE, stageLabelFor } from './stages';
+import { age, relDay } from './time';
 
 const POLL_MS = 60_000;
 
-const KIND_LABEL: Record<CrmItem['kind'], string> = {
-  direction: 'directions',
-  lead: 'leads',
-  account: 'accounts',
-};
 const KIND_TONE: Record<CrmItem['kind'], string> = {
   direction: 'text-amber',
   lead: 'text-slate-glow',
@@ -54,25 +51,6 @@ const post = (path: string, body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-
-function relDay(iso: string | null): string {
-  if (!iso) return '';
-  const days = Math.round((Date.parse(iso) - Date.now()) / 86_400_000);
-  if (Number.isNaN(days)) return iso;
-  if (days === 0) return 'today';
-  if (days < 0) return `${-days}d overdue`;
-  if (days === 1) return 'tomorrow';
-  return `in ${days}d`;
-}
-
-function age(iso: string | null): string {
-  if (!iso) return '';
-  const hours = (Date.now() - Date.parse(iso)) / 3_600_000;
-  if (Number.isNaN(hours) || hours < 0) return '';
-  if (hours < 1) return `${Math.round(hours * 60)}m`;
-  if (hours < 48) return `${Math.round(hours)}h`;
-  return `${Math.round(hours / 24)}d`;
-}
 
 function StageBadge({ item, stage, overridden }: { item: Pick<CrmItem, 'kind' | 'source'>; stage: CrmStage; overridden: boolean }) {
   return (
@@ -105,14 +83,7 @@ function ItemCard({ item, onOpen }: { item: CrmItem; onOpen: () => void }) {
       </div>
       <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-mist-faint">
         <span className={KIND_TONE[item.kind]}>{item.kind}</span>
-        {item.relevance && item.relevance.labels.length > 0 && (
-          <span
-            className={item.relevance.qualified ? 'text-jade' : 'text-mist-faint'}
-            title={item.relevance.labels.join(', ')}
-          >
-            {item.relevance.qualified ? '◆' : '·'} {item.relevance.labels[0]}
-          </span>
-        )}
+        <RelevanceBits item={item} />
         {item.source && item.source !== 'seller' && <span>{item.source}</span>}
         {item.subtitle && <span className="min-w-0 truncate">{item.subtitle}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-2">
@@ -371,6 +342,13 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
           </div>
         )}
 
+        {item.kind === 'lead' && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {canCommentLink(item) && <CommentLink item={item} onDone={onChanged} />}
+            {isOpportunity(item) && <DoLink item={item} showMissing={false} />}
+          </div>
+        )}
+
         <ActionEditor item={item} busy={busy} run={run} />
 
         <AdminActions item={item} busy={busy} run={run} />
@@ -518,30 +496,45 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
 type KindFilter = 'all' | CrmItem['kind'];
 type StageFilter = 'any' | 'due' | CrmStage;
 
-// Tabs — hash-routed so a refresh (and the phone's back button) keeps the page.
-// One tab per question: work the pipeline, see what changed, read the users,
-// count the models, read the money, see who visits, judge the outreach, check for
-// fire, read the abuse shapes.
-const TABS = ['pipeline', 'activity', 'users', 'models', 'money', 'traffic', 'outreach', 'health', 'security'] as const;
+// Work tabs are the daily job. Number tabs are the weekly read. Hash-routed so
+// refresh and the phone's back button keep the page. Old hashes (`pipeline`,
+// `users`) still land on the renamed screens.
+const WORK_TABS = ['send', 'directions', 'customers', 'activity'] as const;
+const NUM_TABS = ['money', 'traffic', 'outreach', 'models', 'health', 'security'] as const;
+const TABS = [...WORK_TABS, ...NUM_TABS] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * The hash carries the tab and, for the activity feed, whether the quiet view is
- * off: `#activity` is quiet, `#activity/all` shows everything. The toggle rides
- * the hash rather than component state for the same reason the tab does, so a
- * refresh, a bookmark and the phone's back button all keep it.
+ * The hash carries the tab and the activity window: `#activity` is today + quiet,
+ * `#activity/week` is seven days + quiet, `#activity/all` is seven days with
+ * mechanical rows. Toggles ride the hash so refresh and back keep them.
  */
-const readHash = (): { tab: Tab; feedAll: boolean } => {
+const readHash = (): { tab: Tab; feedAll: boolean; week: boolean } => {
   const [head, option] = window.location.hash.replace('#', '').split('/');
-  // the old growth tab split into traffic + outreach
-  const name = head === 'growth' ? 'traffic' : head;
+  const alias = head === 'growth' ? 'traffic' : head === 'pipeline' || head === '' ? 'send' : head === 'users' ? 'customers' : head;
   return {
-    tab: (TABS as readonly string[]).includes(name) ? (name as Tab) : 'pipeline',
+    tab: (TABS as readonly string[]).includes(alias) ? (alias as Tab) : 'send',
     feedAll: option === 'all',
+    week: option === 'week' || option === 'all',
   };
 };
-const writeHash = (tab: Tab, feedAll: boolean): string =>
-  tab === 'activity' && feedAll ? 'activity/all' : tab === 'pipeline' ? '' : tab;
+const writeHash = (tab: Tab, feedAll: boolean, week: boolean): string => {
+  if (tab !== 'activity') return tab === 'send' ? '' : tab;
+  if (feedAll) return 'activity/all';
+  if (week) return 'activity/week';
+  return 'activity';
+};
+
+function rankWorkQueue(rows: CrmItem[]): CrmItem[] {
+  return [...rows].sort((a, b) => {
+    const aReady = awaitingYou(a) ? 0 : 1;
+    const bReady = awaitingYou(b) ? 0 : 1;
+    if (aReady !== bReady) return aReady - bReady;
+    const byScore = (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0);
+    if (byScore !== 0) return byScore;
+    return (b.activityAt ?? '').localeCompare(a.activityAt ?? '');
+  });
+}
 
 const matches = (i: CrmItem, needle: string) =>
   `${i.title} ${i.subtitle ?? ''} ${i.source ?? ''} ${i.detail ?? ''} ${i.action?.label ?? ''} ${i.action?.brief ?? ''}`
@@ -572,32 +565,45 @@ export function CrmApp() {
   const [overview, setOverview] = useState<CrmOverview | null>(null);
   const [activity, setActivity] = useState<CrmActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [kind, setKind] = useState<KindFilter>('all');
   const [stage, setStage] = useState<StageFilter>('any');
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showClosed, setShowClosed] = useState(false);
-  const [onlyQualified, setOnlyQualified] = useState(false);
-  const [needsAction, setNeedsAction] = useState(false);
+  const [onlyQualified, setOnlyQualified] = useState(true);
+  const [awaitingOnly, setAwaitingOnly] = useState(false);
   const [tab, setTab] = useState<Tab>(() => readHash().tab);
   const [feedAll, setFeedAll] = useState(() => readHash().feedAll);
+  const [feedWeek, setFeedWeek] = useState(() => readHash().week);
 
   useEffect(() => {
     const onHash = () => {
       const next = readHash();
       setTab(next.tab);
       setFeedAll(next.feedAll);
+      setFeedWeek(next.week);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+  useEffect(() => {
+    setAwaitingOnly(false);
+    setStage('any');
+  }, [tab]);
   const goTab = (next: Tab) => {
-    window.location.hash = writeHash(next, feedAll);
+    window.location.hash = writeHash(next, feedAll, feedWeek);
     setTab(next);
+    setAwaitingOnly(false);
+    setStage('any');
   };
   const goFeedAll = (next: boolean) => {
-    window.location.hash = writeHash('activity', next);
+    window.location.hash = writeHash('activity', next, next || feedWeek);
     setFeedAll(next);
+    if (next) setFeedWeek(true);
+  };
+  const goFeedWeek = (next: boolean) => {
+    window.location.hash = writeHash('activity', next ? feedAll : false, next);
+    setFeedWeek(next);
+    if (!next) setFeedAll(false);
   };
 
   const refresh = useCallback(async () => {
@@ -622,6 +628,7 @@ export function CrmApp() {
     return () => clearInterval(timer);
   }, [refresh]);
 
+  const kind: KindFilter = tab === 'send' ? 'lead' : tab === 'directions' ? 'direction' : 'all';
   const allItems = pipeline?.items ?? [];
   // The pipeline is for things you chase through stages. An account is a customer whose numbers you
   // read, and it has its own screen now, so it is not a pipeline card. Keeping both here forced one
@@ -631,13 +638,11 @@ export function CrmApp() {
     () => (showClosed ? workable : workable.filter((i) => !CLOSED.has(i.stage))),
     [workable, showClosed],
   );
-  const closedCount = useMemo(() => workable.filter((i) => CLOSED.has(i.stage)).length, [workable]);
+  const closedCount = useMemo(
+    () => workable.filter((i) => CLOSED.has(i.stage) && (kind === 'all' || i.kind === kind)).length,
+    [workable, kind],
+  );
   const due = useMemo(() => items.filter((i) => i.followUpDue), [items]);
-  const kindCounts = useMemo(() => {
-    const map = new Map<CrmItem['kind'], number>();
-    for (const item of items) map.set(item.kind, (map.get(item.kind) ?? 0) + 1);
-    return map;
-  }, [items]);
 
   // stage counts respect the kind filter, so "leads → new 12" answers the real
   // question ("how many untouched leads"), not a blended number
@@ -654,40 +659,45 @@ export function CrmApp() {
   // filtering the phone list only made the desktop chips look active and do nothing.
   const chipFiltered = useMemo(
     () => inKind.filter((i) => {
-      if (onlyQualified && i.relevance && !i.relevance.qualified) return false;
-      if (needsAction && !isPlaceholderAction(i)) return false;
+      if (onlyQualified && i.kind === 'lead' && i.relevance && !i.relevance.qualified) return false;
+      if (awaitingOnly && !awaitingYou(i)) return false;
       return !needle || matches(i, needle);
     }),
-    [inKind, onlyQualified, needsAction, needle],
+    [inKind, onlyQualified, awaitingOnly, needle],
   );
+  const ranked = useMemo(() => rankWorkQueue(chipFiltered), [chipFiltered]);
   const visible = useMemo(() => {
-    const rows = chipFiltered.filter((i) => {
+    const rows = ranked.filter((i) => {
       if (stage === 'due') return i.followUpDue;
       return stage === 'any' || i.stage === stage;
     });
-    // Relevance first, then recency. An unranked list of 150 rows makes the owner do the triage the
-    // collector should already have done, and the highest-value row was sorting arbitrarily.
-    return [...rows].sort((a, b) => {
-      const aDummy = isPlaceholderAction(a) ? 1 : 0;
-      const bDummy = isPlaceholderAction(b) ? 1 : 0;
-      if (aDummy !== bDummy) return aDummy - bDummy;
-      const byScore = (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0);
-      if (byScore !== 0) return byScore;
-      return (b.activityAt ?? '').localeCompare(a.activityAt ?? '');
-    });
-  }, [chipFiltered, stage]);
+    return rows;
+  }, [ranked, stage]);
   const qualifiedCount = useMemo(
-    () => inKind.filter((i) => i.relevance?.qualified ?? true).length,
+    () => inKind.filter((i) => i.kind === 'lead' && (i.relevance?.qualified ?? false)).length,
     [inKind],
   );
-  const needsActionCount = useMemo(() => inKind.filter((i) => isPlaceholderAction(i)).length, [inKind]);
+  const awaitingCount = useMemo(() => inKind.filter((i) => awaitingYou(i)).length, [inKind]);
   // Resolve against allItems, not the pipeline-narrowed list: the users screen opens accounts,
   // which `items` deliberately excludes.
   const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
 
+  const tabBtn = (t: Tab) => (
+    <button
+      key={t}
+      type="button"
+      onClick={() => goTab(t)}
+      className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 text-[13px] transition-colors ${
+        tab === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
+      }`}
+    >
+      {t}
+    </button>
+  );
+
   return (
-    <div className="mx-auto max-w-7xl px-3 pb-16 pt-4 sm:px-5">
-      <header className="mb-3 flex items-baseline gap-3">
+    <div className="mx-auto max-w-7xl px-3 pb-16 pt-5 sm:px-5">
+      <header className="mb-4 flex items-baseline gap-3">
         <h1 className="font-display text-2xl text-mist">
           tiyuvta <span className="italic text-mist-dim">crm</span>
         </h1>
@@ -701,39 +711,43 @@ export function CrmApp() {
 
       {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
 
-      {/* tab bar — one screen per question: work the pipeline, read the money,
-          read the growth, check the serving, read the abuse shapes.
-          It scrolls: nine 12px monospace labels are wider than a phone. */}
-      <div className="mb-3 flex gap-1 overflow-x-auto border-b border-white/8">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => goTab(t)}
-            className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 font-mono text-[12px] transition-colors ${
-              tab === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+      <nav className="mb-6 flex flex-wrap items-end gap-x-10 gap-y-1 border-b border-white/8">
+        <div className="flex gap-0.5">{WORK_TABS.map(tabBtn)}</div>
+        <div className="flex gap-0.5">{NUM_TABS.map(tabBtn)}</div>
+      </nav>
 
-      {tab !== 'pipeline' && tab !== 'users' && tab !== 'activity' && !overview && !error && (
-        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+      {tab !== 'send' && tab !== 'directions' && tab !== 'customers' && tab !== 'activity' && !overview && !error && (
+        <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
       )}
-      {tab === 'users' && (
+      {tab === 'customers' && (
         pipeline
-          ? <UsersTab items={allItems} onOpen={setOpenId} />
+          ? (
+            <>
+              <div className="mb-5">
+                <h2 className="text-xl text-mist">Customers</h2>
+                <p className="mt-1 text-sm text-mist-dim">Who is using it, who has money left, who went quiet.</p>
+              </div>
+              <UsersTab items={allItems} onOpen={setOpenId} />
+            </>
+          )
           : !error && (
-            <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+            <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
           )
       )}
       {tab === 'activity' && (
         activity
-          ? <ActivityTab activity={activity} showAll={feedAll} onShowAll={goFeedAll} onOpen={setOpenId} />
+          ? (
+            <ActivityTab
+              activity={activity}
+              showAll={feedAll}
+              week={feedWeek}
+              onShowAll={goFeedAll}
+              onShowWeek={goFeedWeek}
+              onOpen={setOpenId}
+            />
+          )
           : !error && (
-            <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">loading…</div>
+            <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
           )
       )}
       {tab === 'money' && overview && <MoneyTab data={overview} />}
@@ -745,128 +759,127 @@ export function CrmApp() {
           the suspended rows and the drawer come from the pipeline. */}
       {tab === 'security' && overview && <SecurityTab data={overview} items={allItems} onOpen={setOpenId} />}
 
-      {tab === 'pipeline' && (
+      {(tab === 'send' || tab === 'directions') && (
         <>
-      {overview && (
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          <PulseStrip data={overview} dueCount={due.length} />
-          {/* Today's motion, one tap from the board (the feed itself is the activity
-              tab). It counts todaySignal, not today: this chip and the feed it links
-              to have to agree, and the feed hides the mechanical rows. */}
-          {activity && Object.values(activity.todaySignal ?? activity.today).some((n) => (n ?? 0) > 0) && (
-            <button
-              type="button"
-              onClick={() => goTab('activity')}
-              className="cursor-pointer rounded-full border border-slate-glow/40 px-2.5 py-1 font-mono text-[10px] text-slate-glow"
-            >
-              today: {(['account-new', 'lead-new', 'account-usage', 'stage-change'] as const)
-                .filter((t) => ((activity.todaySignal ?? activity.today)[t] ?? 0) > 0)
-                .map((t) => `${(activity.todaySignal ?? activity.today)[t]} ${TODAY_CHIP_LABEL[t]}`)
-                .join(' · ') || 'activity'} →
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* kind row — which job am I doing right now */}
-      <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
-        <button type="button" onClick={() => setKind('all')} className={chipClass(kind === 'all')}>
-          all {items.length}
-        </button>
-        {(['direction', 'lead'] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setKind(kind === k ? 'all' : k)}
-            className={chipClass(kind === k, kind === k ? '' : KIND_TONE[k])}
-          >
-            {KIND_LABEL[k]} {kindCounts.get(k) ?? 0}
-          </button>
-        ))}
-        {due.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
-            className={chipClass(stage === 'due', 'text-amber')}
-          >
-            ⏰ due {due.length}
-          </button>
-        )}
-        {/* The cut that answers "what is actually worth my next tick". */}
-        <button
-          type="button"
-          onClick={() => setOnlyQualified(!onlyQualified)}
-          className={chipClass(onlyQualified, onlyQualified ? '' : 'text-jade')}
-        >
-          ◆ qualified {qualifiedCount}
-        </button>
-        <button
-          type="button"
-          onClick={() => setNeedsAction(!needsAction)}
-          className={chipClass(needsAction, needsAction ? '' : 'text-amber')}
-        >
-          needs research {needsActionCount}
-        </button>
-        {closedCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowClosed(!showClosed)}
-            className={chipClass(showClosed, 'text-mist-faint')}
-          >
-            closed {closedCount}
-          </button>
-        )}
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="search"
-          className="ml-auto w-28 min-w-0 shrink rounded-full border border-white/10 bg-ink px-3 py-1.5 font-mono text-[11px] text-mist placeholder:text-mist-faint focus:w-44 focus:outline-none sm:w-40"
-        />
-      </div>
-
-      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
-        <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
-          any stage
-        </button>
-        {PIPELINE_STAGES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => setStage(stage === s ? 'any' : s)}
-            className={chipClass(stage === s)}
-          >
-            {STAGE_LABEL[s]} {stageCounts.get(s) ?? 0}
-          </button>
-        ))}
-      </div>
-
-      <div className="hidden lg:block">
-        <Board
-          items={stage === 'due' ? visible : chipFiltered}
-          onOpen={setOpenId}
-          onMove={(id, nextStage) => {
-            void post('/api/crm/entry', { id, stage: nextStage })
-              .then(refresh)
-              .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-          }}
-        />
-      </div>
-
-      <div className="space-y-1.5 lg:hidden">
-        {visible.map((item) => (
-          <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
-        ))}
-        {pipeline && visible.length === 0 && (
-          <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
-            nothing here
+          <div className="mb-5">
+            <h2 className="text-xl text-mist">{tab === 'send' ? 'Send' : 'Directions'}</h2>
+            <p className="mt-1 text-sm text-mist-dim">
+              {tab === 'send'
+                ? `${awaitingCount} thread${awaitingCount === 1 ? '' : 's'}. Comment the link unless it is a real opportunity.`
+                : `${items.filter((i) => i.kind === 'direction' && !CLOSED.has(i.stage)).length} open hunts.`}
+            </p>
           </div>
-        )}
-      </div>
-      {!pipeline && !error && (
-        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
-          loading…
-        </div>
-      )}
+
+          {tab === 'send' && overview && (
+            <div className="mb-4 flex flex-wrap items-center gap-1.5">
+              <PulseStrip data={overview} dueCount={due.length} />
+              {activity && Object.values(activity.todaySignal ?? activity.today).some((n) => (n ?? 0) > 0) && (
+                <button
+                  type="button"
+                  onClick={() => goTab('activity')}
+                  className="cursor-pointer rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] text-mist-dim hover:text-mist"
+                >
+                  today {(['account-new', 'lead-new', 'account-usage', 'stage-change'] as const)
+                    .filter((t) => ((activity.todaySignal ?? activity.today)[t] ?? 0) > 0)
+                    .map((t) => `${(activity.todaySignal ?? activity.today)[t]} ${TODAY_CHIP_LABEL[t]}`)
+                    .join(' · ')}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+            {due.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setStage(stage === 'due' ? 'any' : 'due')}
+                className={chipClass(stage === 'due', 'text-amber')}
+              >
+                due {due.length}
+              </button>
+            )}
+            {tab === 'send' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setOnlyQualified(!onlyQualified)}
+                  className={chipClass(onlyQualified, onlyQualified ? '' : 'text-jade')}
+                >
+                  qualified {qualifiedCount}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAwaitingOnly(!awaitingOnly)}
+                  className={chipClass(awaitingOnly, awaitingOnly ? '' : 'text-amber')}
+                >
+                  awaiting {awaitingCount}
+                </button>
+              </>
+            )}
+            {closedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowClosed(!showClosed)}
+                className={chipClass(showClosed, 'text-mist-faint')}
+              >
+                closed {closedCount}
+              </button>
+            )}
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="search"
+              className="ml-auto w-28 min-w-0 shrink rounded-full border border-white/10 bg-ink px-3 py-1.5 font-mono text-[11px] text-mist placeholder:text-mist-faint focus:w-44 focus:outline-none sm:w-40"
+            />
+          </div>
+
+          {tab === 'directions' && (
+            <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
+              <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
+                any stage
+              </button>
+              {PIPELINE_STAGES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStage(stage === s ? 'any' : s)}
+                  className={chipClass(stage === s)}
+                >
+                  {STAGE_LABEL[s]} {stageCounts.get(s) ?? 0}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {tab === 'send' && <LeadList items={visible} onOpen={setOpenId} onTouched={refresh} />}
+
+          {tab === 'directions' && (
+            <>
+              <div className="hidden lg:block">
+                <Board
+                  items={stage === 'due' ? visible : ranked}
+                  onOpen={setOpenId}
+                  onMove={(id, nextStage) => {
+                    void post('/api/crm/entry', { id, stage: nextStage })
+                      .then(refresh)
+                      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5 lg:hidden">
+                {visible.map((item) => (
+                  <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
+                ))}
+                {pipeline && visible.length === 0 && (
+                  <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">nothing here</div>
+                )}
+              </div>
+            </>
+          )}
+
+          {!pipeline && !error && (
+            <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
+          )}
         </>
       )}
 

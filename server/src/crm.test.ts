@@ -12,9 +12,11 @@ import type { SignalItem, SignalsState } from '../../shared/types.js';
 // rules — derived stages, manual override, the contact-log auto-advance, orphan
 // retention — because each one silently rewrites the funnel if it drifts.
 
-function signal(id: string, kind: SignalItem['kind'], lead?: SignalItem['lead']): SignalItem {
+function signal(id: string, kind: SignalItem['kind'], lead?: SignalItem['lead'], title?: string): SignalItem {
   return {
-    id, kind, source: 'hn', entity: 'memra', title: `t-${id}`, detail: null,
+    id, kind, source: 'hn', entity: 'memra',
+    title: title ?? 'we run agents in production and are looking for a cheaper provider',
+    detail: null,
     url: `https://example.com/${id}`, count: null, delta: null,
     occurredAt: '2026-08-19T00:00:00Z', firstSeenAt: '2026-08-19T00:00:00Z',
     ...(lead ? { lead } : {}),
@@ -67,6 +69,7 @@ test('derives stages: lead states and account states map onto one funnel', async
     const byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
     assert.equal(byId.get('s-new')?.stage, 'new');
     assert.equal(byId.get('s-engaged')?.stage, 'contacted');
+    assert.equal(byId.get('s-engaged')?.derivedStage, 'contacted');
     // dismissed = triaged away without engaging — a skip, not a loss
     assert.equal(byId.get('s-dismissed')?.stage, 'skipped');
     assert.equal(byId.has('s-counter'), false);
@@ -92,6 +95,28 @@ test('manual stage overrides the derived one and says so; null restores it', asy
     item = crm.pipeline().items.find((i) => i.id === 'tenant:t-churny');
     assert.equal(item?.stage, 'paying');
     assert.equal(item?.overridden, false);
+  });
+});
+
+test('contacted is a logged touch, not an empty pin or an engaged flag', async () => {
+  await withCrm(async () => {
+    seedStore(
+      [
+        signal('s-engaged', 'mention', { status: 'engaged', note: null, updatedAt: '2026-08-19T00:00:00Z' }),
+        signal('s-pinned', 'prospect-thread'),
+      ],
+      [],
+    );
+    await crm.update('s-pinned', { stage: 'contacted' });
+    let byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
+    assert.equal(byId.get('s-engaged')?.stage, 'contacted', 'a self-comment (engaged) is contacted');
+    assert.equal(byId.get('s-pinned')?.stage, 'contacted', 'tapping commented is an owner pin and must stick');
+    assert.equal(byId.get('s-pinned')?.contacts.length, 1);
+
+    await crm.addContact('s-engaged', 'x', 'replied on the thread');
+    byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
+    assert.equal(byId.get('s-engaged')?.stage, 'contacted');
+    assert.equal(byId.get('s-engaged')?.contacts.length, 1);
   });
 });
 
@@ -123,6 +148,50 @@ test('a due follow-up sorts first, flags through the flag pipe, and clears', asy
 
     await crm.update('s-b', { followUpAt: null });
     assert.ok(!store.get().flags.some((f) => f.id === 'crm:follow-up:s-b'));
+  });
+});
+
+test('score-0 leads stay off the board unless the owner already touched them', async () => {
+  await withCrm(async () => {
+    seedStore(
+      [
+        signal('s-zero', 'prospect-thread', undefined, 'weekly release notes for the kernel'),
+        signal('s-real', 'prospect-thread'),
+      ],
+      [],
+    );
+    const signals = store.get().signals;
+    signals.items.push({
+      ...signal('s-own', 'prospect-thread', undefined, 'does the tokenizer match the card?'),
+      entity: 'own card · qwen3-8b',
+      source: 'hf-hub',
+    });
+    store.setSection('signals', signals);
+
+    let byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
+    assert.equal(byId.has('s-zero'), false);
+    assert.equal(byId.get('s-real')?.relevance?.qualified, true);
+    assert.equal(byId.has('s-own'), true);
+
+    await crm.addNote('s-zero', 'worth a look despite the score');
+    byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
+    assert.equal(byId.get('s-zero')?.notes[0]?.text, 'worth a look despite the score');
+    assert.ok((byId.get('s-zero')?.relevance?.score ?? 1) <= 0);
+
+    seedStore(
+      [signal('s-engaged-zero', 'mention', { status: 'engaged', note: 'auto: avi commented', updatedAt: '2026-08-19T00:00:00Z' }, 'weekly release notes for the kernel')],
+      [],
+    );
+    const engaged = crm.pipeline().items.find((i) => i.id === 's-engaged-zero');
+    assert.equal(engaged?.stage, 'contacted');
+    assert.ok((engaged?.relevance?.score ?? 1) <= 0);
+
+    seedStore(
+      [signal('s-skip', 'prospect-thread', undefined, 'weekly release notes for the kernel')],
+      [],
+    );
+    await crm.update('s-skip', { stage: 'skipped' });
+    assert.equal(crm.pipeline().items.some((i) => i.id === 's-skip'), false);
   });
 });
 

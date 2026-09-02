@@ -257,7 +257,19 @@ function toItem(
   now: string,
 ): CrmItem {
   const entry = persisted.entries[id];
-  const stage = entry?.stage ?? derivedStage;
+  const contacts = entry?.contacts ?? [];
+  let stage = entry?.stage ?? derivedStage;
+  // Empty contacted with no owner pin and no self-comment is still new.
+  // Derived engaged (we replied) and an owner tap both stay contacted.
+  if (
+    kind === 'lead'
+    && stage === 'contacted'
+    && contacts.length === 0
+    && entry?.stage !== 'contacted'
+    && derivedStage !== 'contacted'
+  ) {
+    stage = 'new';
+  }
   const followUpAt = entry?.followUpAt ?? null;
   const relevance = kind === 'lead'
     ? scoreLead({ kind, title: base.title, subtitle: base.subtitle, detail: base.detail })
@@ -269,15 +281,29 @@ function toItem(
     ...base,
     stage,
     derivedStage,
-    overridden: entry?.stage != null && entry.stage !== derivedStage,
+    overridden: entry?.stage != null && entry.stage === stage && entry.stage !== derivedStage,
     followUpAt,
     followUpDue: followUpAt != null && followUpAt <= now,
     notes: entry?.notes ?? [],
-    contacts: entry?.contacts ?? [],
+    contacts,
     action: researchedAction(parseAction(entry?.action))
       ?? researchedAction(base.action)
       ?? actionFromOutreachNotes(entry?.notes ?? [], base.url),
   };
+}
+
+/** Score ≤ 0 is not a lead. Keep it only when the owner already worked it
+ *  (note, contact, follow-up, stuck action) or it is inbound on our own card.
+ *  A skip pin with no other work is a bulk dismissal, not a reason to keep the card. */
+function keepLeadOnBoard(item: CrmItem): boolean {
+  if (item.kind !== 'lead') return true;
+  if (item.relevance == null || item.relevance.score > 0) return true;
+  if ((item.subtitle ?? '').startsWith('own card')) return true;
+  if (item.notes.length > 0 || item.contacts.length > 0) return true;
+  if (item.followUpAt != null) return true;
+  if (item.action != null) return true;
+  if (item.derivedStage === 'contacted') return true;
+  return false;
 }
 
 function assemble(): CrmPipeline {
@@ -315,20 +341,20 @@ function assemble(): CrmPipeline {
     // buyer, and 53 of them buried the real pipeline (owner, 2026-08-23).
     if (signal.kind === 'mention' && !/tiyuvta|memra/iu.test(`${signal.entity ?? ''} ${signal.title}`)) continue;
     liveIds.add(signal.id);
-    items.push(
-      toItem(signal.id, 'lead', derivedLeadStage(signal), {
-        title: signal.title,
-        subtitle: signal.entity || null,
-        source: signal.source,
-        detail: [signal.detail, signal.count != null ? `${signal.count} reactions` : null]
-          .filter(Boolean)
-          .join(' · ') || null,
-        url: signal.url,
-        metrics: null,
-        activityAt: signal.occurredAt ?? signal.firstSeenAt,
-        action: null,
-      }, now),
-    );
+    const lead = toItem(signal.id, 'lead', derivedLeadStage(signal), {
+      title: signal.title,
+      subtitle: signal.entity || null,
+      source: signal.source,
+      detail: [signal.detail, signal.count != null ? `${signal.count} reactions` : null]
+        .filter(Boolean)
+        .join(' · ') || null,
+      url: signal.url,
+      metrics: null,
+      activityAt: signal.occurredAt ?? signal.firstSeenAt,
+      action: null,
+    }, now);
+    if (!keepLeadOnBoard(lead)) continue;
+    items.push(lead);
   }
 
   const activityToday = todayByTenant();
@@ -382,26 +408,26 @@ function assemble(): CrmPipeline {
   const orphaned: string[] = [];
   for (const entry of Object.values(persisted.entries)) {
     if (liveIds.has(entry.id)) continue;
-    orphaned.push(entry.id);
     const kind = entry.id.startsWith('tenant:') ? 'account' : entry.id.startsWith('direction:') ? 'direction' : 'lead';
     // The raw id is a useless header ("x:2089854486..."), and an X status id is
     // still a working link — reconstruct what we can so the owner's notes stay
     // actionable after the source item ages out.
     const statusId = entry.id.match(/^x:(\d+)$/u)?.[1] ?? null;
     const firstNote = entry.notes[0]?.text.replace(/\s+/gu, ' ').trim() ?? null;
-    items.push(
-      toItem(entry.id, kind, 'new', {
-        title: firstNote ? firstNote.slice(0, 120) : statusId ? `X post ${statusId.slice(-6)}` : entry.id,
-        subtitle: 'source item no longer reported',
-        source: null,
-        detail: null,
-        url: statusId ? `https://x.com/i/web/status/${statusId}` : null,
-        metrics: null,
-        activityAt: entry.updatedAt,
-        action: researchedAction(parseAction(entry.action))
-          ?? actionFromOutreachNotes(entry.notes, statusId ? `https://x.com/i/web/status/${statusId}` : null),
-      }, now),
-    );
+    const orphan = toItem(entry.id, kind, 'new', {
+      title: firstNote ? firstNote.slice(0, 120) : statusId ? `X post ${statusId.slice(-6)}` : entry.id,
+      subtitle: 'source item no longer reported',
+      source: null,
+      detail: null,
+      url: statusId ? `https://x.com/i/web/status/${statusId}` : null,
+      metrics: null,
+      activityAt: entry.updatedAt,
+      action: researchedAction(parseAction(entry.action))
+        ?? actionFromOutreachNotes(entry.notes, statusId ? `https://x.com/i/web/status/${statusId}` : null),
+    }, now);
+    if (!keepLeadOnBoard(orphan)) continue;
+    orphaned.push(entry.id);
+    items.push(orphan);
   }
 
   // Due follow-ups first, then newest activity — the phone screen shows the top.
@@ -523,6 +549,23 @@ export const crm = {
     if ('stage' in patch) {
       if (patch.stage !== null && !isStage(patch.stage)) throw new Error(`invalid stage: ${String(patch.stage)}`);
       entry.stage = patch.stage;
+      // Tapping commented/contacted is the owner saying they touched it. Log
+      // that so the send queue stops treating the row as awaiting.
+      if (
+        patch.stage === 'contacted'
+        && entry.contacts.length === 0
+        && !id.startsWith('tenant:')
+        && !id.startsWith('direction:')
+      ) {
+        const channel = id.startsWith('x:') ? 'x' : (id.split(':')[0] || 'other');
+        entry.contacts = [{
+          at: iso(),
+          channel,
+          summary: channel === 'x' || channel === 'hn' || channel === 'reddit' || channel === 'gh-issue'
+            ? 'marked commented'
+            : 'marked contacted',
+        }];
+      }
     }
     if ('followUpAt' in patch) {
       if (patch.followUpAt !== null && (typeof patch.followUpAt !== 'string' || Number.isNaN(Date.parse(patch.followUpAt)))) {

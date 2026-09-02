@@ -212,10 +212,17 @@ function sameDayGroup(at: string, other: string | undefined): boolean {
  * "visible, rescuable, but never a board row", deduped once per status id, and
  * this feed is the only surface that names it.
  *
- * Nothing is dropped from the payload. This only sets the flag the view filters
- * on, and the view has a toggle that shows everything.
+ * A lead-new whose detail is `score 0` (or below) is not signal. Those rows
+ * were family-keyword hits with no buyer, and they filled today's feed. The
+ * type means a qualified lead entered the pipeline; the ledger still holds the
+ * old ones because it is append-only.
+ *
+ * Nothing else is dropped from the payload. This only sets the flag the view
+ * filters on, and the view has a toggle that shows everything except the
+ * score-0 arrivals, which activity() strips because they were never leads.
  */
 export function eventSignal(e: CrmEvent, ctx?: SignalContext): boolean {
+  if (isNoiseLeadArrival(e)) return false;
   if (e.type === 'account-usage') return usageClaimsMoney(e.title) || usageClaimsVolume(e.title);
   if (e.type !== 'stage-change') return true;
 
@@ -262,6 +269,14 @@ function baselineOf(item: CrmItem, now: string): ItemBaseline {
   };
 }
 
+/** lead-new detail is written `source · score N` by arrivalEvent. */
+export function isNoiseLeadArrival(e: CrmEvent): boolean {
+  if (e.type !== 'lead-new') return false;
+  if (/\bown card\b/i.test(e.detail ?? '')) return false;
+  const hit = e.detail?.match(/\bscore (-?\d+)\b/u);
+  return hit != null && Number(hit[1]) <= 0;
+}
+
 function arrivalEvent(item: CrmItem, now: string): CrmEvent {
   if (item.kind === 'account') {
     return {
@@ -285,6 +300,7 @@ function arrivalEvent(item: CrmItem, now: string): CrmEvent {
     detail: [
       item.source,
       rel ? `score ${rel.score}${rel.labels.length ? ` — ${rel.labels.join(', ')}` : ''}` : null,
+      (item.subtitle ?? '').startsWith('own card') ? 'own card' : null,
     ].filter(Boolean).join(' · ') || null,
     url: item.url,
   };
@@ -361,6 +377,16 @@ export const crmEvents = {
       const next = baselineOf(item, now);
 
       if (!prev) {
+        // Score-0 noise stays silent. Own-card inbound and owner-touched zeros
+        // still announce, matching keepLeadOnBoard.
+        if (item.kind === 'lead' && (item.relevance?.score ?? 1) <= 0
+          && !(item.subtitle ?? '').startsWith('own card')
+          && item.derivedStage !== 'contacted'
+          && item.notes.length === 0 && item.contacts.length === 0
+          && item.followUpAt == null && item.action == null) {
+          state.items[item.id] = next;
+          continue;
+        }
         emitted.push(this.emit(arrivalEvent(item, now)));
         state.items[item.id] = next;
         continue;
@@ -464,7 +490,7 @@ export const crmEvents = {
     // The signal flag is attached here rather than at emit time: the ledger is
     // append-only, so a rule that lived in the written row could never be
     // corrected for the 200-odd rows already on disk.
-    const inWindow = events.filter((e) => Date.parse(e.at) >= cutoff);
+    const inWindow = events.filter((e) => Date.parse(e.at) >= cutoff && !isNoiseLeadArrival(e));
     // Duplication is a property of the VIEW, so the context is built over the
     // same window that is served. The day digest counts a subset of it.
     const ctx = signalContext(inWindow);
@@ -474,6 +500,7 @@ export const crmEvents = {
     const day = now.slice(0, 10);
     for (const e of events) {
       if (e.at.slice(0, 10) !== day) continue;
+      if (isNoiseLeadArrival(e)) continue;
       today[e.type] = (today[e.type] ?? 0) + 1;
       if (eventSignal(e, ctx)) todaySignal[e.type] = (todaySignal[e.type] ?? 0) + 1;
     }

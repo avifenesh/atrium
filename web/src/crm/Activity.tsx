@@ -76,7 +76,7 @@ function EventRow({ row, onOpen }: { row: FeedRow; onOpen: (id: string) => void 
           onOpen(e.itemId as string);
         }
       } : undefined}
-      className={`rounded-xl border border-white/8 bg-ink-2 px-3.5 py-2.5 ${openable ? 'cursor-pointer transition-colors hover:border-white/20' : ''}`}
+      className={`surface-row px-3 py-2.5 sm:px-4 ${openable ? 'cursor-pointer' : ''}`}
     >
       <div className="flex items-center gap-2">
         <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] ${TYPE_TONE[e.type]}`}>
@@ -104,22 +104,31 @@ function EventRow({ row, onOpen }: { row: FeedRow; onOpen: (id: string) => void 
 export function ActivityTab({
   activity,
   showAll,
+  week,
   onShowAll,
+  onShowWeek,
   onOpen,
 }: {
   activity: CrmActivity;
   /** the quiet toggle, held by CrmApp so the hash remembers it like the tab */
   showAll: boolean;
+  week: boolean;
   onShowAll: (next: boolean) => void;
+  onShowWeek: (next: boolean) => void;
   onOpen: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<CrmEventType | 'all'>('all');
+  const today = activity.updatedAt.slice(0, 10);
 
-  const inMode = useMemo(
-    () => (showAll ? activity.events : activity.events.filter((e) => e.signal !== false)),
-    [activity.events, showAll],
+  const inWindow = useMemo(
+    () => (week ? activity.events : activity.events.filter((e) => e.at.slice(0, 10) === today)),
+    [activity.events, week, today],
   );
-  const hidden = activity.events.length - inMode.length;
+  const inMode = useMemo(
+    () => (showAll ? inWindow : inWindow.filter((e) => e.signal !== false)),
+    [inWindow, showAll],
+  );
+  const hidden = inWindow.length - inMode.length;
 
   const counts = useMemo(() => {
     const map = new Map<CrmEventType, number>();
@@ -136,7 +145,6 @@ export function ActivityTab({
 
   const visible = filter === 'all' || !counts.has(filter) ? inMode : inMode.filter((e) => e.type === filter);
 
-  const today = activity.updatedAt.slice(0, 10);
   const byDay = useMemo(() => {
     const groups: Array<{ day: string; events: CrmEvent[] }> = [];
     for (const e of visible) {
@@ -158,9 +166,13 @@ export function ActivityTab({
     .map((t) => `${digestCounts[t]} ${TYPE_LABEL[t]}`);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      <div className="mb-1">
+        <h2 className="text-xl text-mist">Activity</h2>
+        <p className="mt-1 text-sm text-mist-dim">What changed. Today unless you open the week.</p>
+      </div>
       {/* today digest — the sentence the feed exists to answer */}
-      <div className="rounded-xl border border-white/8 bg-ink-2 px-3.5 py-3">
+      <div className="signal-strip px-3.5 py-3">
         <div className="font-mono text-[10px] uppercase tracking-wider text-mist-faint">today</div>
         <div className="mt-1 text-sm text-mist">
           {digest.length ? digest.join(' · ') : 'nothing yet'}
@@ -168,6 +180,15 @@ export function ActivityTab({
       </div>
 
       <div className="flex gap-1.5 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => onShowWeek(!week)}
+          className={`shrink-0 cursor-pointer rounded-full border px-3 py-1.5 font-mono text-[11px] ${
+            week ? 'border-white/25 bg-white/5 text-mist' : 'border-white/8 text-mist-dim'
+          }`}
+        >
+          {week ? '7 days' : 'today'}
+        </button>
         <button
           type="button"
           onClick={() => onShowAll(!showAll)}
@@ -202,17 +223,19 @@ export function ActivityTab({
       </div>
 
       {byDay.map((group) => (
-        <div key={group.day} className="space-y-1.5">
-          <div className="font-mono text-[10px] uppercase tracking-wider text-mist-faint">
+        <div key={group.day}>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-mist-faint">
             {dayLabel(group.day, today)}
           </div>
-          {group.rows.map((row) => (
-            <EventRow key={row.key} row={row} onOpen={onOpen} />
-          ))}
+          <div className="panel-surface">
+            {group.rows.map((row) => (
+              <EventRow key={row.key} row={row} onOpen={onOpen} />
+            ))}
+          </div>
         </div>
       ))}
       {visible.length === 0 && (
-        <div className="rounded-xl border border-white/8 px-3 py-6 text-center font-mono text-xs text-mist-faint">
+        <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">
           {hidden > 0
             ? `nothing but mechanism in this window (${hidden} quiet rows)`
             : 'no recorded activity yet: the differ seeds its baseline on first run and reports changes from there'}
