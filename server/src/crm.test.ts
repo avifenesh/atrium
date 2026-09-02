@@ -154,6 +154,13 @@ test('score-0 leads stay off the board unless the owner already touched them', a
     byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
     assert.equal(byId.get('s-zero')?.notes[0]?.text, 'worth a look despite the score');
     assert.ok((byId.get('s-zero')?.relevance?.score ?? 1) <= 0);
+
+    seedStore(
+      [signal('s-skip', 'prospect-thread', undefined, 'weekly release notes for the kernel')],
+      [],
+    );
+    await crm.update('s-skip', { stage: 'skipped' });
+    assert.equal(crm.pipeline().items.some((i) => i.id === 's-skip'), false);
   });
 });
 

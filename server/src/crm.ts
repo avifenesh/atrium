@@ -280,14 +280,15 @@ function toItem(
   };
 }
 
-/** Score ≤ 0 is not a lead. Keep it only when the owner already touched it, or
- *  when it is inbound on our own model card (support, not prospecting). */
+/** Score ≤ 0 is not a lead. Keep it only when the owner already worked it
+ *  (note, contact, follow-up, stuck action) or it is inbound on our own card.
+ *  A skip pin with no other work is a bulk dismissal, not a reason to keep the card. */
 function keepLeadOnBoard(item: CrmItem): boolean {
   if (item.kind !== 'lead') return true;
   if (item.relevance == null || item.relevance.score > 0) return true;
   if ((item.subtitle ?? '').startsWith('own card')) return true;
   if (item.notes.length > 0 || item.contacts.length > 0) return true;
-  if (item.followUpAt != null || item.overridden) return true;
+  if (item.followUpAt != null) return true;
   if (item.action != null) return true;
   return false;
 }
