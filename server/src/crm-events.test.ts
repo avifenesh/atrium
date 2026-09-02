@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { crmEvents, eventSignal, signalContext } from './crm-events.js';
+import { crmEvents, eventSignal, isNoiseLeadArrival, signalContext } from './crm-events.js';
 import type { CrmEvent, CrmItem } from '../../shared/types.js';
 
 // The differ is the CRM's memory of motion. These pin its three contracts:
@@ -337,6 +337,43 @@ test('a lead move out of new is quiet when it duplicates the arrival row in view
     false,
     'crm.ts advances the stage when a contact is logged, and contact-logged already said so',
   );
+});
+
+test('score-0 lead arrivals are not signal and stay off the feed', async () => {
+  const noise: CrmEvent = {
+    at: '2026-09-02T11:34:49.180Z', type: 'lead-new', itemId: 'hn:49534684',
+    title: 'Agentic SQL for Free with Qwen3.8 27B', detail: 'hn · score 0',
+    url: 'https://news.ycombinator.com/item?id=49534684',
+  };
+  const real: CrmEvent = {
+    at: '2026-09-02T11:34:49.180Z', type: 'lead-new', itemId: 'x:1',
+    title: 'we spend five figures a month on OpenRouter',
+    detail: 'x · score 6 — company voice', url: null,
+  };
+  assert.equal(isNoiseLeadArrival(noise), true);
+  assert.equal(isNoiseLeadArrival(real), false);
+  assert.equal(eventSignal(noise), false);
+  assert.equal(eventSignal(real), true);
+
+  await withEvents(async () => {
+    await crmEvents.observe([item('seed')]);
+    const moved = await crmEvents.observe([
+      item('seed'),
+      item('zero', { relevance: { score: 0, labels: [], qualified: false } }),
+      item('real'),
+    ]);
+    assert.deepEqual(moved.map((e) => e.itemId), ['real']);
+    crmEvents.emit({
+      type: 'lead-new', itemId: noise.itemId, title: noise.title, detail: noise.detail, url: noise.url,
+    });
+    crmEvents.emit({
+      type: 'lead-new', itemId: real.itemId, title: real.title, detail: real.detail, url: real.url,
+    });
+    const activity = crmEvents.activity();
+    assert.equal(activity.events.some((e) => e.itemId === 'hn:49534684'), false);
+    assert.equal(activity.events.some((e) => e.itemId === 'x:1'), true);
+    await crmEvents.flush();
+  });
 });
 
 test('a near miss is signal: its own producer says visible and rescuable', () => {
