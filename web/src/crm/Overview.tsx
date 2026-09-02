@@ -7,7 +7,7 @@
 // are therefore ALWAYS separated by mark kind too (bars vs line); slate-glow
 // pairs with mist for same-kind series. Amber stays reserved for attention.
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { CrmFunnelWindow, CrmOverview, CrmUsageDay } from '../../../shared/types';
 import { BarList, TrendChart } from './charts';
 
@@ -76,6 +76,35 @@ export function PulseStrip({ data, dueCount }: { data: CrmOverview; dueCount: nu
       )}
     </div>
   );
+}
+
+/** Send is a sales desk. P&L lives under Books. Coral still crosses that boundary. */
+export function PulseCrit({ data }: { data: CrmOverview }) {
+  const { endpoint, serving } = data;
+  const down = (endpoint?.models ?? []).filter((m) => !m.ok);
+  const chips: ReactNode[] = [];
+  if (serving && serving.tickAgeS === null) {
+    chips.push(<Chip key="sent" tone="border-coral/50 text-coral">sentinel NOT RUNNING</Chip>);
+  }
+  if (serving && serving.tickAgeS !== null && serving.tickAgeS > 600) {
+    chips.push(
+      <Chip key="stall" tone="border-coral/50 text-coral">
+        sentinel stalled {Math.round(serving.tickAgeS / 60)}m
+      </Chip>,
+    );
+  }
+  if (serving && serving.openCrit > 0) {
+    chips.push(<Chip key="crit" tone="border-coral/50 text-coral">serving {serving.openCrit} CRIT</Chip>);
+  }
+  if (down.length > 0) {
+    chips.push(
+      <Chip key="down" tone="border-coral/50 text-coral">
+        {down.map((m) => m.model.split('/').pop()).join(', ')} DOWN
+      </Chip>,
+    );
+  }
+  if (chips.length === 0) return null;
+  return <div className="mb-4 flex flex-wrap items-center gap-1.5">{chips}</div>;
 }
 
 // --- serving watchdog ---------------------------------------------------------
