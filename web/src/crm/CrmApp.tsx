@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmActivity, CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { ActivityTab } from './Activity';
-import { awaitingYou, DoLink, RelevanceBits } from './Action';
+import { awaitingYou, canCommentLink, CommentLink, DoLink, isOpportunity, RelevanceBits } from './Action';
 import { Board } from './Board';
 import { LeadList } from './LeadList';
 import { ModelsTab } from './Models';
@@ -339,6 +339,13 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
         {item.detail && (
           <div className="mt-3 whitespace-pre-line rounded-lg border border-white/8 px-3 py-2 text-sm text-mist-dim">
             {item.detail}
+          </div>
+        )}
+
+        {item.kind === 'lead' && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {canCommentLink(item) && <CommentLink item={item} onDone={onChanged} />}
+            {isOpportunity(item) && <DoLink item={item} showMissing={false} />}
           </div>
         )}
 
@@ -752,7 +759,7 @@ export function CrmApp() {
             <h2 className="text-xl text-mist">{tab === 'send' ? 'Send' : 'Directions'}</h2>
             <p className="mt-1 text-sm text-mist-dim">
               {tab === 'send'
-                ? `${awaitingCount} draft${awaitingCount === 1 ? '' : 's'} waiting. Ranked by score.`
+                ? `${awaitingCount} thread${awaitingCount === 1 ? '' : 's'}. Comment the link unless it is a real opportunity.`
                 : `${items.filter((i) => i.kind === 'direction' && !CLOSED.has(i.stage)).length} open hunts.`}
             </p>
           </div>
@@ -838,7 +845,7 @@ export function CrmApp() {
             </div>
           )}
 
-          {tab === 'send' && <LeadList items={visible} onOpen={setOpenId} />}
+          {tab === 'send' && <LeadList items={visible} onOpen={setOpenId} onTouched={refresh} />}
 
           {tab === 'directions' && (
             <>

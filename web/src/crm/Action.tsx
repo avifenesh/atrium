@@ -26,12 +26,115 @@ export function isPlaceholderAction(item: CrmItem): boolean {
   return !item.action;
 }
 
-/** Draft is sitting. Nobody has logged a send. That is the work on the lead board. */
+/** Still on the queue: no logged touch, not closed. */
 export function awaitingYou(item: CrmItem): boolean {
-  if (item.kind !== 'lead' || !item.action) return false;
+  if (item.kind !== 'lead') return false;
   if (item.contacts.length > 0) return false;
-  if (item.stage === 'lost' || item.stage === 'skipped') return false;
+  if (item.stage === 'lost' || item.stage === 'skipped' || item.stage === 'contacted') return false;
   return true;
+}
+
+/** Line-item spend or a hard score. Everything else is comment-the-link. */
+export function isOpportunity(item: CrmItem): boolean {
+  const score = item.relevance?.score ?? 0;
+  const labels = item.relevance?.labels ?? [];
+  return score >= 12 || labels.includes('line-item spend') || labels.includes('names a company bill');
+}
+
+const PRODUCT_LINK = 'https://inference.tiyuvta.ai';
+
+function threadUrl(item: CrmItem): string | null {
+  return item.url || item.action?.href || null;
+}
+
+export function canCommentLink(item: CrmItem): boolean {
+  return item.kind === 'lead' && threadUrl(item) != null;
+}
+
+async function markCommented(id: string): Promise<void> {
+  const res = await fetch('/api/crm/entry', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id, stage: 'contacted' }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `comment → ${res.status}`);
+  }
+}
+
+const btnClass = (row: boolean, compact: boolean, state: 'idle' | 'busy' | 'ok' | 'err', primary: boolean) => {
+  const shape = row
+    ? 'shrink-0 rounded-md border px-2.5 py-1.5 text-[11px]'
+    : compact
+      ? 'mt-1.5 line-clamp-2 text-[11px] underline-offset-2 hover:underline'
+      : 'mt-1 w-full rounded-lg border px-3 py-3 text-[15px]';
+  const tone = state === 'ok'
+    ? row || !compact ? 'border-jade/40 bg-jade/10 text-jade' : 'text-jade'
+    : state === 'err'
+      ? row || !compact ? 'border-coral/40 bg-coral/10 text-coral' : 'text-coral'
+      : primary
+        ? row || !compact ? 'border-amber/35 bg-amber/10 text-amber hover:border-amber' : 'text-amber'
+        : row || !compact ? 'border-white/15 text-mist-dim hover:text-mist hover:border-white/25' : 'text-mist-dim';
+  return `cursor-pointer text-left font-mono leading-snug ${shape} ${tone}`;
+};
+
+export function CommentLink({
+  item,
+  compact = false,
+  row = false,
+  onDone,
+}: {
+  item: CrmItem;
+  compact?: boolean;
+  row?: boolean;
+  onDone?: () => void;
+}) {
+  const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'err'>('idle');
+  const href = threadUrl(item);
+  if (!href) return null;
+  const primary = !isOpportunity(item);
+  const label = state === 'busy' ? 'opening…' : state === 'ok' ? (row ? 'Commented' : 'link copied, thread open') : state === 'err' ? (row ? 'Opened' : 'copy failed, thread open') : (row ? 'Comment' : 'Comment the link');
+
+  return (
+    <button
+      type="button"
+      draggable={false}
+      disabled={state === 'busy'}
+      title={`Copy ${PRODUCT_LINK} and open the thread`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        setState('busy');
+        const open = () => window.open(href, '_blank', 'noopener');
+        const copy = navigator.clipboard?.writeText
+          ? navigator.clipboard.writeText(PRODUCT_LINK)
+          : Promise.reject(new Error('no clipboard'));
+        void copy
+          .then(async () => {
+            open();
+            await markCommented(item.id);
+            setState('ok');
+            onDone?.();
+          })
+          .catch(async () => {
+            open();
+            try {
+              await markCommented(item.id);
+              onDone?.();
+            } catch {
+              /* thread is open; stage can be tapped by hand */
+            }
+            setState('err');
+          });
+      }}
+      className={btnClass(row, compact, state, primary)}
+    >
+      {label}
+    </button>
+  );
 }
 
 export function RelevanceBits({ item }: { item: CrmItem }) {
@@ -148,25 +251,7 @@ export function DoLink({
           .then(() => setState('ok'))
           .catch(() => setState('err'));
       }}
-      className={`cursor-pointer text-left font-mono leading-snug ${
-        row
-          ? 'shrink-0 rounded-md border px-2.5 py-1.5 text-[11px]'
-          : compact
-            ? 'mt-1.5 line-clamp-2 text-[11px] underline-offset-2 hover:underline'
-            : 'mt-1 w-full rounded-lg border px-3 py-3 text-[15px]'
-      } ${
-        state === 'ok'
-          ? row || !compact
-            ? 'border-jade/40 bg-jade/10 text-jade'
-            : 'text-jade'
-          : state === 'err'
-            ? row || !compact
-              ? 'border-coral/40 bg-coral/10 text-coral'
-              : 'text-coral'
-            : row || !compact
-              ? 'border-amber/35 bg-amber/10 text-amber hover:border-amber'
-              : 'text-amber'
-      }`}
+      className={btnClass(row, compact, state, isOpportunity(item))}
     >
       {label}
     </button>
