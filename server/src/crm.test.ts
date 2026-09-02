@@ -111,7 +111,8 @@ test('contacted is a logged touch, not an empty pin or an engaged flag', async (
     await crm.update('s-pinned', { stage: 'contacted' });
     let byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));
     assert.equal(byId.get('s-engaged')?.stage, 'new');
-    assert.equal(byId.get('s-pinned')?.stage, 'new', 'a contacted pin with no contact log does not count');
+    assert.equal(byId.get('s-pinned')?.stage, 'contacted', 'tapping commented is an owner pin and must stick');
+    assert.equal(byId.get('s-pinned')?.contacts.length, 1);
 
     await crm.addContact('s-engaged', 'x', 'replied on the thread');
     byId = new Map(crm.pipeline().items.map((i) => [i.id, i]));

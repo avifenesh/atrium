@@ -259,9 +259,16 @@ function toItem(
   const entry = persisted.entries[id];
   const contacts = entry?.contacts ?? [];
   let stage = entry?.stage ?? derivedStage;
-  // Contacted means a logged touch. An engaged flag or a pin with an empty
-  // contact log is still new work, not a conversation.
-  if (kind === 'lead' && stage === 'contacted' && contacts.length === 0) stage = 'new';
+  // An engaged flag with no owner pin and no contact log is still new. An
+  // owner tap on commented/contacted is a pin and must stick.
+  if (
+    kind === 'lead'
+    && stage === 'contacted'
+    && contacts.length === 0
+    && entry?.stage !== 'contacted'
+  ) {
+    stage = 'new';
+  }
   const followUpAt = entry?.followUpAt ?? null;
   const relevance = kind === 'lead'
     ? scoreLead({ kind, title: base.title, subtitle: base.subtitle, detail: base.detail })
@@ -540,6 +547,23 @@ export const crm = {
     if ('stage' in patch) {
       if (patch.stage !== null && !isStage(patch.stage)) throw new Error(`invalid stage: ${String(patch.stage)}`);
       entry.stage = patch.stage;
+      // Tapping commented/contacted is the owner saying they touched it. Log
+      // that so the send queue stops treating the row as awaiting.
+      if (
+        patch.stage === 'contacted'
+        && entry.contacts.length === 0
+        && !id.startsWith('tenant:')
+        && !id.startsWith('direction:')
+      ) {
+        const channel = id.startsWith('x:') ? 'x' : (id.split(':')[0] || 'other');
+        entry.contacts = [{
+          at: iso(),
+          channel,
+          summary: channel === 'x' || channel === 'hn' || channel === 'reddit' || channel === 'gh-issue'
+            ? 'marked commented'
+            : 'marked contacted',
+        }];
+      }
     }
     if ('followUpAt' in patch) {
       if (patch.followUpAt !== null && (typeof patch.followUpAt !== 'string' || Number.isNaN(Date.parse(patch.followUpAt)))) {
