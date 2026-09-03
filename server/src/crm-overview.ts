@@ -135,35 +135,40 @@ const REPLIED_STAGES = new Set(['replied', 'signed-up', 'active', 'paying']);
  * `replied` only on its own derived merit (active/paying), never because we
  * pinned a stage by hand.
  */
+const PUBLIC_CHANNELS = new Set(['x', 'hn', 'reddit', 'hf-hub', 'gh-issue', 'gh-code', 'youtube', 'blog', 'hf-thread']);
+
+function isPublicComment(item: CrmItem): boolean {
+  if (item.kind !== 'lead') return false;
+  if (item.contacts.some((c) => PUBLIC_CHANNELS.has(c.channel) || /commented/i.test(c.summary))) return true;
+  return item.stage === 'contacted' && PUBLIC_CHANNELS.has(item.source ?? '');
+}
+
 function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {
-  const bySource = new Map<string, { source: string; drafted: number; contacted: number; replied: number }>();
-  const totals = { drafted: 0, contacted: 0, replied: 0, bySource: [] as CrmOverview['outbound']['bySource'] };
+  const empty = { source: '', drafted: 0, contacted: 0, replied: 0, comments: 0, pitches: 0 };
+  const bySource = new Map<string, typeof empty>();
+  const totals = { drafted: 0, contacted: 0, replied: 0, comments: 0, pitches: 0, bySource: [] as CrmOverview['outbound']['bySource'] };
   for (const item of items) {
     if (item.kind !== 'lead' && item.kind !== 'account') continue;
-    const drafted = item.notes.some((n) => n.text.startsWith('outreach draft'));
-    // "contacted" = ANY outreach happened: the owner's own posted reply
-    // (self-comment auto-mark), a logged touch, or a manual stage move. The
-    // first cut only counted seller-drafted leads, which erased the owner's
-    // real activity — most outreach is his own comments, not drafts.
-    // On an account a logged touch is the only honest signal: its stage is
-    // derived from console usage and would otherwise count every active user
-    // as "contacted" without anyone having written a word.
+    const pitches = item.notes.some((n) => n.text.startsWith('outreach draft'));
+    const comments = isPublicComment(item);
     const contacted = item.kind === 'account'
       ? item.contacts.length > 0
       : item.contacts.length > 0 || (item.stage !== 'new' && item.stage !== 'lost' && item.stage !== 'skipped');
-    // An account being `active` says nothing about our email: it was active
-    // before we wrote. Derived stages never yield 'replied', so on an account
-    // that value can only come from the owner pinning it after a real answer
-    // arrived — which is the only evidence of a reply this store holds.
     const replied = item.kind === 'account'
       ? item.stage === 'replied'
       : REPLIED_STAGES.has(item.stage);
-    if (!drafted && !contacted) continue;
+    if (!pitches && !contacted && !comments) continue;
     const key = item.source ?? '?';
-    const row = bySource.get(key) ?? { source: key, drafted: 0, contacted: 0, replied: 0 };
-    if (drafted) {
+    const row = bySource.get(key) ?? { source: key, drafted: 0, contacted: 0, replied: 0, comments: 0, pitches: 0 };
+    if (pitches) {
       row.drafted += 1;
+      row.pitches += 1;
       totals.drafted += 1;
+      totals.pitches += 1;
+    }
+    if (comments) {
+      row.comments += 1;
+      totals.comments += 1;
     }
     if (contacted) {
       row.contacted += 1;
@@ -175,7 +180,7 @@ function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {
     }
     bySource.set(key, row);
   }
-  totals.bySource = [...bySource.values()].sort((a, b) => b.contacted - a.contacted || b.drafted - a.drafted);
+  totals.bySource = [...bySource.values()].sort((a, b) => b.comments - a.comments || b.pitches - a.pitches || b.contacted - a.contacted);
   return totals;
 }
 

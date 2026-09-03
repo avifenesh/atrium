@@ -91,5 +91,7 @@ test('leads keep their existing funnel semantics', async () => {
     out = (await crmOverview()).outbound;
     assert.equal(out.contacted, 1);
     assert.equal(out.drafted, 1);
+    assert.equal(out.pitches, 1);
+    assert.equal(out.comments, 1, 'a public thread reply is a comment, not a mail pitch');
   });
 });
