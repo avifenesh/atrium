@@ -139,8 +139,7 @@ const PUBLIC_CHANNELS = new Set(['x', 'hn', 'reddit', 'hf-hub', 'gh-issue', 'gh-
 
 function isPublicComment(item: CrmItem): boolean {
   if (item.kind !== 'lead') return false;
-  if (item.contacts.some((c) => PUBLIC_CHANNELS.has(c.channel) || /commented/i.test(c.summary))) return true;
-  return item.stage === 'contacted' && PUBLIC_CHANNELS.has(item.source ?? '');
+  return item.contacts.some((c) => PUBLIC_CHANNELS.has(c.channel) || /commented/i.test(c.summary));
 }
 
 function outboundFunnel(items: CrmItem[]): CrmOverview['outbound'] {

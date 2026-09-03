@@ -49,7 +49,9 @@ function todayBrief(activity: CrmActivity): string {
   const day = activity.updatedAt.slice(0, 10);
   const ev = activity.events.filter((e) => e.at.slice(0, 10) === day && e.signal !== false);
   const comments = ev.filter((e) =>
-    e.type === 'contact-logged' || (e.type === 'stage-change' && /→ contacted/.test(e.title))).length;
+    e.type === 'contact-logged'
+    && (/via (?:x|hn|reddit|hf-hub|gh-issue|gh-code|youtube|blog|hf-thread)\b/i.test(e.title)
+      || /commented/i.test(e.detail ?? ''))).length;
   const leads = ev.filter((e) => e.type === 'lead-new').length;
   const quiet = ev.filter((e) => e.type === 'account-quiet').length;
   if (comments === 0 && leads === 0 && quiet === 0) return 'Nothing to act on today.';
