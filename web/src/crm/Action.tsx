@@ -5,6 +5,9 @@
 
 import { useState } from 'react';
 import type { CrmItem } from '../../../shared/types';
+import { isOpportunity } from './leadFace';
+
+export { isOpportunity } from './leadFace';
 
 async function postDo(id: string): Promise<void> {
   const res = await fetch('/api/crm/do', {
@@ -34,21 +37,7 @@ export function awaitingYou(item: CrmItem): boolean {
   return true;
 }
 
-/** Vendor of a non-SOTA API product. Coding-agent spend is never this. */
-export function isOpportunity(item: CrmItem): boolean {
-  const text = [item.title, item.subtitle, item.detail, ...(item.relevance?.labels ?? [])].filter(Boolean).join(' ');
-  if (
-    /\b(?:claude code|cursor|copilot|cline|aider|opencode|codex|coding agent|codebase|pair program)\b/i.test(text)
-  ) {
-    return false;
-  }
-  return (
-    /\b(?:legal|lawyer|attorneys?|contract review|document intake|call notes?|transcript|summar(?:y|ies|ize|isation)|ticket(?:s|ing)?|classif(?:y|ication)|extract(?:ion)?|kyc|onboarding packet|claims? processing)\b/i.test(text)
-    || /\b(?:our (?:product|app|platform|customers|clients) (?:use|uses|using|run|pay)|we sell|our users (?:pay|buy|run))\b/i.test(text)
-  );
-}
-
-const PRODUCT_LINK = 'https://inference.tiyuvta.ai';
+export const PRODUCT_LINK = 'https://inference.tiyuvta.ai';
 
 function threadUrl(item: CrmItem): string | null {
   return item.url || item.action?.href || null;
@@ -56,6 +45,21 @@ function threadUrl(item: CrmItem): string | null {
 
 export function canCommentLink(item: CrmItem): boolean {
   return item.kind === 'lead' && threadUrl(item) != null;
+}
+
+export async function commentTheLink(item: CrmItem): Promise<'ok' | 'err'> {
+  const href = threadUrl(item);
+  if (!href) throw new Error('no thread');
+  let copied = true;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
+    await navigator.clipboard.writeText(PRODUCT_LINK);
+  } catch {
+    copied = false;
+  }
+  window.open(href, '_blank', 'noopener');
+  await markCommented(item.id);
+  return copied ? 'ok' : 'err';
 }
 
 async function markCommented(id: string): Promise<void> {
@@ -95,13 +99,19 @@ export function CommentLink({
   item: CrmItem;
   compact?: boolean;
   row?: boolean;
-  onDone?: () => void;
+  onDone?: (result: 'ok' | 'err') => void;
 }) {
   const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'err'>('idle');
   const href = threadUrl(item);
   if (!href) return null;
   const primary = !isOpportunity(item);
-  const label = state === 'busy' ? 'opening…' : state === 'ok' ? (row ? 'Commented' : 'link copied, thread open') : state === 'err' ? (row ? 'Opened' : 'copy failed, thread open') : (row ? 'Comment' : 'Comment the link');
+  const label = state === 'busy'
+    ? 'opening…'
+    : state === 'ok'
+      ? (row ? 'Copied' : 'Link copied. Paste on the tweet. Marked commented.')
+      : state === 'err'
+        ? (row ? 'Opened' : 'Copy failed. Thread is open. Mark commented by hand if needed.')
+        : (row ? 'Comment' : 'Comment the link');
 
   return (
     <button
@@ -115,27 +125,12 @@ export function CommentLink({
         e.stopPropagation();
         e.preventDefault();
         setState('busy');
-        const open = () => window.open(href, '_blank', 'noopener');
-        const copy = navigator.clipboard?.writeText
-          ? navigator.clipboard.writeText(PRODUCT_LINK)
-          : Promise.reject(new Error('no clipboard'));
-        void copy
-          .then(async () => {
-            open();
-            await markCommented(item.id);
-            setState('ok');
-            onDone?.();
+        void commentTheLink(item)
+          .then((result) => {
+            setState(result);
+            onDone?.(result);
           })
-          .catch(async () => {
-            open();
-            try {
-              await markCommented(item.id);
-              onDone?.();
-            } catch {
-              /* thread is open; stage can be tapped by hand */
-            }
-            setState('err');
-          });
+          .catch(() => setState('err'));
       }}
       className={btnClass(row, compact, state, primary)}
     >

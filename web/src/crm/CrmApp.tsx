@@ -18,14 +18,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CrmActivity, CrmItem, CrmOverview, CrmPipeline, CrmStage } from '../../../shared/types';
 import { ActivityTab } from './Activity';
-import { awaitingYou, canCommentLink, CommentLink, DoLink, isOpportunity, RelevanceBits } from './Action';
-import { Board } from './Board';
-import { LeadList } from './LeadList';
+import { awaitingYou, canCommentLink, commentTheLink, CommentLink, DoLink, isOpportunity, RelevanceBits } from './Action';
+import { DirectionsWeek } from './DirectionsWeek';
+import { EmptySend, LeadList, PayingStrip } from './LeadList';
+import { leadFit, leadHeadline } from './leadFace';
 import { ModelsTab } from './Models';
-import { HealthTab, MoneyTab, OutreachTab, PulseStrip, TrafficTab } from './Overview';
+import { HealthTab, MoneyTab, OutreachTab, PulseCrit, TrafficTab } from './Overview';
 import { SecurityTab } from './Security';
 import { UsersTab } from './Users';
-import { CRM_STAGES, PIPELINE_STAGES, STAGE_LABEL, STAGE_TONE, stageLabelFor } from './stages';
+import { CRM_STAGES, STAGE_TONE, stageLabelFor } from './stages';
 import { age, relDay } from './time';
 
 const POLL_MS = 60_000;
@@ -318,7 +319,8 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
       >
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-base text-mist">{item.title}</div>
+            <div className="text-base text-mist">{item.kind === 'lead' ? leadHeadline(item) : item.title}</div>
+            {item.kind === 'lead' && <div className="mt-1 text-sm text-mist-dim">{leadFit(item)}</div>}
             <div className="mt-0.5 font-mono text-[11px] text-mist-faint">
               <span className={KIND_TONE[item.kind]}>{item.kind}</span>
               {item.source && ` · ${item.source}`}
@@ -500,26 +502,37 @@ type StageFilter = 'any' | 'due' | CrmStage;
 // refresh and the phone's back button keep the page. Old hashes (`pipeline`,
 // `users`) still land on the renamed screens.
 const WORK_TABS = ['send', 'directions', 'customers', 'activity'] as const;
-const NUM_TABS = ['money', 'traffic', 'outreach', 'models', 'health', 'security'] as const;
-const TABS = [...WORK_TABS, ...NUM_TABS] as const;
-type Tab = (typeof TABS)[number];
+const BOOK_TABS = ['money', 'traffic', 'outreach', 'models', 'health', 'security'] as const;
+type WorkTab = (typeof WORK_TABS)[number];
+type BookTab = (typeof BOOK_TABS)[number];
+type Tab = WorkTab | 'books';
 
 /**
  * The hash carries the tab and the activity window: `#activity` is today + quiet,
  * `#activity/week` is seven days + quiet, `#activity/all` is seven days with
  * mechanical rows. Toggles ride the hash so refresh and back keep them.
  */
-const readHash = (): { tab: Tab; feedAll: boolean; week: boolean } => {
+const isBook = (value: string): value is BookTab => (BOOK_TABS as readonly string[]).includes(value);
+const isWork = (value: string): value is WorkTab => (WORK_TABS as readonly string[]).includes(value);
+
+const readHash = (): { tab: Tab; book: BookTab; feedAll: boolean; week: boolean } => {
   const [head, option] = window.location.hash.replace('#', '').split('/');
   const alias = head === 'growth' ? 'traffic' : head === 'pipeline' || head === '' ? 'send' : head === 'users' ? 'customers' : head;
+  if (alias === 'books' || isBook(alias)) {
+    const book = isBook(alias) ? alias : isBook(option ?? '') ? option as BookTab : 'money';
+    return { tab: 'books', book, feedAll: false, week: false };
+  }
   return {
-    tab: (TABS as readonly string[]).includes(alias) ? (alias as Tab) : 'send',
+    tab: isWork(alias) ? alias : 'send',
+    book: 'money',
     feedAll: option === 'all',
     week: option === 'week' || option === 'all',
   };
 };
-const writeHash = (tab: Tab, feedAll: boolean, week: boolean): string => {
-  if (tab !== 'activity') return tab === 'send' ? '' : tab;
+const writeHash = (tab: Tab, book: BookTab, feedAll: boolean, week: boolean): string => {
+  if (tab === 'send') return '';
+  if (tab === 'books') return book === 'money' ? 'books' : `books/${book}`;
+  if (tab !== 'activity') return tab;
   if (feedAll) return 'activity/all';
   if (week) return 'activity/week';
   return 'activity';
@@ -572,13 +585,17 @@ export function CrmApp() {
   const [onlyQualified, setOnlyQualified] = useState(true);
   const [awaitingOnly, setAwaitingOnly] = useState(false);
   const [tab, setTab] = useState<Tab>(() => readHash().tab);
+  const [book, setBook] = useState<BookTab>(() => readHash().book);
   const [feedAll, setFeedAll] = useState(() => readHash().feedAll);
   const [feedWeek, setFeedWeek] = useState(() => readHash().week);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deskFlash, setDeskFlash] = useState<string | null>(null);
 
   useEffect(() => {
     const onHash = () => {
       const next = readHash();
       setTab(next.tab);
+      setBook(next.book);
       setFeedAll(next.feedAll);
       setFeedWeek(next.week);
     };
@@ -588,20 +605,22 @@ export function CrmApp() {
   useEffect(() => {
     setAwaitingOnly(false);
     setStage('any');
+    setSelectedId(null);
   }, [tab]);
-  const goTab = (next: Tab) => {
-    window.location.hash = writeHash(next, feedAll, feedWeek);
+  const goTab = (next: Tab, nextBook: BookTab = book) => {
+    window.location.hash = writeHash(next, nextBook, feedAll, feedWeek);
     setTab(next);
+    if (next === 'books') setBook(nextBook);
     setAwaitingOnly(false);
     setStage('any');
   };
   const goFeedAll = (next: boolean) => {
-    window.location.hash = writeHash('activity', next, next || feedWeek);
+    window.location.hash = writeHash('activity', book, next, next || feedWeek);
     setFeedAll(next);
     if (next) setFeedWeek(true);
   };
   const goFeedWeek = (next: boolean) => {
-    window.location.hash = writeHash('activity', next ? feedAll : false, next);
+    window.location.hash = writeHash('activity', book, next ? feedAll : false, next);
     setFeedWeek(next);
     if (!next) setFeedAll(false);
   };
@@ -678,9 +697,66 @@ export function CrmApp() {
     [inKind],
   );
   const awaitingCount = useMemo(() => inKind.filter((i) => awaitingYou(i)).length, [inKind]);
+  const paying = useMemo(
+    () => allItems.filter((i) => i.kind === 'account' && (i.metrics?.paid || i.stage === 'paying') && !i.metrics?.suspended),
+    [allItems],
+  );
+  const lastCommentAt = useMemo(() => {
+    const times = allItems.flatMap((i) => i.contacts.map((c) => c.at));
+    return times.sort().at(-1) ?? null;
+  }, [allItems]);
   // Resolve against allItems, not the pipeline-narrowed list: the users screen opens accounts,
   // which `items` deliberately excludes.
   const open = openId ? allItems.find((i) => i.id === openId) ?? null : null;
+
+  useEffect(() => {
+    if (tab !== 'send') return;
+    if (visible.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !visible.some((i) => i.id === selectedId)) setSelectedId(visible[0].id);
+  }, [tab, visible, selectedId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key >= '1' && e.key <= '4') {
+        e.preventDefault();
+        goTab(WORK_TABS[Number(e.key) - 1] ?? 'send');
+        return;
+      }
+      if (tab !== 'send' || visible.length === 0) return;
+      const idx = Math.max(0, visible.findIndex((i) => i.id === selectedId));
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedId(visible[Math.min(idx + 1, visible.length - 1)]?.id ?? null);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedId(visible[Math.max(idx - 1, 0)]?.id ?? null);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const id = selectedId ?? visible[0]?.id;
+        if (id) setOpenId(id);
+      } else if (e.key === 'c') {
+        e.preventDefault();
+        const item = visible.find((i) => i.id === (selectedId ?? visible[0]?.id));
+        if (!item || !canCommentLink(item)) return;
+        void commentTheLink(item)
+          .then((result) => {
+            setDeskFlash(result === 'ok'
+              ? 'Link copied. Paste on the tweet. Marked commented.'
+              : 'Thread is open. Copy https://inference.tiyuvta.ai if the clipboard is locked.');
+            void refresh();
+          })
+          .catch(() => setDeskFlash('Could not comment. Open the row and try the button.'));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tab, visible, selectedId, refresh]);
 
   const tabBtn = (t: Tab) => (
     <button
@@ -712,11 +788,37 @@ export function CrmApp() {
       {error && <div className="mb-3 rounded-lg border border-coral/40 px-3 py-2 font-mono text-xs text-coral">{error}</div>}
 
       <nav className="mb-6 flex flex-wrap items-end gap-x-10 gap-y-1 border-b border-white/8">
-        <div className="flex gap-0.5">{WORK_TABS.map(tabBtn)}</div>
-        <div className="flex gap-0.5">{NUM_TABS.map(tabBtn)}</div>
+        <div className="flex gap-0.5">
+          {WORK_TABS.map(tabBtn)}
+          <button
+            type="button"
+            onClick={() => goTab('books')}
+            className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 text-[13px] transition-colors ${
+              tab === 'books' ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
+            }`}
+          >
+            books
+          </button>
+        </div>
       </nav>
+      {tab === 'books' && (
+        <div className="mb-5 flex gap-1 overflow-x-auto border-b border-white/8">
+          {BOOK_TABS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => goTab('books', t)}
+              className={`shrink-0 cursor-pointer border-b-2 px-3 py-2 font-mono text-[12px] ${
+                book === t ? 'border-amber text-mist' : 'border-transparent text-mist-faint hover:text-mist-dim'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {tab !== 'send' && tab !== 'directions' && tab !== 'customers' && tab !== 'activity' && !overview && !error && (
+      {tab === 'books' && !overview && !error && (
         <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
       )}
       {tab === 'customers' && (
@@ -750,14 +852,12 @@ export function CrmApp() {
             <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
           )
       )}
-      {tab === 'money' && overview && <MoneyTab data={overview} />}
-      {tab === 'models' && overview && <ModelsTab data={overview} />}
-      {tab === 'traffic' && overview && <TrafficTab data={overview} />}
-      {tab === 'outreach' && overview && <OutreachTab data={overview} />}
-      {tab === 'health' && overview && <HealthTab data={overview} />}
-      {/* The security page needs both feeds: the posture comes from the overview,
-          the suspended rows and the drawer come from the pipeline. */}
-      {tab === 'security' && overview && <SecurityTab data={overview} items={allItems} onOpen={setOpenId} />}
+      {tab === 'books' && overview && book === 'money' && <MoneyTab data={overview} />}
+      {tab === 'books' && overview && book === 'models' && <ModelsTab data={overview} />}
+      {tab === 'books' && overview && book === 'traffic' && <TrafficTab data={overview} />}
+      {tab === 'books' && overview && book === 'outreach' && <OutreachTab data={overview} />}
+      {tab === 'books' && overview && book === 'health' && <HealthTab data={overview} />}
+      {tab === 'books' && overview && book === 'security' && <SecurityTab data={overview} items={allItems} onOpen={setOpenId} />}
 
       {(tab === 'send' || tab === 'directions') && (
         <>
@@ -765,27 +865,14 @@ export function CrmApp() {
             <h2 className="text-xl text-mist">{tab === 'send' ? 'Send' : 'Directions'}</h2>
             <p className="mt-1 text-sm text-mist-dim">
               {tab === 'send'
-                ? `${awaitingCount} thread${awaitingCount === 1 ? '' : 's'}. Comment the link unless it is a real opportunity.`
-                : `${items.filter((i) => i.kind === 'direction' && !CLOSED.has(i.stage)).length} open hunts.`}
+                ? `${awaitingCount} thread${awaitingCount === 1 ? '' : 's'}. Comment the link unless it is a real opportunity. j/k move, c comment, enter opens.`
+                : 'Three hunts this week. The rest is parked.'}
             </p>
           </div>
 
-          {tab === 'send' && overview && (
-            <div className="mb-4 flex flex-wrap items-center gap-1.5">
-              <PulseStrip data={overview} dueCount={due.length} />
-              {activity && Object.values(activity.todaySignal ?? activity.today).some((n) => (n ?? 0) > 0) && (
-                <button
-                  type="button"
-                  onClick={() => goTab('activity')}
-                  className="cursor-pointer rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] text-mist-dim hover:text-mist"
-                >
-                  today {(['account-new', 'lead-new', 'account-usage', 'stage-change'] as const)
-                    .filter((t) => ((activity.todaySignal ?? activity.today)[t] ?? 0) > 0)
-                    .map((t) => `${(activity.todaySignal ?? activity.today)[t]} ${TODAY_CHIP_LABEL[t]}`)
-                    .join(' · ')}
-                </button>
-              )}
-            </div>
+          {tab === 'send' && overview && <PulseCrit data={overview} />}
+          {tab === 'send' && (
+            <PayingStrip accounts={paying} onOpen={setOpenId} />
           )}
 
           <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
@@ -833,49 +920,21 @@ export function CrmApp() {
             />
           </div>
 
-          {tab === 'directions' && (
-            <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 lg:hidden">
-              <button type="button" onClick={() => setStage('any')} className={chipClass(stage === 'any')}>
-                any stage
-              </button>
-              {PIPELINE_STAGES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStage(stage === s ? 'any' : s)}
-                  className={chipClass(stage === s)}
-                >
-                  {STAGE_LABEL[s]} {stageCounts.get(s) ?? 0}
-                </button>
-              ))}
-            </div>
+          {tab === 'send' && deskFlash && <div className="mb-2 text-sm text-jade">{deskFlash}</div>}
+          {tab === 'send' && visible.length > 0 && (
+            <LeadList
+              items={visible}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onOpen={setOpenId}
+              onTouched={refresh}
+            />
+          )}
+          {tab === 'send' && pipeline && visible.length === 0 && (
+            <EmptySend lastCommentAt={lastCommentAt} payingCount={paying.length} />
           )}
 
-          {tab === 'send' && <LeadList items={visible} onOpen={setOpenId} onTouched={refresh} />}
-
-          {tab === 'directions' && (
-            <>
-              <div className="hidden lg:block">
-                <Board
-                  items={stage === 'due' ? visible : ranked}
-                  onOpen={setOpenId}
-                  onMove={(id, nextStage) => {
-                    void post('/api/crm/entry', { id, stage: nextStage })
-                      .then(refresh)
-                      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-                  }}
-                />
-              </div>
-              <div className="space-y-1.5 lg:hidden">
-                {visible.map((item) => (
-                  <ItemCard key={item.id} item={item} onOpen={() => setOpenId(item.id)} />
-                ))}
-                {pipeline && visible.length === 0 && (
-                  <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">nothing here</div>
-                )}
-              </div>
-            </>
-          )}
+          {tab === 'directions' && <DirectionsWeek items={visible} onOpen={setOpenId} />}
 
           {!pipeline && !error && (
             <div className="empty-state px-3 py-6 text-center text-sm text-mist-dim">loading…</div>
