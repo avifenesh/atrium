@@ -45,6 +45,20 @@ const TYPE_TONE: Record<CrmEventType, string> = {
   'do-launched': 'border-amber/30 text-amber',
 };
 
+function todayBrief(activity: CrmActivity): string {
+  const day = activity.updatedAt.slice(0, 10);
+  const ev = activity.events.filter((e) => e.at.slice(0, 10) === day && e.signal !== false);
+  const comments = ev.filter((e) =>
+    e.type === 'contact-logged'
+    && (/via (?:x|hn|reddit|hf-hub|gh-issue|gh-code|youtube|blog|hf-thread)\b/i.test(e.title)
+      || /commented/i.test(e.detail ?? ''))).length;
+  const leads = ev.filter((e) => e.type === 'lead-new').length;
+  const quiet = ev.filter((e) => e.type === 'account-quiet').length;
+  if (comments === 0 && leads === 0 && quiet === 0) return 'Nothing to act on today.';
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  return `Today: ${n(comments, 'comment', 'comments')}, ${n(leads, 'new lead', 'new leads')}, ${n(quiet, 'quiet account', 'quiet accounts')}.`;
+}
+
 /** The digest reads in this order: money first, then people, then process. */
 const DIGEST_ORDER: CrmEventType[] = [
   'account-new', 'account-usage', 'account-resumed', 'account-quiet',
@@ -158,25 +172,17 @@ export function ActivityTab({
     return groups.map((g) => ({ day: g.day, rows: foldFeedRows(g.events) }));
   }, [visible]);
 
-  // The digest counts the same set the reader can see: advertising rows the
-  // quiet view hides is how a "make it quiet" change turns into a lie.
-  const digestCounts = (showAll ? activity.today : activity.todaySignal) ?? activity.today;
-  const digest = DIGEST_ORDER
-    .filter((t) => (digestCounts[t] ?? 0) > 0)
-    .map((t) => `${digestCounts[t]} ${TYPE_LABEL[t]}`);
+  const brief = todayBrief(activity);
 
   return (
     <div className="space-y-4">
       <div className="mb-1">
         <h2 className="text-xl text-mist">Activity</h2>
-        <p className="mt-1 text-sm text-mist-dim">What changed. Today unless you open the week.</p>
+        <p className="mt-1 text-sm text-mist-dim">What to act on. The log is below. Week is a tap.</p>
       </div>
-      {/* today digest — the sentence the feed exists to answer */}
       <div className="signal-strip px-3.5 py-3">
         <div className="font-mono text-[10px] uppercase tracking-wider text-mist-faint">today</div>
-        <div className="mt-1 text-sm text-mist">
-          {digest.length ? digest.join(' · ') : 'nothing yet'}
-        </div>
+        <div className="mt-1 text-sm text-mist">{brief}</div>
       </div>
 
       <div className="flex gap-1.5 overflow-x-auto pb-1">

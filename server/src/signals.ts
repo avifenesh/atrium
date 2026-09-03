@@ -73,18 +73,16 @@ function defaultWatch(): SignalsWatch {
     // qualifies a hit — these are the phrases the two buyer profiles type when
     // they are in provider-shopping pain, family name not required.
     buyerQueries: [
-      'openrouter alternative',
-      'openrouter markup',
-      'inference costs production',
-      'rate limited anthropic',
-      'rate limited openai',
-      'llm api bill',
-      'cheaper api agents',
-      'claude code weekly cap',
-      'openclaw cheaper',
-      'opencode provider',
-      'openai_api_base',
-      'agent api costs',
+      'legal document ai api',
+      'contract review llm api',
+      'call transcript summarization api',
+      'meeting notes llm production',
+      'ticket classification llm',
+      'document intake ai production',
+      'support ticket llm api',
+      'kyc document extraction api',
+      'openrouter alternative production',
+      'llm api bill production product',
     ],
     // seeds mirror the retired darklanes snapshot constants — the business
     // portfolio lives here now, edited from the UI like everything else

@@ -294,6 +294,7 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
   const [note, setNote] = useState('');
   const [channel, setChannel] = useState('');
   const [summary, setSummary] = useState('');
+  const [more, setMore] = useState(item.kind !== 'lead');
 
   const run = useCallback(
     async (work: () => Promise<unknown>) => {
@@ -338,16 +339,26 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
           </button>
         </div>
 
-        {item.detail && (
-          <div className="mt-3 whitespace-pre-line rounded-lg border border-white/8 px-3 py-2 text-sm text-mist-dim">
-            {item.detail}
-          </div>
-        )}
-
         {item.kind === 'lead' && (
           <div className="mt-3 flex flex-wrap gap-2">
             {canCommentLink(item) && <CommentLink item={item} onDone={onChanged} />}
             {isOpportunity(item) && <DoLink item={item} showMissing={false} />}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setMore(!more)}
+          className="mt-4 cursor-pointer font-mono text-[11px] text-mist-faint underline"
+        >
+          {more ? 'Less' : 'More'}
+        </button>
+
+        {more && (
+        <>
+        {item.detail && (
+          <div className="mt-3 whitespace-pre-line rounded-lg border border-white/8 px-3 py-2 text-sm text-mist-dim">
+            {item.detail}
           </div>
         )}
 
@@ -488,6 +499,9 @@ function Detail({ item, onClose, onChanged }: { item: CrmItem; onClose: () => vo
             </div>
           </div>
         </div>
+
+        </>
+        )}
 
         {error && <div className="mt-3 font-mono text-xs text-coral">{error}</div>}
       </div>

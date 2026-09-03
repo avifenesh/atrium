@@ -674,11 +674,11 @@ export function OutreachTab({ data }: { data: CrmOverview }) {
     <div className="space-y-2">
       <div className="grid gap-2 lg:grid-cols-2">
         <Stat
-          label="outbound funnel · drafted → contacted → replied"
-          value={`${outbound.drafted} → ${outbound.contacted} → ${outbound.replied}`}
+          label="outbound · comments → pitches → replies"
+          value={`${outbound.comments} → ${outbound.pitches} → ${outbound.replied}`}
           sub={
             outbound.bySource.length
-              ? outbound.bySource.slice(0, 3).map((s) => `${s.source} ${s.drafted}/${s.contacted}/${s.replied}`).join(' · ')
+              ? outbound.bySource.slice(0, 3).map((s) => `${s.source} ${s.comments}/${s.pitches}/${s.replied}`).join(' · ')
               : null
           }
         />
@@ -695,8 +695,8 @@ export function OutreachTab({ data }: { data: CrmOverview }) {
             <thead>
               <tr className="border-b border-white/8 text-left text-mist-faint">
                 <th className="px-3 py-2 font-normal">source</th>
-                <th className="px-3 py-2 text-right font-normal">drafted</th>
-                <th className="px-3 py-2 text-right font-normal">contacted</th>
+                <th className="px-3 py-2 text-right font-normal">comments</th>
+                <th className="px-3 py-2 text-right font-normal">pitches</th>
                 <th className="px-3 py-2 text-right font-normal">replied</th>
               </tr>
             </thead>
@@ -704,8 +704,8 @@ export function OutreachTab({ data }: { data: CrmOverview }) {
               {outbound.bySource.map((s) => (
                 <tr key={s.source} className="border-b border-white/5 last:border-0">
                   <td className="px-3 py-2 text-mist">{s.source}</td>
-                  <td className="px-3 py-2 text-right text-mist-dim">{s.drafted}</td>
-                  <td className="px-3 py-2 text-right text-mist-dim">{s.contacted}</td>
+                  <td className="px-3 py-2 text-right text-mist-dim">{s.comments}</td>
+                  <td className="px-3 py-2 text-right text-mist-dim">{s.pitches}</td>
                   <td className={`px-3 py-2 text-right ${s.replied > 0 ? 'text-jade' : 'text-mist-faint'}`}>{s.replied}</td>
                 </tr>
               ))}

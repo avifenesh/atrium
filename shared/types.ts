@@ -877,12 +877,21 @@ export interface CrmOverview {
    *  from the vast collector's sampled history, so days before it existed are
    *  omitted rather than shown as revenue-only lies. */
   pnl: Array<{ day: string; revenueUsd: number; burnUsd: number; netUsd: number }>;
-  /** outbound funnel: how the seller's drafts are converting, per lead source */
+  /** outbound funnel: comments vs pitches vs replies, per lead source */
   outbound: {
     drafted: number;
     contacted: number;
     replied: number;
-    bySource: Array<{ source: string; drafted: number; contacted: number; replied: number }>;
+    comments: number;
+    pitches: number;
+    bySource: Array<{
+      source: string;
+      drafted: number;
+      contacted: number;
+      replied: number;
+      comments: number;
+      pitches: number;
+    }>;
   };
   /** what real customers experienced through the router, last 24h (probes excluded) */
   realUsage: Array<{ model: string; requests24h: number; errorPct: number; shedPct: number; avgMs: number | null }> | null;
