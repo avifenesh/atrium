@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { downFlags } from './collectors/endpoint.js';
+import { downFlags, probe } from './collectors/endpoint.js';
 
 // The down-flag is the phone pager: a model whose last probe failed (twice in a
 // row — run() retries in-run) must raise exactly one crit flag with a stable id,
@@ -115,4 +115,56 @@ test('a credential rejection is still neither down nor degraded', () => {
   assert.equal(flags.length, 1);
   assert.equal(flags[0].id, 'endpoint:probe-credential');
   assert.equal(flags[0].severity, 'warn');
+});
+
+// THE BODY IS THE EVIDENCE (review catch, 2026-09-04).
+//
+// The first version of this change read the body AFTER `response.body.cancel()`, so
+// faultDetail came back empty for the exact incident it was written to name: the 504
+// whose body says "the origin did not answer response headers within the deadline".
+// The flag matrix above was all green while the field it feeds was blank.
+
+const withFetch = async (impl: typeof fetch, run: () => Promise<void>) => {
+  const real = globalThis.fetch;
+  globalThis.fetch = impl;
+  try { await run(); } finally { globalThis.fetch = real; }
+};
+
+test('a 504 records the status AND the reason from the body', async () => {
+  await withFetch(
+    (async () =>
+      new Response('{"error":{"message":"the origin did not answer response headers within the deadline"}}',
+        { status: 504 })) as typeof fetch,
+    async () => {
+      const p = await probe('https://api.test/v1', 'k', 'zai/glm-5.3-flash');
+      assert.equal(p.ok, false);
+      assert.equal(p.status, 504);
+      assert.equal(p.fault, 'http');
+      assert.match(String(p.faultDetail), /did not answer response headers/);
+    },
+  );
+});
+
+test('a credential rejection still flags authFault, and still keeps its reason', async () => {
+  await withFetch(
+    (async () => new Response('{"error":{"code":"insufficient_credit"}}', { status: 402 })) as typeof fetch,
+    async () => {
+      const p = await probe('https://api.test/v1', 'k', 'm');
+      assert.equal(p.authFault, true);
+      assert.equal(p.status, 402);
+      assert.match(String(p.faultDetail), /insufficient_credit/);
+    },
+  );
+});
+
+test('headers then an empty stream is stream-empty, not a generic failure', async () => {
+  await withFetch(
+    (async () =>
+      new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 })) as typeof fetch,
+    async () => {
+      const p = await probe('https://api.test/v1', 'k', 'm');
+      assert.equal(p.ok, false);
+      assert.equal(p.fault, 'stream-empty');   // the step-OOM teardown shape
+    },
+  );
 });

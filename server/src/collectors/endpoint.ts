@@ -41,7 +41,7 @@ const HISTORY_FILE = join(config.configDir, 'endpoint-health.json');
 const ENV_FILE = join(homedir(), 'projects', 'darklanes', '.env');
 const WINDOW_MS = 24 * 3_600_000;
 
-interface Probe {
+export interface Probe {
   at: string;
   model: string;
   ok: boolean;
@@ -118,7 +118,10 @@ function servedModels(): string[] {
 }
 
 /** Time to the first streamed byte of a 1-token completion — customer-felt TTFT. */
-async function probe(base: string, key: string, model: string): Promise<Probe> {
+/** Exported for the tests: the fault-recording paths are the point of this collector,
+ *  and a review caught the HTTP one returning an empty faultDetail because the body was
+ *  cancelled before it was read. That is only assertable by calling probe directly. */
+export async function probe(base: string, key: string, model: string): Promise<Probe> {
   const at = iso();
   const started = performance.now();
   try {
@@ -136,20 +139,23 @@ async function probe(base: string, key: string, model: string): Promise<Probe> {
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok || !response.body) {
-      await response.body?.cancel().catch(() => {});
-      // 401/402/403 are verdicts on OUR key, not on the endpoint: auth and billing
-      // admission both run before any model is touched, so a rejection here proves
-      // the box answered — it cannot be evidence that the box is down.
-      const authFault = response.status === 401 || response.status === 402 || response.status === 403;
-      // Read the body: the router's refusals carry the reason, and "the origin did not
-      // answer response headers within the deadline" is a completely different incident
-      // from "no capacity" even though both are a failed probe.
+      // READ THE BODY FIRST. It used to be cancelled on the line above, before anything
+      // read it, which left faultDetail empty for the exact incident this whole change
+      // exists to name: the 504 whose body says "the origin did not answer response
+      // headers within the deadline". A refusal's reason is the evidence — "no capacity"
+      // and "the origin timed out" are different incidents that both render as a failed
+      // probe. text() consumes the stream, so it replaces the cancel rather than
+      // following it; the catch covers a body that is absent or already disturbed.
       let detail = '';
       try {
         detail = (await response.text()).slice(0, 200);
       } catch {
         /* the body is optional evidence, never a reason to lose the status */
       }
+      // 401/402/403 are verdicts on OUR key, not on the endpoint: auth and billing
+      // admission both run before any model is touched, so a rejection here proves
+      // the box answered — it cannot be evidence that the box is down.
+      const authFault = response.status === 401 || response.status === 402 || response.status === 403;
       return {
         at,
         model,
