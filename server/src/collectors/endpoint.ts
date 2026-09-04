@@ -41,7 +41,7 @@ const HISTORY_FILE = join(config.configDir, 'endpoint-health.json');
 const ENV_FILE = join(homedir(), 'projects', 'darklanes', '.env');
 const WINDOW_MS = 24 * 3_600_000;
 
-interface Probe {
+export interface Probe {
   at: string;
   model: string;
   ok: boolean;
@@ -53,6 +53,17 @@ interface Probe {
    *  time. A monitor that cannot tell "my credential died" from "the product died"
    *  is worse than no monitor. */
   authFault?: boolean;
+  /** HTTP status when the endpoint answered with one. */
+  status?: number;
+  /** WHY the probe failed, in one word, because "ok: false" is not a signal.
+   *  Until 2026-09-04 a failure recorded nothing at all — no status, no error —
+   *  so 44 glm-5.3-flash failures in 24h could only render as the word DOWN, and
+   *  the owner had to ask three times what was actually wrong. The answer turned
+   *  out to be a 20-second stall ending in a 504 from step-OOM pressure, which
+   *  this field would have said on the first one. */
+  fault?: 'timeout' | 'http' | 'stream-empty' | 'network';
+  /** Short, already-truncated error text. Never a stack. */
+  faultDetail?: string;
 }
 
 export interface EndpointModelHealth {
@@ -65,6 +76,12 @@ export interface EndpointModelHealth {
   probes: number;
   /** Last probe was rejected on credentials — unknown health, NOT down. */
   authFault: boolean;
+  /** Failures in the window, and what they mostly were. A model can be answering
+   *  RIGHT NOW and still be failing one request in seven; that is the condition
+   *  DOWN/up cannot express, and it is the one customers actually feel. */
+  failures: number;
+  dominantFault: string | null;
+  lastFaultDetail: string | null;
 }
 
 let history: Probe[] = [];
@@ -101,7 +118,10 @@ function servedModels(): string[] {
 }
 
 /** Time to the first streamed byte of a 1-token completion — customer-felt TTFT. */
-async function probe(base: string, key: string, model: string): Promise<Probe> {
+/** Exported for the tests: the fault-recording paths are the point of this collector,
+ *  and a review caught the HTTP one returning an empty faultDetail because the body was
+ *  cancelled before it was read. That is only assertable by calling probe directly. */
+export async function probe(base: string, key: string, model: string): Promise<Probe> {
   const at = iso();
   const started = performance.now();
   try {
@@ -119,20 +139,55 @@ async function probe(base: string, key: string, model: string): Promise<Probe> {
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok || !response.body) {
-      await response.body?.cancel().catch(() => {});
+      // READ THE BODY FIRST. It used to be cancelled on the line above, before anything
+      // read it, which left faultDetail empty for the exact incident this whole change
+      // exists to name: the 504 whose body says "the origin did not answer response
+      // headers within the deadline". A refusal's reason is the evidence — "no capacity"
+      // and "the origin timed out" are different incidents that both render as a failed
+      // probe. text() consumes the stream, so it replaces the cancel rather than
+      // following it; the catch covers a body that is absent or already disturbed.
+      let detail = '';
+      try {
+        detail = (await response.text()).slice(0, 200);
+      } catch {
+        /* the body is optional evidence, never a reason to lose the status */
+      }
       // 401/402/403 are verdicts on OUR key, not on the endpoint: auth and billing
       // admission both run before any model is touched, so a rejection here proves
       // the box answered — it cannot be evidence that the box is down.
       const authFault = response.status === 401 || response.status === 402 || response.status === 403;
-      return { at, model, ok: false, ttftMs: null, ...(authFault ? { authFault: true } : {}) };
+      return {
+        at,
+        model,
+        ok: false,
+        ttftMs: null,
+        status: response.status,
+        fault: 'http',
+        ...(detail ? { faultDetail: detail } : {}),
+        ...(authFault ? { authFault: true } : {}),
+      };
     }
     const reader = response.body.getReader();
     const first = await reader.read();
     const ttftMs = Math.round(performance.now() - started);
     await reader.cancel().catch(() => {});
-    return { at, model, ok: !first.done, ttftMs: first.done ? null : ttftMs };
-  } catch {
-    return { at, model, ok: false, ttftMs: null };
+    if (first.done) {
+      // Headers arrived and the stream closed with no token: the box accepted the
+      // request and then produced nothing, which is the step-OOM teardown shape.
+      return { at, model, ok: false, ttftMs: null, status: response.status, fault: 'stream-empty' };
+    }
+    return { at, model, ok: true, ttftMs, status: response.status };
+  } catch (error) {
+    const name = error instanceof Error ? error.name : '';
+    const timedOut = name === 'TimeoutError' || name === 'AbortError';
+    return {
+      at,
+      model,
+      ok: false,
+      ttftMs: null,
+      fault: timedOut ? 'timeout' : 'network',
+      faultDetail: (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).slice(0, 200),
+    };
   }
 }
 
@@ -157,6 +212,14 @@ function summarize(now: number, served: string[]): EndpointModelHealth[] {
     // rather than dragging it down: a dead key must not manufacture a 30% uptime
     // figure for a box that served every real request that hour.
     const measured = probes.filter((p) => !p.authFault);
+    const failed = measured.filter((p) => !p.ok);
+    const kinds = new Map<string, number>();
+    for (const f of failed) {
+      const kind = f.fault ?? 'unknown';
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+    const dominant = [...kinds.entries()].sort((a, b) => b[1] - a[1])[0];
+    const lastWithDetail = [...failed].reverse().find((f) => f.faultDetail);
     out.push({
       model,
       ok: last.ok,
@@ -168,6 +231,9 @@ function summarize(now: number, served: string[]): EndpointModelHealth[] {
       p50TtftMs: okTtfts.length ? okTtfts[Math.floor(okTtfts.length / 2)] : null,
       probes: measured.length,
       authFault: Boolean(last.authFault),
+      failures: failed.length,
+      dominantFault: dominant ? `${dominant[0]} x${dominant[1]}` : null,
+      lastFaultDetail: lastWithDetail?.faultDetail ?? null,
     });
   }
   return out.sort((a, b) => a.model.localeCompare(b.model));
@@ -199,16 +265,57 @@ export function downFlags(summary: EndpointModelHealth[]): Flag[] {
       },
     ];
   }
-  return summary
+  const down = summary
     .filter((m) => !m.ok && !m.authFault)
     .map((m) => ({
       id: `endpoint:down:${m.model}`,
       severity: 'crit' as const,
       title: `${m.model} not answering on api.tiyuvta.ai`,
-      detail: `probe failed twice in a row at ${m.checkedAt} · ${m.uptimePct}% uptime over 24h`,
+      detail:
+        `probe failed twice in a row at ${m.checkedAt} · ${m.uptimePct}% uptime over 24h` +
+        (m.dominantFault ? ` · mostly ${m.dominantFault}` : '') +
+        (m.lastFaultDetail ? ` · last: ${m.lastFaultDetail}` : ''),
       source: 'endpoint',
       raisedAt: m.checkedAt,
     }));
+
+  // DEGRADED IS NOT DOWN, AND IT IS NOT FINE EITHER.
+  //
+  // The flag above fires only when the LAST probe failed, so a model that fails one
+  // request in seven and answers the eighth flaps a crit and clears it, over and over,
+  // while the standing condition — customers losing 14% of their requests — is never
+  // stated. That is exactly what glm-5.3-flash did for two days before 2026-09-04:
+  // 44 failures in 313 probes, and the only word the panel ever produced was DOWN,
+  // twice, for five minutes each.
+  //
+  // A model answering right now with a bad 24h record gets its own warn, named for what
+  // it is, carrying the dominant fault so the next reader starts where this one finished.
+  // Threshold is 97%: at one probe per 5 minutes that is ~9 failures a day, comfortably
+  // above normal jitter and far below the 86% that went unnamed.
+  const DEGRADED_BELOW_PCT = 97;
+  const MIN_PROBES = 24;   // don't judge a model on a handful of probes after a restart
+  const degraded = summary
+    .filter(
+      (m) =>
+        m.ok &&
+        !m.authFault &&
+        m.probes >= MIN_PROBES &&
+        m.uptimePct < DEGRADED_BELOW_PCT,
+    )
+    .map((m) => ({
+      id: `endpoint:degraded:${m.model}`,
+      severity: 'warn' as const,
+      title: `${m.model} is DEGRADED — answering now, failing ${(100 - m.uptimePct).toFixed(1)}% of requests`,
+      detail:
+        `${m.failures} of ${m.probes} probes failed over 24h (${m.uptimePct}% uptime)` +
+        (m.dominantFault ? ` · mostly ${m.dominantFault}` : '') +
+        (m.lastFaultDetail ? ` · last: ${m.lastFaultDetail}` : '') +
+        ' · this is a standing condition, not a blip: the model is up right now.',
+      source: 'endpoint',
+      raisedAt: m.checkedAt,
+    }));
+
+  return [...down, ...degraded];
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
