@@ -15,6 +15,9 @@ const model = (over: Record<string, unknown> = {}) => ({
   p50TtftMs: 310,
   probes: 288,
   authFault: false,
+  failures: 1,
+  dominantFault: null,
+  lastFaultDetail: null,
   ...over,
 }) as Parameters<typeof downFlags>[0][number];
 
@@ -60,4 +63,56 @@ test('a real outage alongside a credential fault still pages crit', () => {
   assert.equal(flags.length, 1);
   assert.equal(flags[0].id, 'endpoint:down:ornith-ai/ornith-1.5-35b-a3b');
   assert.equal(flags[0].severity, 'crit');
+});
+
+// DEGRADED IS ITS OWN CONDITION (2026-09-04).
+//
+// glm-5.3-flash failed 44 of 313 probes across two days — one request in seven — and the
+// panel's only vocabulary was DOWN, which fired for five minutes when a failure happened
+// to land last and cleared on the next probe. The owner asked what was wrong three times;
+// the honest answer, "it is up and losing 14% of requests", was not a thing the code could
+// say. These arms are that sentence.
+
+test('a model answering NOW with a bad 24h record raises a degraded warn, not a crit', () => {
+  const flags = downFlags([
+    model({ ok: true, uptimePct: 85.9, failures: 44, probes: 313, dominantFault: 'http x30',
+            lastFaultDetail: 'the origin did not answer response headers within the deadline' }),
+  ]);
+  assert.equal(flags.length, 1);
+  assert.equal(flags[0].id, 'endpoint:degraded:qwen/qwen3.8-27b');
+  assert.equal(flags[0].severity, 'warn');
+  assert.match(flags[0].title, /DEGRADED/);
+  assert.match(flags[0].title, /14\.1%/);              // says the number, not just the word
+  assert.match(flags[0].detail, /44 of 313/);
+  assert.match(flags[0].detail, /http x30/);            // and WHY
+  assert.match(flags[0].detail, /deadline/);
+  assert.match(flags[0].detail, /up right now/);        // so nobody chases a dead box
+});
+
+test('a healthy model is not degraded, and a young window is not judged', () => {
+  assert.deepEqual(downFlags([model({ uptimePct: 99.5, probes: 288 })]), []);
+  // 97% is the line; 97.0 is not below it.
+  assert.deepEqual(downFlags([model({ uptimePct: 97, probes: 288 })]), []);
+  // Too few probes to judge: after a restart the window is tiny and one failure is 50%.
+  assert.deepEqual(downFlags([model({ uptimePct: 50, probes: 2, failures: 1 })]), []);
+});
+
+test('DOWN wins over degraded for the same model, and carries the reason', () => {
+  const flags = downFlags([
+    model({ ok: false, uptimePct: 85.9, failures: 44, probes: 313,
+            dominantFault: 'timeout x12', lastFaultDetail: 'TimeoutError: signal timed out' }),
+  ]);
+  // One flag, not two: a model that is down must not also page as degraded.
+  assert.equal(flags.length, 1);
+  assert.equal(flags[0].severity, 'crit');
+  assert.match(flags[0].detail, /timeout x12/);
+  assert.match(flags[0].detail, /signal timed out/);
+});
+
+test('a credential rejection is still neither down nor degraded', () => {
+  const blocked = [model({ ok: false, authFault: true, uptimePct: 40, failures: 100, probes: 200 })];
+  const flags = downFlags(blocked);
+  assert.equal(flags.length, 1);
+  assert.equal(flags[0].id, 'endpoint:probe-credential');
+  assert.equal(flags[0].severity, 'warn');
 });
