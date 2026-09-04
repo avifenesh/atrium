@@ -350,6 +350,7 @@ export async function crmOverview(): Promise<CrmOverview> {
     // deliberately not: its state file carries ssh endpoints and host provider addresses,
     // and none of that belongs on a surface that leaves the machine, Access or no Access.
     serving: (extra['serving']?.data as CrmOverview['serving']) ?? null,
+    usageMix: (extra['usagemix']?.data as CrmOverview['usageMix']) ?? null,
     // Same read-only posture as the serving block above: this names shapes and
     // counts, and every account-scoped move (suspend, restore, enroll, grant)
     // stays where it already is, behind the fixed action allowlist.

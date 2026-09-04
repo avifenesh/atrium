@@ -834,6 +834,8 @@ export interface CrmOverview {
   /** last-7-day rows, oldest→newest; internal (owner/bench) traffic separate */
   usageDays: CrmUsageDay[];
   internalDays: CrmUsageDay[];
+  /** per-model in/out/cache shape from the fleet's request archive (owner, 2026-09-04) */
+  usageMix: ModelUsageMix | null;
   visitors: {
     totals: Array<{ site: string; views: number }>;
     daily: Array<{ day: string; site: string; views: number }>;
@@ -1103,6 +1105,43 @@ export interface ServingSnapshot {
   openCrit: number;
   openWarn: number;
   incidents: ServingIncident[];
+}
+
+/** One model's traffic shape over one window, from darklanes' request archive
+ *  (ops/analytics/usage.py). `inOut` is prompt tokens per completion token and
+ *  `cachedShare` is the fraction of prompt tokens the prefix cache served: the two
+ *  numbers that decide which price line carries revenue. Null where the window has
+ *  no served request to divide by. */
+export interface ModelUsageWindow {
+  requests: number;
+  /** requests that actually billed tokens; the rest were refused or errored early */
+  served: number;
+  prompt: number;
+  cached: number;
+  completion: number;
+  inOut: number | null;
+  cachedShare: number | null;
+  promptP50: number;
+  promptP90: number;
+  completionP50: number;
+  completionP90: number;
+}
+
+export interface ModelUsageRow {
+  model: string;
+  /** customer = a paying tenant, owner = our own tenants, internal = watchdogs and probes */
+  cls: 'customer' | 'owner' | 'internal';
+  windows: Record<string, ModelUsageWindow>;
+}
+
+export interface ModelUsageMix {
+  updatedAt: string | null;
+  /** window labels in display order, e.g. ['24h','7d','30d','all'] */
+  windows: string[];
+  archive: { requests: number; from: string; to: string } | null;
+  models: ModelUsageRow[];
+  /** set when the rollup file is older than its timer allows, in hours */
+  staleHours?: number | null;
 }
 
 export interface CrmUsageDay {
