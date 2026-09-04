@@ -16,8 +16,100 @@ const MIST = 'var(--color-mist)';
 
 const short = (model: string) => model.split('/').pop() ?? model;
 
+
+// The traffic-shape table (owner, 2026-09-04). The counters above say HOW MUCH; these say
+// WHAT KIND: prompt tokens per completion token, and how much of the prompt the prefix cache
+// served. Those two decide which price line earns, so they belong on the same screen as
+// "is this model earning its box". Source: darklanes' request archive (ops/analytics/usage.py),
+// ingested read-only by the usagemix collector — no tenant id ever crosses that seam.
+const CLASS_LABEL: Record<string, string> = {
+  customer: 'customers',
+  owner: 'our tenants',
+  internal: 'watchdogs',
+};
+
+const num = (v: number) => v.toLocaleString('en-US');
+const pctOf = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+
+function UsageMix({ mix }: { mix: NonNullable<CrmOverview['usageMix']> }) {
+  const windows = mix.windows?.length ? mix.windows : ['24h', '7d', '30d', 'all'];
+  const order = ['customer', 'owner', 'internal'];
+  const rows = [...mix.models].sort(
+    (a, b) => order.indexOf(a.cls) - order.indexOf(b.cls) || a.model.localeCompare(b.model),
+  );
+  return (
+    <div className="rounded-xl border border-white/8">
+      <div className="flex items-baseline justify-between px-3 py-2 text-[12px]">
+        <span className="text-mist">traffic shape — in / out / cache, per model</span>
+        <span className="text-mist-faint">
+          {mix.archive
+            ? `${num(mix.archive.requests)} archived · ${mix.archive.from} → ${mix.archive.to}`
+            : 'archive empty'}
+          {mix.staleHours ? ` · rollup ${mix.staleHours}h old` : ''}
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-3 pb-3 text-[12px] text-mist-faint">no requests archived yet</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse font-mono text-[12px]">
+            <thead>
+              <tr className="border-b border-white/8 text-left text-mist-faint">
+                <th className="px-3 py-2 font-normal">model</th>
+                <th className="px-3 py-2 font-normal">who</th>
+                <th className="px-3 py-2 font-normal">window</th>
+                <th className="px-3 py-2 text-right font-normal">served</th>
+                <th className="px-3 py-2 text-right font-normal">in:out</th>
+                <th className="px-3 py-2 text-right font-normal">cached</th>
+                <th className="px-3 py-2 text-right font-normal">prompt p50/p90</th>
+                <th className="px-3 py-2 text-right font-normal">out p50/p90</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.flatMap((row) => {
+                const live = windows.filter((w) => (row.windows[w]?.requests ?? 0) > 0);
+                return live.map((w, i) => {
+                  const d = row.windows[w];
+                  return (
+                    <tr
+                      key={`${row.model}:${row.cls}:${w}`}
+                      className={i === live.length - 1 ? 'border-b border-white/8 last:border-0' : ''}
+                    >
+                      <td className="px-3 py-2 text-mist" title={row.model}>
+                        {i === 0 ? short(row.model) : ''}
+                      </td>
+                      <td className={`px-3 py-2 ${row.cls === 'customer' ? 'text-jade' : 'text-mist-faint'}`}>
+                        {i === 0 ? (CLASS_LABEL[row.cls] ?? row.cls) : ''}
+                      </td>
+                      <td className="px-3 py-2 text-mist-dim">{w}</td>
+                      <td className="px-3 py-2 text-right text-mist">
+                        {num(d.served)}
+                        {d.requests !== d.served ? (
+                          <span className="text-mist-faint"> /{num(d.requests)}</span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 text-right text-mist">{d.inOut === null ? '—' : `${d.inOut}:1`}</td>
+                      <td className="px-3 py-2 text-right text-mist-dim">{pctOf(d.cachedShare)}</td>
+                      <td className="px-3 py-2 text-right text-mist-faint">
+                        {num(d.promptP50)} / {num(d.promptP90)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-mist-faint">
+                        {num(d.completionP50)} / {num(d.completionP90)}
+                      </td>
+                    </tr>
+                  );
+                });
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ModelsTab({ data }: { data: CrmOverview }) {
-  const { endpoint, realUsage, realUsageHourly, realUsageDaily } = data;
+  const { endpoint, realUsage, realUsageHourly, realUsageDaily, usageMix } = data;
   const hourly = realUsageHourly ?? [];
   const daily = realUsageDaily ?? [];
   const probeSeries = endpoint?.series ?? [];
@@ -63,6 +155,7 @@ export function ModelsTab({ data }: { data: CrmOverview }) {
 
   return (
     <div className="space-y-3">
+      {usageMix ? <UsageMix mix={usageMix} /> : null}
       {/* the summary table — counted requests to each model, sortable by eye */}
       <div className="overflow-x-auto rounded-xl border border-white/8">
         <table className="w-full border-collapse font-mono text-[12px]">

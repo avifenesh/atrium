@@ -44,6 +44,7 @@ import demandCollector from './collectors/demand.js';
 import vastCollector from './collectors/vast.js';
 import endpointCollector from './collectors/endpoint.js';
 import servingCollector from './collectors/serving.js';
+import usagemixCollector from './collectors/usagemix.js';
 import openrouterCollector from './collectors/openrouter.js';
 import apimetricsCollector from './collectors/apimetrics.js';
 import tiyuvtaCollector from './collectors/tiyuvta.js';
@@ -77,6 +78,7 @@ for (const c of [
   vastCollector,
   endpointCollector,
   servingCollector,
+  usagemixCollector,
   openrouterCollector,
   apimetricsCollector,
   tiyuvtaCollector,
