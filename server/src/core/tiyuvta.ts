@@ -175,6 +175,28 @@ export interface AdminActivity {
   truncated: boolean;
 }
 
+/** One step of one account's path (console journey.ts). `type` is the console's stable
+ *  contract: signup, enrolled, suspended, key-minted, key-revoked, first-call, day2-claimed,
+ *  checkout-opened, purchase-completed, purchase-failed, credit-applied, reversal,
+ *  mail-sent, gads-conversion. `detail` keys depend on the type. */
+export interface JourneyEvent {
+  at: number;
+  type: string;
+  tenantId: string;
+  email: string;
+  internal: boolean;
+  detail: Record<string, unknown>;
+}
+export interface JourneyPage {
+  since: number;
+  until: number;
+  limit: number;
+  events: JourneyEvent[];
+  truncated: boolean;
+}
+/** GET /admin/journey — the customer path as events, oldest first, [since, until) in unix ms. */
+export const readJourney = (since: number, until: number, limit = 2000) =>
+  request<JourneyPage>('GET', `/admin/journey?since=${since}&until=${until}&limit=${limit}`);
 export const readDashboard = () => request<AdminDashboard>('GET', '/admin/dashboard');
 export const readActivity = (days = 14) => request<AdminActivity>('GET', `/admin/activity?days=${days}`);
 export const readGads = (days: 7 | 30 | 90 = 30) => request<GadsReport>('GET', `/admin/gads?days=${days}`);

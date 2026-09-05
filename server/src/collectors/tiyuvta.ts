@@ -13,6 +13,8 @@ import { readActivity, readApiSurfaces, readCreditRequests, readDashboard, readG
 import type { GadsReport } from '../core/tiyuvta.js';
 import { readModelBoxUsage } from '../core/apiusage.js';
 import { store } from '../state.js';
+import { checkoutFlags, errorFlags, ingestJourney, ingestServingErrors } from '../crm-journey.js';
+import { crmEvents } from '../crm-events.js';
 import { iso } from '../util.js';
 import type { ExtraRow, Flag } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
@@ -265,6 +267,28 @@ const collector: Collector = {
         });
       }
 
+      // The customer path and the customers' errors, filed on the account (crm-journey.ts).
+      // Both are best-effort: a failed poll is a row, never a failed collector.
+      const emailOf = (tenantId: string): string | null =>
+        dashboard.top.find((account) => account.tenantId === tenantId)?.email ?? null;
+      const journey = await ingestJourney().catch((error: unknown) => ({ emitted: 0, error: String(error) }));
+      const errors = await ingestServingErrors(emailOf).catch((error: unknown) => ({ emitted: 0, error: String(error) }));
+      rows.push({
+        label: 'customer path',
+        value: 'error' in journey && journey.error
+          ? `journey poll failed: ${journey.error.slice(0, 80)}`
+          : `${count(journey.emitted)} new event(s) filed this poll`,
+        tone: 'error' in journey && journey.error ? 'warn' : undefined,
+      });
+      rows.push({
+        label: 'customer errors',
+        value: 'error' in errors && errors.error
+          ? `sentinel export unreadable: ${errors.error.slice(0, 80)}`
+          : `${count(errors.emitted)} new error row(s) filed this poll`,
+        tone: 'error' in errors && errors.error ? 'warn' : errors.emitted > 0 ? 'warn' : undefined,
+      });
+      const recent = crmEvents.activity(2).events;
+      flags.push(...checkoutFlags(recent, now), ...errorFlags(recent, now));
       store.setExtra('tiyuvta', {
         title: 'tiyuvta',
         updatedAt: now,

@@ -30,6 +30,19 @@ const TYPE_LABEL: Record<CrmEventType, string> = {
   'account-usage': 'usage',
   'contact-logged': 'touch',
   'do-launched': 'do',
+  'account-source': 'source',
+  'key-minted': 'key',
+  'first-call': 'first call',
+  'checkout-opened': 'checkout',
+  'checkout-closed': 'closed',
+  'checkout-declined': 'declined',
+  'purchase-completed': 'paid',
+  'purchase-reversed': 'reversed',
+  'credit-granted': 'credit',
+  'offer-claimed': 'offer',
+  'mail-sent': 'mail',
+  'account-suspended': 'suspended',
+  'request-error': 'error',
 };
 
 const TYPE_TONE: Record<CrmEventType, string> = {
@@ -43,6 +56,19 @@ const TYPE_TONE: Record<CrmEventType, string> = {
   'account-usage': 'border-white/10 text-mist-dim',
   'contact-logged': 'border-white/10 text-mist-dim',
   'do-launched': 'border-amber/30 text-amber',
+  'account-source': 'border-white/10 text-mist-dim',
+  'key-minted': 'border-white/10 text-mist-dim',
+  'first-call': 'border-jade/30 text-jade',
+  'checkout-opened': 'border-amber/30 text-amber',
+  'checkout-closed': 'border-coral/40 text-coral',
+  'checkout-declined': 'border-coral/40 text-coral',
+  'purchase-completed': 'border-jade/40 text-jade',
+  'purchase-reversed': 'border-coral/40 text-coral',
+  'credit-granted': 'border-white/10 text-mist-dim',
+  'offer-claimed': 'border-amber/30 text-amber',
+  'mail-sent': 'border-white/10 text-mist-dim',
+  'account-suspended': 'border-coral/40 text-coral',
+  'request-error': 'border-coral/40 text-coral',
 };
 
 function todayBrief(activity: CrmActivity): string {
@@ -54,14 +80,22 @@ function todayBrief(activity: CrmActivity): string {
       || /commented/i.test(e.detail ?? ''))).length;
   const leads = ev.filter((e) => e.type === 'lead-new').length;
   const quiet = ev.filter((e) => e.type === 'account-quiet').length;
-  if (comments === 0 && leads === 0 && quiet === 0) return 'Nothing to act on today.';
+  const lostCheckouts = ev.filter((e) => e.type === 'checkout-closed' || e.type === 'checkout-declined').length;
+  const paid = ev.filter((e) => e.type === 'purchase-completed').length;
+  const errors = ev.filter((e) => e.type === 'request-error').length;
+  if (comments === 0 && leads === 0 && quiet === 0 && lostCheckouts === 0 && paid === 0 && errors === 0) return 'Nothing to act on today.';
   const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
-  return `Today: ${n(comments, 'comment', 'comments')}, ${n(leads, 'new lead', 'new leads')}, ${n(quiet, 'quiet account', 'quiet accounts')}.`;
+  const money = paid || lostCheckouts ? `${n(paid, 'purchase', 'purchases')}, ${n(lostCheckouts, 'lost checkout', 'lost checkouts')}, ` : '';
+  const errs = errors ? `${n(errors, 'customer error cluster', 'customer error clusters')}, ` : '';
+  return `Today: ${money}${errs}${n(comments, 'comment', 'comments')}, ${n(leads, 'new lead', 'new leads')}, ${n(quiet, 'quiet account', 'quiet accounts')}.`;
 }
 
 /** The digest reads in this order: money first, then people, then process. */
 const DIGEST_ORDER: CrmEventType[] = [
-  'account-new', 'account-usage', 'account-resumed', 'account-quiet',
+  'purchase-completed', 'checkout-declined', 'checkout-closed', 'checkout-opened', 'purchase-reversed',
+  'request-error', 'account-suspended',
+  'account-new', 'account-source', 'first-call', 'key-minted', 'account-usage', 'account-resumed', 'account-quiet',
+  'credit-granted', 'offer-claimed', 'mail-sent',
   'lead-new', 'near-miss', 'stage-change', 'direction-new', 'contact-logged', 'do-launched',
 ];
 
