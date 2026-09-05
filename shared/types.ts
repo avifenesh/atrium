@@ -1195,7 +1195,25 @@ export type CrmEventType =
   | 'account-resumed' // a quiet account called again
   | 'account-usage'   // coalesced request/spend delta for one account
   | 'contact-logged'  // the owner logged a touch
-  | 'do-launched';    // a do-link launched an agent session
+  | 'do-launched'     // a do-link launched an agent session
+  // The customer path, fed by the console's /admin/journey (crm-journey.ts, 2026-09-05).
+  // Before this the CRM diffed aggregates and could not see an attempt: a checkout opened
+  // and closed moved no number. The path BEFORE the account (ref, ad click) rides
+  // account-source; everything after is its own row.
+  | 'account-source'     // the signup carried a ref or an ad click id
+  | 'key-minted'         // an API key was created
+  | 'first-call'         // the first metered request
+  | 'checkout-opened'    // a Paddle transaction was created
+  | 'checkout-closed'    // the checkout ended without a payment attempt (canceled)
+  | 'checkout-declined'  // a payment was attempted and refused (payment_failed)
+  | 'purchase-completed' // money arrived
+  | 'purchase-reversed'  // a refund or chargeback reversal was recorded
+  | 'credit-granted'     // a promo, enrolment, consent or owner grant landed
+  | 'offer-claimed'      // the day-2 offer token was claimed
+  | 'mail-sent'          // welcome, day-2, low-balance, a campaign or a service notice
+  | 'account-suspended'  // the console suspended the account
+  // Serving errors, fed by the serving sentinel's per-box customer_errors_1h export.
+  | 'request-error';     // a customer's requests failed (coalesced per model and code)
 
 export interface CrmEvent {
   at: string;

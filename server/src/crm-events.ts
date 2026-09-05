@@ -221,8 +221,13 @@ function sameDayGroup(at: string, other: string | undefined): boolean {
  * filters on, and the view has a toggle that shows everything except the
  * score-0 arrivals, which activity() strips because they were never leads.
  */
+/** Journey rows that carry no decision: the path's plumbing, kept for the timeline and
+ *  hidden from the signal view. Money and errors are never in this set. */
+const QUIET_JOURNEY = new Set<CrmEventType>(['account-source', 'key-minted', 'first-call', 'mail-sent', 'offer-claimed', 'credit-granted']);
+
 export function eventSignal(e: CrmEvent, ctx?: SignalContext): boolean {
   if (isNoiseLeadArrival(e)) return false;
+  if (QUIET_JOURNEY.has(e.type)) return false;
   if (e.type === 'account-usage') return usageClaimsMoney(e.title) || usageClaimsVolume(e.title);
   if (e.type !== 'stage-change') return true;
 
