@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { actionFromFirstAction, actionFromOutreachNotes, asDoLabel, buildDoPrompt, isPlaceholderAction, launchScript, liveRosterFromFacts, parseAction } from './crm-do.js';
+import { actionFromFirstAction, actionFromOutreachNotes, asDoLabel, buildDoPrompt, isPlaceholderAction, launchScript, liveDoSessions, liveRosterFromFacts, parseAction } from './crm-do.js';
 import type { CrmItem } from '../../shared/types.js';
 
 const item: CrmItem = {
@@ -178,14 +178,52 @@ test('liveRosterFromFacts reads the real facts.json shape and marks unpublished 
 
 // `exec` here made every line after it dead code, so a failed launch left no session
 // and no reason anywhere while the API had already answered launched:true.
+// The opposite bug came after: `exec $SHELL` held every FINISHED launch open
+// forever, and 26 orphan shells piled up over a week (2026-09-10).
 test('launchScript does not exec the agent, so the status line and holding shell run', () => {
-  const script = launchScript('claude', '/usr/bin/claude', '/home/x/projects/darklanes', '/tmp/p.md');
+  const script = launchScript('claude', '/usr/bin/claude', '/home/x/projects/darklanes', '/tmp/p.md', '/root/do.sh');
   assert.equal(/^\s*exec '\/usr\/bin\/claude'/mu.test(script), false, 'the agent must not be exec-ed');
   assert.match(script, /^'\/usr\/bin\/claude' --model opus "\$prompt"$/mu);
   assert.match(script, /status=\$\?/);
-  assert.match(script, /exec "\$\{SHELL:-\/bin\/bash\}"/);
-  const codex = launchScript('codex', '/usr/bin/codex', '/home/x/projects/darklanes', '/tmp/p.md');
+  const codex = launchScript('codex', '/usr/bin/codex', '/home/x/projects/darklanes', '/tmp/p.md', '/root/do.sh');
   assert.match(codex, /^'\/usr\/bin\/codex' --search -C '\/home\/x\/projects\/darklanes' "\$prompt"$/mu);
+});
+
+test('launchScript never spawns an interactive shell, so nothing outlives the script', () => {
+  const script = launchScript('claude', '/usr/bin/claude', '/home/x/projects/darklanes', '/tmp/p.md', '/root/do.sh');
+  assert.doesNotMatch(script, /\bexec\b/, 'no exec anywhere: not on the agent (dead code), not on $SHELL (immortal shell)');
+});
+
+// Run the two exit branches the way bash would: the success branch exits before
+// any wait, the failure branch waits only a bounded time and exits after it.
+test('launchScript success path terminates; failure holds the pane only for a stated timeout', () => {
+  const script = launchScript('claude', '/usr/bin/claude', '/home/x/projects/darklanes', '/tmp/p.md', '/root/do.sh');
+  const lines = script.split('\n');
+  const branch = lines.indexOf('if [ "$status" -eq 0 ]; then');
+  assert.ok(branch !== -1, 'a success branch exists');
+  const branchBody = lines.slice(branch, lines.indexOf('fi', branch));
+  assert.ok(branchBody.includes('  exit 0'), 'success exits the script');
+  assert.ok(branchBody.every((line) => !/\bexec\b/.test(line)), 'success branch holds no shell');
+  // After the branch: a bounded read, then an exit. No line survives `exit "$status"`.
+  const tail = lines.slice(lines.indexOf('fi', branch) + 1);
+  assert.equal(tail.filter((line) => line.trim()).at(-1), 'exit "$status"', 'failure path ends in exit, nothing after it');
+  const hold = tail.find((line) => /^read -t \d+ /.test(line));
+  assert.ok(hold, 'failure wait is a read with a timeout');
+  assert.ok(Number(hold.match(/^read -t (\d+)/)?.[1]) <= 3_600, 'the hold is bounded to an hour at most');
+  assert.match(script, /\(script: %s, prompt: %s\)/, 'the failure line names the script and prompt so the reason survives the pane');
+  assert.match(script, / '\/root\/do\.sh' '\/tmp\/p\.md'$/m, 'and passes their real paths');
+});
+
+test('liveDoSessions counts only atrium-crm-do panes and treats no server as none', () => {
+  assert.deepEqual(liveDoSessions(null), []);
+  assert.deepEqual(liveDoSessions(''), []);
+  const out = [
+    'atrium-crm-do-direction-x-1',
+    'main',
+    'phone-bridge',
+    'atrium-crm-do-direction-y-2',
+  ].join('\n');
+  assert.deepEqual(liveDoSessions(out), ['atrium-crm-do-direction-x-1', 'atrium-crm-do-direction-y-2']);
 });
 
 test('buildDoPrompt refuses a missing action', () => {
