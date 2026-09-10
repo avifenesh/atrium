@@ -277,9 +277,21 @@ function shellQuote(value: string): string {
 
 /** No `exec` on the agent: with it, everything after this line was dead code and
  *  the tmux session vanished the moment the agent exited (or failed to start),
- *  taking the reason with it. Plain invocation keeps the status line and the
- *  holding shell, so an attach after the fact still shows what happened. */
-export function launchScript(executor: HelperExecutor, binary: string, cwd: string, promptPath: string): string {
+ *  taking the reason with it. Plain invocation keeps the status line readable.
+ *
+ *  But the pane is not held forever either (26 orphan shells, 2026-09-10): on
+ *  success the script exits and tmux reaps the session; on failure the pane
+ *  stays readable for FAIL_HOLD_SECONDS, then closes, with the script and
+ *  prompt paths printed so the reason survives the pane. */
+const FAIL_HOLD_SECONDS = 600;
+
+export function launchScript(
+  executor: HelperExecutor,
+  binary: string,
+  cwd: string,
+  promptPath: string,
+  scriptPath: string,
+): string {
   const command = executor === 'claude'
     ? `${shellQuote(binary)} --model opus "$prompt"`
     : `${shellQuote(binary)} --search -C ${shellQuote(cwd)} "$prompt"`;
@@ -290,10 +302,28 @@ export function launchScript(executor: HelperExecutor, binary: string, cwd: stri
     `prompt="$(cat ${shellQuote(promptPath)})"`,
     command,
     'status=$?',
-    'printf "\\n%s exited %s; keeping the terminal open.\\n" ' + shellQuote(executor) + ' "$status"',
-    'exec "${SHELL:-/bin/bash}"',
+    'if [ "$status" -eq 0 ]; then',
+    `  printf '\\n%s exited 0.\\n' ${shellQuote(executor)}`,
+    '  exit 0',
+    'fi',
+    `printf '\\n%s exited %s; keeping the terminal open ${FAIL_HOLD_SECONDS}s (script: %s, prompt: %s).\\n' ${shellQuote(executor)} "$status" ${shellQuote(scriptPath)} ${shellQuote(promptPath)}`,
+    `read -t ${FAIL_HOLD_SECONDS} -r _ || true`,
+    'exit "$status"',
     '',
   ].join('\n');
+}
+
+/** A finished launch used to leave a shell holding its pane forever, so clicks
+ *  accumulated silently. Sessions now close themselves, and a new launch also
+ *  refuses to start while too many are still alive. */
+export const MAX_LIVE_DO_SESSIONS = 6;
+const DO_SESSION_PREFIX = 'atrium-crm-do-';
+
+/** Names of live crm-do sessions from `tmux list-sessions -F '#{session_name}'`.
+ *  Null (no tmux server at all) means none. */
+export function liveDoSessions(listOutput: string | null): string[] {
+  if (!listOutput) return [];
+  return listOutput.split('\n').map((line) => line.trim()).filter((line) => line.startsWith(DO_SESSION_PREFIX));
 }
 
 async function availableBinary(primary: string, fallback: string): Promise<string> {
@@ -317,6 +347,10 @@ export async function writeDoLaunch(opts: {
   prompt: string;
 }): Promise<{ scriptPath: string; session: string }> {
   const root = join(config.configDir, 'crm-do-launches');
+  const liveNow = liveDoSessions(await shTry('tmux', ['list-sessions', '-F', '#{session_name}'], { timeoutMs: 2_000 }));
+  if (liveNow.length >= MAX_LIVE_DO_SESSIONS) {
+    throw new Error(`${liveNow.length} crm-do sessions are already live (${liveNow.join(', ')}); close some before launching more`);
+  }
   await mkdir(root, { recursive: true, mode: 0o700 });
   const stamp = Date.now();
   const slug = opts.id.replace(/[^A-Za-z0-9_-]+/gu, '-').slice(0, 40);
@@ -331,7 +365,7 @@ export async function writeDoLaunch(opts: {
   const binary = opts.executor === 'claude'
     ? await availableBinary(config.paths.claudeBin, 'claude')
     : await availableBinary(config.paths.codexBin, 'codex');
-  await writeFile(scriptPath, launchScript(opts.executor, binary, cwd, promptPath), { mode: 0o700 });
+  await writeFile(scriptPath, launchScript(opts.executor, binary, cwd, promptPath, scriptPath), { mode: 0o700 });
   // The stamp is in the name because launchTmuxSession kills a name collision:
   // without it, a second Do on the same card killed the agent still working on it.
   const session = await launchTmuxSession({
