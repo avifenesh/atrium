@@ -11,8 +11,6 @@ import type {
   HelperExecutor,
   HelperOffer,
   HelperSettings,
-  SignalLeadStatus,
-  SignalsWatch,
 } from '../../shared/types';
 
 const BASE = ''; // same origin (vite proxies /api in dev)
@@ -392,35 +390,4 @@ export function isMuted(
     }
     return false;
   });
-}
-
-/** Record a lead decision on a signal (engaged/dismissed); null clears it. */
-export async function setSignalLead(id: string, status: SignalLeadStatus | null, note?: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/signals/lead`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id, status, note }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.error ?? `lead update failed ${res.status}`);
-  }
-}
-
-/** Advance the signals "new since review" clock to now. */
-export async function markSignalsReviewed(): Promise<void> {
-  const res = await fetch(`${BASE}/api/signals/reviewed`, { method: 'POST' });
-  if (!res.ok) throw new Error(`mark reviewed failed ${res.status}`);
-}
-
-/** Save the signals watch config (partial — only the provided arrays change). */
-export async function saveSignalsWatch(patch: Partial<SignalsWatch>): Promise<SignalsWatch> {
-  const res = await fetch(`${BASE}/api/signals/watch`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(body?.error ?? `watch save failed ${res.status}`);
-  return body.watch as SignalsWatch;
 }

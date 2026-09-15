@@ -92,7 +92,6 @@ export function emptySnapshot(): Snapshot {
       sxcGrounding: { updatedAt: null, retriever: null, threshold: 0, pending: [], reviewedTotal: 0, error: null },
       error: null,
     },
-    cloud: { updatedAt: null, instances: [], totalMonthlyUsd: null, error: null },
     reentry: {
       updatedAt: null,
       contexts: [],
@@ -123,15 +122,6 @@ export function emptySnapshot(): Snapshot {
       error: null,
     },
     repos: { updatedAt: null, repos: [], error: null },
-    signals: {
-      updatedAt: null,
-      items: [],
-      watch: { terms: [], radarWatch: [], demandKeywords: [], prospectKeywords: [],
-    disqualifyKeywords: [], buyerQueries: [], repos: [], hfModels: [], crates: [] },
-      lastReviewedAt: null,
-      sources: [],
-      error: null,
-    },
     extra: {},
     collectors: [],
     mutes: [],

@@ -89,91 +89,34 @@ Names match the collector `name`; bespoke agent sub-sources use the `agents:<id>
 This is how a fork that doesn't run the author's bespoke tooling gets a clean core
 dashboard. See [config.md](config.md).
 
-## signals — one surface for outside attention
+## Business surfaces live in the CRM
 
-Three feeders publish typed `SignalItem`s into the `signals` section through
-`server/src/signals.ts` instead of writing unrelated shapes into the plugin lane:
+Until 2026-09-16 atrium also carried the tiyuvta business cluster: the mention radar, the
+Hugging Face demand radar, the lead queue, the ops console with its actions, endpoint
+TTFT probes, the serving alert fold, real-user API metrics, site analytics, the usage
+mix, OpenRouter and Vast watches, and a CRM with its own public host. All of it moved to
+the tiyuvta CRM (crm.tiyuvta.ai, darklanes `workers/crm`), which runs a job for each:
+`mentions`, `demand-*`, `hf-radar`, `endpoint-probes`, the serving fold over the
+sentinel ledger, `ae-webtraffic`, `ae-apimetrics`, `ae-apiusage`, `usage-mirror`,
+`openrouter`, `vast`. Atrium is the life dashboard again: a business question is
+answered in the CRM, not here.
 
-- **mentions** — public mentions of your projects (HN, GitHub, web/blogs, dev.to,
-  reddit, YouTube), collected hourly by `scripts/mention-radar.py` and read from its
-  `hits.jsonl`.
-- **radar** (`server/src/collectors/radar.ts`) — a hand-picked list of Hugging Face
-  model families: whether a new checkpoint just landed, and whether anyone is publicly
-  asking for a format you could ship (open threads whose titles match your keywords,
-  ranked by reactions). A fresh checkpoint still raises `crit` (≤6h) / `warn` flags —
-  that is the one time-critical event here. Demand threads are signal rows with a NEW
-  marker, not flags: as info flags they buried the strip until the source got muted.
-- **exposure** — the counters other services keep for us badly (GitHub 14-day traffic,
-  HF rolling 30-day downloads, crates totals), snapshotted daily by the native writer
-  in `core/exposure-snapshot.ts` (merge-never-clobber, one JSON per UTC date, same
-  format as the retired darklanes script) and reported with day-over-day deltas plus a
-  30-day spark series. The portfolio (repos, HF models, crates) lives in the signals
-  watch file with everything else; a legacy `exposure.command` still runs for forks
-  that kept an external writer.
+Still in this repo, on purpose:
 
-The watch lists live in `~/.config/atrium/signals.json` and are edited from the
-Signals view (PUT `/api/signals/watch`) — mention terms, the radar family list, the
-demand keywords, and the exposure portfolio (repos / HF models / crates) all change
-at runtime, no code, no restart; `mention-radar.py` reads the same file. `config.json`'s
-`radar.watch` seeds the file on first run. Each item gets a persistent first-seen
-stamp; everything first seen after the last `POST /api/signals/reviewed` renders as
-new, which is what the view's `new` filter and the rail badge count.
-
-Mentions and demand threads are LEADS — places to go comment and win a user. Each
-row takes one decision (`POST /api/signals/lead`): **engaged** (commented/answered)
-or **skip**; untouched leads queue on the **Business** view, which fronts the whole
-cluster — tiyuvta money/ops numbers, the lead queue, site behaviour from webtraffic,
-counter trends, and the live API surface probe. Signals/tiyuvta/webtraffic stay as
-its detail views.
-
-Radar is still worth reading if you are writing a collector against a public HTTP
-API: zero dependencies, one unauthenticated request per watched item, per-item
-failures degraded into `error` rather than thrown, and flag/item ids keyed on the
-specific release or thread so a mute silences that one and still fires for the next.
-`match` scopes "newest release" to the family: without it, a large org's newest
-anything wins, and for `google` that was a JAX tabular model — true and useless.
-`mirrors` are the repos whose discussion tabs carry the demand, which is usually the
-popular mirror rather than the original, because that is where people ask.
-
-## Collectors that drive something (actions)
-
-A plugin collector renders rows and nothing else. When a view needs BUTTONS, the shape
-is: a client module under `server/src/core/`, an allowlisted `POST /api/<name>/:action`
-route in `server/src/index.ts`, and a small bespoke panel that posts to it. The
-`tiyuvta` collector is the worked example.
-
-Two rules that fell out of building it and are worth copying:
-
-- **Allowlist the action names; never proxy a path.** This daemon accepts loopback
-  POSTs, so a passthrough route turns into "call any endpoint on the upstream API with
-  the owner's credentials".
-- **Do not copy the upstream secret into `config.json`.** Point at the file that
-  already owns it (`tokenEnvPath`) so there is one copy on the machine and rotating it
-  needs no change here.
+- **`distribution`** (where tiyuvta is and is not listed) is the one business surface
+  without a CRM job yet. Phase 2 ports it; until then it renders as a plain plugin section.
+- **`exposure`** is a personal counter for the owner's open-source projects (GitHub
+  14-day traffic, Hugging Face 30-day downloads, crates totals), not a business surface.
+  The portfolio is config (`exposure.portfolio`); the native writer in
+  `core/exposure-snapshot.ts` records one JSON per UTC day, merge-never-clobber, so a
+  series exists after the upstream windows expire. Summary rows with day-over-day deltas
+  go to the plugin lane; the full counter list with 30-day spark series rides in `data`.
+- **`scripts/mention-radar.py`** and its timer still write `hits.jsonl` for the CRM's rig
+  feed (`POST /ingest/mention-hits`); atrium no longer reads it. Phase 2 moves the script
+  into darklanes beside the CRM shipper and removes it from here.
 
 If a section has its own panel, exclude it from the generic `ExtraPanel` render in
-`web/src/App.tsx` — otherwise every row appears twice.
-
-## Ingesting another process's alerts (the `serving` collector)
-
-`serving` reads an append-only alert ledger written by an external watchdog (darklanes'
-`ops/serving/sentinel.py`, a 60s systemd timer) and turns it into flags, so its crits ride the
-existing `notify` pipe to the phone. Four rules generalise to any collector fed by another
-process:
-
-- **Let the writer write a file; do not give it a route.** The watchdog must not depend on this
-  daemon being up to do its own job, and a POST would silently discard every alert raised
-  during an atrium restart. A file is durable, ingested as a backlog on return, and readable by
-  hand when atrium is down. Cost: one collector interval of latency.
-- **Group on a stable key the writer declares, never on the message text.** An escalating
-  alarm re-sends the same condition with a changing message (a streak, an age). Keying on text
-  turns one incident into N flags and N pages, which is how an operator learns to ignore pages.
-- **Ingest the events, not the writer's whole state.** The sentinel's `state.json` also carries
-  ssh endpoints and provider hostnames; those must not reach a surface that leaves the machine,
-  so they are never read rather than read-and-filtered.
-- **Treat the writer's own liveness as a signal.** A file-fed pager is equally silent when
-  nothing is wrong and when the writer has died, so the writer's heartbeat (here, `state.json`'s
-  mtime) gets its own crit flag.
+`web/src/App.tsx` (`BESPOKE_EXTRAS`), otherwise every row appears twice.
 
 ## The day's receipt (the `shipped` collector)
 

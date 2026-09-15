@@ -66,7 +66,7 @@ the UI. Full key reference: [docs/config.md](docs/config.md).
 
 ## Features
 
-- **One snapshot, many sources** — GitHub (tasks/PRs/mentions/org queue), system health (CPU/mem/swap/GPU/disks/ports/units), schedule (cron + timers), email/calendar, subscriptions, notes, cloud, backups, and the day's receipt (commits and PRs you shipped since the day started) — each polled on its own interval, failure-isolated.
+- **One snapshot, many sources** — GitHub (tasks/PRs/mentions/org queue), system health (CPU/mem/swap/GPU/disks/ports/units), schedule (cron + timers), email/calendar, subscriptions, notes, backups, and the day's receipt (commits and PRs you shipped since the day started) — each polled on its own interval, failure-isolated.
 - **Global quiet switch** — mute anything visually, or `enforced` to actually pause the upstream source. Muted items archive, they don't clutter.
 - **Live, no reload** — full snapshot then per-section deltas over SSE; sparklines survive daemon restarts.
 - **MCP-native** — an LLM host can read the whole dashboard through `atrium_*` tools; query tools carry `readOnlyHint` so they auto-run in gated mode.
@@ -104,7 +104,7 @@ at its local endpoint, and the `revuto` collector surfaces it in atrium.
 - **Linux + user systemd only.** No macOS/Windows service path; the daemon also assumes a loopback bind.
 - **No auth, on purpose.** The threat model is "never reachable" — it refuses non-loopback hosts. Do not put it behind a reverse proxy to share it; that breaks the security model.
 - **Single user, single machine.** No multi-tenant, no remote aggregation.
-- **Some collectors are the author's.** itch, surreal, eigen, hermes, grok, any-mission and several agent sub-sources integrate tooling specific to the author's machine — disable them (`collectors.disabled`) unless you adapt their source. The core nine work on any Linux box.
+- **Some collectors are the author's.** itch, surreal, eigen, hermes, grok, any-mission and several agent sub-sources integrate tooling specific to the author's machine — disable them (`collectors.disabled`) unless you adapt their source. The core ten (github, agents, system, schedule, comms, subs, notes, backup, repos, shipped) work on any Linux box.
 
 ## API surface
 
@@ -136,7 +136,7 @@ Safety comes from never being reachable, not from a login:
 ## Architecture
 
 ```
- core collectors (github · system · schedule · comms · subs · notes · cloud · backup · repos)
+ core collectors (github · agents · system · schedule · comms · subs · notes · backup · repos · shipped)
  plugin collectors (your own — see examples/collectors/)
      │  poll on intervals, failure-isolated
      ▼

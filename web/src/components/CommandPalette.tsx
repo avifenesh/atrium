@@ -60,7 +60,6 @@ const SECTIONS: SectionName[] = [
   'surreal',
   'revuto',
   'itch',
-  'cloud',
   'reentry',
   'repos',
 ];

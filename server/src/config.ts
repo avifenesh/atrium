@@ -18,78 +18,27 @@ export const defaults = {
     disabled: [] as string[],
   },
 
-  /** Exposure counters that expire upstream: GitHub keeps 14 days of traffic and the
-   *  top ten referrers, Hugging Face gives one rolling 30-day download number and no
-   *  history. The snapshot is written by an external command so there is one definition
-   *  of the file format; this daemon only schedules it and shows the result.
+  /** Exposure counters for your own open-source work: numbers other services keep for
+   *  you badly and let expire. GitHub keeps 14 days of traffic and the top ten
+   *  referrers, Hugging Face gives one rolling 30-day download number and no history,
+   *  crates.io has totals only. The native writer (core/exposure-snapshot.ts) records
+   *  them once a day so a series exists.
    *
-   *  { "exposure": { "command": ["node", "/path/to/snapshot.mjs"],
+   *  { "exposure": { "portfolio": { "repos": ["you/repo"], "hfModels": ["you/*"], "crates": ["your-crate"] },
    *                  "snapshotDir": "/path/to/snapshots" } }
    *
-   *  Empty = the collector renders "not configured" and runs nothing. */
+   *  Empty portfolio = the collector renders "not configured" and writes nothing. */
   exposure: {
+    /** what to count: GitHub repos ("owner/name"), Hugging Face models ("org/name" or
+     *  "org/*" for every card under an account), crates.io crate names. Empty = the
+     *  collector renders "not configured" and runs nothing. */
+    portfolio: { repos: [] as string[], hfModels: [] as string[], crates: [] as string[] },
+    /** env file holding GITHUB_TOKEN or GH_TOKEN for the repo traffic endpoints; the
+     *  file is read in place, never copied here. Empty = GITHUB_TOKEN, then `gh auth token`. */
+    githubTokenEnvPath: '',
+    /** legacy: argv of an external snapshot writer, used only when the portfolio is empty */
     command: [] as string[],
     snapshotDir: '',
-  },
-
-  /** tiyuvta inference console — the operator surface for the hosted product.
-   *  The console is public-facing, so its admin PAGES were retired: the same API is
-   *  driven from here instead, behind the loopback boundary. The bearer is read from
-   *  the file that already owns it rather than copied into this config, so there is
-   *  one copy of the secret on the machine.
-   *  Empty tokenEnvPath / missing file = the collector renders "not set up". */
-  tiyuvta: {
-    baseUrl: 'https://inference.tiyuvta.ai',
-    tokenEnvPath: '',
-    tokenEnvVar: 'OWNER_ADMIN_TOKEN',
-  },
-
-  /** Web traffic — the two public sites' cookieless analytics dataset on Cloudflare
-   *  Analytics Engine, read over the SQL API. READ-ONLY: the collector only queries.
-   *  The credential is the SAME file the darklanes reporting scripts use
-   *  (~/.config/tiyuvta/cloudflare.env — CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN,
-   *  token scope "Account Analytics: Read"); it is read in place, never copied here.
-   *  Empty credsEnvPath = that default path. Missing file = "not set up" row. */
-  webtraffic: {
-    credsEnvPath: '',
-    dataset: 'tiyuvta_web',
-    /** trailing report window; deltas compare against the window before it */
-    windowDays: 7,
-  },
-
-  /** Hugging Face demand radar. Watches ONLY the families listed here — models you
-   *  serve or would consider serving — because a radar over every release on the Hub
-   *  is a wall of things you cannot act on. Empty = the collector renders one "not
-   *  configured" row and polls nothing.
-   *
-   *  {
-   *    "radar": {
-   *      "watch": [
-   *        { "family": "Qwen3.8 27B", "org": "Qwen", "status": "supported",
-   *          "baseModel": "Qwen/Qwen3.8-27B",
-   *          "mirrors": ["unsloth/Qwen3.8-27B-NVFP4", "unsloth/Qwen3.8-27B-GGUF"] }
-   *      ]
-   *    }
-   *  }
-   *
-   *  `mirrors` are the repos whose discussion tabs carry the demand — usually the
-   *  popular mirror rather than the original, because that is where people ask. */
-  radar: {
-    watch: [] as Array<{
-      family: string;
-      org: string;
-      baseModel?: string;
-      /** name substring identifying the family inside a large org, e.g. 'gemma-4' */
-      match?: string;
-      mirrors?: string[];
-      status?: string;
-    }>,
-    /** Title keywords that count as someone asking for a format you could ship. */
-    demandKeywords: ['gguf', 'nvfp4', 'fp8', 'quant', 'mtp', 'speculative', 'draft', 'blackwell', '5090'] as string[],
-    /** A checkpoint younger than this raises a flag; 6h or less pages the phone. */
-    freshHours: 48,
-    /** Reactions on a matching thread before it is worth interrupting for. */
-    reactionAlert: 3,
   },
 
   github: {
@@ -271,7 +220,6 @@ export const defaults = {
     surrealMs: 60_000,
     revutoMs: 60_000,
     itchMs: 60_000,
-    cloudMs: 300_000,
     backupMs: 3_600_000,
     reentryMs: 15_000,
     helperMs: 15_000,
@@ -294,27 +242,6 @@ export const defaults = {
     sendCmd: [] as string[],
   },
 
-  /** Serving alerts — read-only ingestion of darklanes' serving sentinel.
-   *
-   *  The sentinel (ops/serving/sentinel.py, systemd user timer, every 60s) probes every
-   *  public serving hostname from outside and appends every alert it raises to
-   *  `<stateDir>/alerts.jsonl`. This daemon reads that file, collapses the escalation
-   *  ladder into incidents and pages crits through `notify` above.
-   *
-   *  A FILE, NOT A ROUTE, on purpose: a watchdog's tick must not depend on this daemon
-   *  being up, and a POST would silently discard every alert raised during an atrium
-   *  restart. Nothing here writes to the sentinel's state. */
-  serving: {
-    /** '' = ~/.local/state/tiyuvta-serving (the sentinel's own default) */
-    stateDir: '',
-    /** silence from a 60s watchdog longer than this is itself a crit — the file is
-     *  equally quiet when nothing is wrong and when the writer has died */
-    silentAfterMs: 600_000,
-    /** a point-in-time notice (restart milestone, version change, new Xid count) has no
-     *  "still happening" state, so it expires instead of waiting for a resolve */
-    noticeTtlMs: 6 * 3_600_000,
-  },
-
   /** Shipped today: commits you authored across every repo under paths.projectsDir
    *  (and helper.nestedRepoRoots) since the local day start, plus the PRs GitHub says
    *  you merged or opened. Read-only; no flags. */
@@ -325,21 +252,6 @@ export const defaults = {
     /** git --author substrings, matched literally (any match counts). Empty = git config
      *  user.email + user.name. */
     authors: [] as string[],
-  },
-
-  /** CRM public surface — the ONE part of atrium reachable off the machine, via a
-   *  Cloudflare tunnel + Access. Empty host = disabled (default), and the daemon
-   *  behaves exactly as before. When set, requests arriving with this Host header
-   *  are (1) required to carry a valid Cloudflare Access JWT for `aud`, verified
-   *  against `teamDomain`'s public keys, and (2) confined to the CRM routes and the
-   *  built web assets — never the snapshot, agent dispatch, notes, or proxies.
-   *  allowEmails narrows further to the listed identities (empty = any identity
-   *  the Access policy admits). */
-  crm: {
-    host: '',
-    teamDomain: '', // e.g. 'https://myteam.cloudflareaccess.com'
-    aud: '',
-    allowEmails: [] as string[],
   },
 };
 

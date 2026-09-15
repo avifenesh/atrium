@@ -16,11 +16,6 @@ import { spotifySetClient, spotifyAuthUrl, spotifyCallback } from './spotify.js'
 import { readNote } from './collectors/notes.js';
 import { reentry } from './reentry.js';
 import { helper } from './helper.js';
-import { signals } from './signals.js';
-import { crm } from './crm.js';
-import { crmEvents } from './crm-events.js';
-import { crmOverview } from './crm-overview.js';
-import { verifyAccessJwt } from './access-auth.js';
 import type { MuteRequest } from '../../shared/types.js';
 
 import githubCollector from './collectors/github.js';
@@ -33,26 +28,13 @@ import notesCollector from './collectors/notes.js';
 import surrealCollector from './collectors/surreal.js';
 import revutoCollector from './collectors/revuto.js';
 import itchWatchCollector from './collectors/itch-watch.js';
-import cloudCollector from './collectors/cloud.js';
 import backupCollector from './collectors/backup.js';
 import reposCollector from './collectors/repos.js';
-import mentionsCollector from './collectors/mentions.js';
 import reentryCollector from './collectors/reentry.js';
 import helperCollector from './collectors/helper.js';
-import radarCollector from './collectors/radar.js';
-import demandCollector from './collectors/demand.js';
-import vastCollector from './collectors/vast.js';
-import endpointCollector from './collectors/endpoint.js';
-import servingCollector from './collectors/serving.js';
-import usagemixCollector from './collectors/usagemix.js';
-import openrouterCollector from './collectors/openrouter.js';
-import apimetricsCollector from './collectors/apimetrics.js';
-import tiyuvtaCollector from './collectors/tiyuvta.js';
 import distributionCollector from './collectors/distribution.js';
 import exposureCollector from './collectors/exposure.js';
-import webtrafficCollector from './collectors/webtraffic.js';
 import shippedCollector from './collectors/shipped.js';
-import { isAction as isTiyuvtaAction, runAction as runTiyuvtaAction } from './core/tiyuvta.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
 import { serveWikiViewer } from './wiki-viewer.js';
@@ -68,24 +50,12 @@ for (const c of [
   surrealCollector,
   revutoCollector,
   itchWatchCollector,
-  cloudCollector,
   backupCollector,
   reposCollector,
   reentryCollector,
   helperCollector,
-  mentionsCollector,
-  radarCollector,
-  demandCollector,
-  vastCollector,
-  endpointCollector,
-  servingCollector,
-  usagemixCollector,
-  openrouterCollector,
-  apimetricsCollector,
-  tiyuvtaCollector,
   distributionCollector,
   exposureCollector,
-  webtrafficCollector,
   shippedCollector,
 ]) {
   register(c);
@@ -142,16 +112,10 @@ const ALLOWED_ORIGIN_HOSTS = new Set([...ALLOWED_HOSTS, '127.0.0.1:5173', 'local
 const TAILNET_HOST = 'avifenesh.tail2582b9.ts.net';
 const TAILNET_ORIGIN = `https://${TAILNET_HOST}`;
 
-// The CRM public surface (Cloudflare tunnel + Access) — empty host = disabled.
-// A request carrying this Host is authenticated per-request (Access JWT, verified
-// here, not just at the edge) and confined to the CRM routes + built assets.
-const CRM_HOST = config.crm.host.toLowerCase();
-const CRM_ORIGIN = CRM_HOST ? `https://${CRM_HOST}` : '';
-
 function hostAllowed(host: string | undefined): boolean {
   if (!host) return false;
   const h = host.toLowerCase();
-  return ALLOWED_HOSTS.has(h) || h === TAILNET_HOST || (CRM_HOST !== '' && h === CRM_HOST);
+  return ALLOWED_HOSTS.has(h) || h === TAILNET_HOST;
 }
 
 function originAllowed(origin: string | undefined): boolean {
@@ -161,18 +125,10 @@ function originAllowed(origin: string | undefined): boolean {
     const h = u.host.toLowerCase();
     if (ALLOWED_ORIGIN_HOSTS.has(h)) return true;
     const o = origin.toLowerCase();
-    return o === TAILNET_ORIGIN || (CRM_ORIGIN !== '' && o === CRM_ORIGIN);
+    return o === TAILNET_ORIGIN;
   } catch {
     return false; // includes Origin: null
   }
-}
-
-/** What the CRM host may reach: its own API, and GETs for the built web app.
- *  Everything else on atrium — snapshot, stream, agent dispatch, notes, proxies —
- *  stays machine-only even if the tunnel forwards the request. */
-function crmPathAllowed(method: string, path: string): boolean {
-  if (path.startsWith('/api/')) return path.startsWith('/api/crm/');
-  return method === 'GET' || method === 'HEAD';
 }
 
 const server = createServer(async (req, res) => {
@@ -183,21 +139,6 @@ const server = createServer(async (req, res) => {
   if (!hostAllowed(req.headers.host)) return json(res, 403, { error: 'forbidden host' });
   if (method !== 'GET' && method !== 'HEAD' && !originAllowed(req.headers.origin)) {
     return json(res, 403, { error: 'cross-origin request rejected' });
-  }
-
-  // Public CRM surface: authenticate EVERY request on this host, then confine it.
-  // cloudflared connects from loopback, so the Host header is what identifies
-  // tunnel traffic — and a spoofed local Host header just buys stricter rules.
-  const isCrmHost = CRM_HOST !== '' && (req.headers.host ?? '').toLowerCase() === CRM_HOST;
-  if (isCrmHost) {
-    const token = req.headers['cf-access-jwt-assertion'];
-    try {
-      await verifyAccessJwt(typeof token === 'string' ? token : '', config.crm);
-    } catch (err) {
-      console.error('[crm] access denied:', err instanceof Error ? err.message : err);
-      return json(res, 403, { error: 'access denied' });
-    }
-    if (!crmPathAllowed(method, path)) return json(res, 404, { error: 'not found' });
   }
 
   try {
@@ -264,35 +205,6 @@ const server = createServer(async (req, res) => {
         if (helperMemory[1] === 'preferences') await helper.removePreference(decodeURIComponent(helperMemory[2]));
         else await helper.removeSkill(decodeURIComponent(helperMemory[2]));
         return json(res, 200, { ok: true });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    // Two paths, one handler and one allowlist. /api/tiyuvta/* is the original
-    // machine-only surface (TiyuvtaPanel); /api/crm/act/* is the same allowlist
-    // reachable from the CRM host, which authenticates every request through
-    // Access + the in-daemon JWT before this code runs (owner ask 2026-08-31:
-    // the CRM admin actions board). It is never a path passthrough: the name
-    // must be in ACTIONS, the tenant id is validated, and grant is bounded.
-    const tiyuvtaAction = path.match(/^\/api\/(?:tiyuvta|crm\/act)\/([a-z-]+)$/);
-    if (method === 'POST' && tiyuvtaAction) {
-      const name = tiyuvtaAction[1];
-      if (!isTiyuvtaAction(name)) return json(res, 404, { error: `unknown action ${name}` });
-      const body = (await readBody(req).catch(() => ({}))) as {
-        tenant?: string;
-        amountMicro?: number;
-        reason?: string;
-      };
-      try {
-        const result = await runTiyuvtaAction(name, body?.tenant, {
-          amountMicro: body?.amountMicro,
-          reason: body?.reason,
-        });
-        // Re-poll immediately: an action that changes the numbers should not leave a
-        // stale panel until the next five-minute cycle.
-        void tiyuvtaCollector.run();
-        return json(res, 200, { ok: true, result });
       } catch (err) {
         return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
       }
@@ -495,105 +407,6 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // crm — pipeline over signals + tiyuvta accounts; the one surface the
-    // public CRM host may reach (see crmPathAllowed)
-    if (method === 'GET' && path === '/api/crm/pipeline') {
-      return json(res, 200, crm.pipeline());
-    }
-
-    // the business numbers above the pipeline — aggregated server-side so the
-    // public host reads one endpoint instead of the machine-wide snapshot
-    if (method === 'GET' && path === '/api/crm/overview') {
-      return json(res, 200, await crmOverview());
-    }
-
-    // what changed — the pipeline's motion feed (see crm-events.ts)
-    if (method === 'GET' && path === '/api/crm/activity') {
-      const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days')) || 7));
-      return json(res, 200, crmEvents.activity(days));
-    }
-
-    if (method === 'POST' && path === '/api/crm/entry') {
-      const body = await readBody(req).catch(() => ({}));
-      try {
-        return json(res, 200, { ok: true, entry: await crm.update(body?.id, body) });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    if (method === 'POST' && path === '/api/crm/note') {
-      const body = await readBody(req).catch(() => ({}));
-      try {
-        return json(res, 200, { ok: true, note: await crm.addNote(body?.id, body?.text) });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    if (method === 'POST' && path === '/api/crm/contact') {
-      const body = await readBody(req).catch(() => ({}));
-      try {
-        return json(res, 200, { ok: true, contact: await crm.addContact(body?.id, body?.channel, body?.summary) });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    // do-prompt injects live product/company facts at click time (council pattern)
-    if (method === 'GET' && path === '/api/crm/do-prompt') {
-      try {
-        return json(res, 200, await crm.doPrompt(url.searchParams.get('id')));
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    if (method === 'POST' && path === '/api/crm/directions/refresh') {
-      try {
-        return json(res, 200, { ok: true, count: await crm.refreshDirections() });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    if (method === 'POST' && path === '/api/crm/do') {
-      const body = await readBody(req).catch(() => ({}));
-      try {
-        return json(res, 200, { ok: true, ...await crm.launchDo(body?.id, body) });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    // signals — the "outside world noticed my work" section
-    if (method === 'POST' && path === '/api/signals/reviewed') {
-      return json(res, 200, { ok: true, lastReviewedAt: await signals.markReviewed() });
-    }
-
-    if (method === 'POST' && path === '/api/signals/lead') {
-      const body = await readBody(req).catch(() => ({}));
-      try {
-        await signals.setLead(body?.id, body?.status ?? null, body?.note);
-        return json(res, 200, { ok: true });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
-    if (method === 'PUT' && path === '/api/signals/watch') {
-      const body = await readBody(req).catch(() => ({}));
-      try {
-        const watch = await signals.setWatch(body);
-        // feeders read the watch on every run — kick them so the change lands now
-        void runOnce('radar');
-        void runOnce('mentions');
-        return json(res, 200, { ok: true, watch });
-      } catch (err) {
-        return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-
     if (method === 'POST' && path === '/api/spotify/client') {
       const body = await readBody(req).catch(() => ({}));
       try {
@@ -642,10 +455,9 @@ const server = createServer(async (req, res) => {
       return serveWikiViewer(res, method === 'HEAD');
     }
 
-    // static web ui (built assets), if present. The CRM host lands on the
-    // standalone CRM page, not the full dashboard SPA.
+    // static web ui (built assets), if present
     if (method === 'GET' && !path.startsWith('/api/')) {
-      const served = await serveStatic(path, res, isCrmHost ? 'crm.html' : 'index.html');
+      const served = await serveStatic(path, res);
       if (served) return;
     }
 
@@ -714,8 +526,6 @@ async function serveStatic(path: string, res: ServerResponse, fallback = 'index.
 await reentry.load();
 await helper.load();
 await mutes.load();
-await signals.load();
-await crm.load();
 await loadMetricHistory();
 
 // Loopback is a hard invariant, not a default: there is no auth layer, and
