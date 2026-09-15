@@ -51,7 +51,9 @@ async function repoCommits(
   const raw = await shTry(
     'git',
     [
-      '-C', dir.path, 'log', '--branches', '--remotes', '--no-merges',
+      // --fixed-strings: the author patterns are an email and a name, not regexes; a
+      // '[' or '*' in either would otherwise fail the log and read as a zero-commit day
+      '-C', dir.path, 'log', '--fixed-strings', '--branches', '--remotes', '--no-merges',
       `--since=${since.toISOString()}`, `--format=${LOG_FORMAT}`, '--shortstat',
       ...authors.map((a) => `--author=${a}`),
     ],

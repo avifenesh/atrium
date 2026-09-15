@@ -322,7 +322,8 @@ export const defaults = {
     /** hour the day rolls over. 4 means a 01:30 commit still counts for the evening
      *  it belongs to; 0 is calendar midnight. */
     dayStartHour: 4,
-    /** git --author patterns (any match counts). Empty = git config user.email + user.name. */
+    /** git --author substrings, matched literally (any match counts). Empty = git config
+     *  user.email + user.name. */
     authors: [] as string[],
   },
 

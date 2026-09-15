@@ -139,7 +139,7 @@ opened. Read-only, raises no flags.
 | key | default | meaning |
 | --- | --- | --- |
 | `dayStartHour` | `4` | hour the day rolls over; a 01:30 commit still counts for the evening it belongs to. `0` is calendar midnight |
-| `authors` | `[]` | `git --author` patterns, any match counts. Empty = `git config user.email` and `user.name` |
+| `authors` | `[]` | `git --author` substrings, matched literally, any match counts. Empty = `git config user.email` and `user.name` |
 
 ### `poll`
 
