@@ -214,11 +214,19 @@ export default function ShippedPanel({ section }: { section: ExtraSection }) {
               }
             />
             <Stat
-              label={report.prsCapped ? 'prs merged (at least)' : 'prs merged'}
-              value={`${count(t.prsMerged)}${report.prsCapped ? '+' : ''}`}
-              className={t.prsMerged ? 'text-jade' : 'text-mist-faint'}
+              label={report.prsError ? 'prs merged (unknown)' : report.prsCapped ? 'prs merged (at least)' : 'prs merged'}
+              value={report.prsError ? '?' : `${count(t.prsMerged)}${report.prsCapped ? '+' : ''}`}
+              className={!report.prsError && t.prsMerged ? 'text-jade' : 'text-mist-faint'}
             />
           </div>
+
+          {/* the collector stays up when only GitHub fails, so this is the one place
+              the failure shows; it must not hide behind the quiet-day branch */}
+          {report.prsError && (
+            <div className="panel-surface rounded-lg p-4 text-sm text-coral">
+              GitHub PR search failed, so the PR counts and list are missing: {report.prsError}
+            </div>
+          )}
 
           <HourStrip report={report} />
 
@@ -232,7 +240,7 @@ export default function ShippedPanel({ section }: { section: ExtraSection }) {
             <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
               <RepoBars report={report} />
               <Table title="pull requests" note={report.prsCapped ? 'merged and opened today · list capped, newest kept' : 'merged and opened today'}>
-                {report.prsError && <li className="text-sm text-coral">{report.prsError}</li>}
+                {report.prsError && <li className="text-sm text-mist-faint">unavailable, see above</li>}
                 {!report.prsError && report.prs.length === 0 && <li className="text-sm text-mist-faint">none today</li>}
                 {report.prs.slice(0, PR_CAP).map((p) => (
                   <PrRow key={p.url} p={p} />

@@ -77,7 +77,13 @@ async function githubPrs(since: Date): Promise<{ prs: ShippedPR[]; error: string
     ]);
     const mergedRows = parsePrRows(merged, 'merged', since);
     const openedRows = parsePrRows(opened, 'open', since);
-    return { prs: [...mergedRows, ...openedRows], error: null, capped: mergedRows.length >= PR_LIMIT || openedRows.length >= PR_LIMIT };
+    // capped on the raw counts: the since-trim hides truncation, and a search sorted
+    // by `updated` can drop a same-day merge behind an older PR touched later
+    return {
+      prs: [...mergedRows.prs, ...openedRows.prs],
+      error: null,
+      capped: mergedRows.total >= PR_LIMIT || openedRows.total >= PR_LIMIT,
+    };
   } catch (err) {
     return { prs: [], error: err instanceof Error ? err.message : String(err), capped: false };
   }

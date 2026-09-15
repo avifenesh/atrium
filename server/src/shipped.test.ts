@@ -49,11 +49,15 @@ test('parsePrRows stamps merged rows with closedAt, open rows with createdAt, an
     { number: 3, title: 'no repo field', url: 'https://github.com/o/z/pull/3', closedAt: after, createdAt: after },
   ]);
   const merged = parsePrRows(raw, 'merged', since);
-  assert.deepEqual(merged.map((p) => [p.number, p.repo, p.at]), [[2, 'o/r', after], [3, 'o/z', after]]);
+  assert.deepEqual(merged.prs.map((p) => [p.number, p.repo, p.at]), [[2, 'o/r', after], [3, 'o/z', after]]);
+  // total counts the rows before the since-trim, so a --limit hit stays visible
+  assert.equal(merged.total, 3);
   // as "opened" rows, #2 was created before the day started and drops out
-  assert.deepEqual(parsePrRows(raw, 'open', since).map((p) => p.number), [3]);
-  assert.deepEqual(parsePrRows('not json', 'open', since), []);
-  assert.deepEqual(parsePrRows('{"a":1}', 'open', since), []);
+  const opened = parsePrRows(raw, 'open', since);
+  assert.deepEqual(opened.prs.map((p) => p.number), [3]);
+  assert.equal(opened.total, 3);
+  assert.deepEqual(parsePrRows('not json', 'open', since), { prs: [], total: 0 });
+  assert.deepEqual(parsePrRows('{"a":1}', 'open', since), { prs: [], total: 0 });
 });
 
 const c = (over: Partial<ShippedCommit>): ShippedCommit => ({

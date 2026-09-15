@@ -68,15 +68,21 @@ function repoFromUrl(url: string): string {
 
 /** Rows from `gh search prs --json ...`. Rows before `since` are dropped: the search
  *  API filters on calendar dates, the board on a local day start. Merged rows are
- *  stamped with closedAt (the merge time); open rows with createdAt. */
-export function parsePrRows(raw: string, state: ShippedPR['state'], since: Date): ShippedPR[] {
+ *  stamped with closedAt (the merge time); open rows with createdAt. `total` is the
+ *  row count before that trim, so a caller can tell a response that hit its --limit
+ *  from one that merely had old rows in it. */
+export function parsePrRows(
+  raw: string,
+  state: ShippedPR['state'],
+  since: Date,
+): { prs: ShippedPR[]; total: number } {
   let rows: unknown;
   try {
     rows = JSON.parse(raw);
   } catch {
-    return [];
+    return { prs: [], total: 0 };
   }
-  if (!Array.isArray(rows)) return [];
+  if (!Array.isArray(rows)) return { prs: [], total: 0 };
   const out: ShippedPR[] = [];
   for (const r of rows as PrRow[]) {
     const at = state === 'merged' ? r.closedAt : r.createdAt;
@@ -91,7 +97,7 @@ export function parsePrRows(raw: string, state: ShippedPR['state'], since: Date)
       at,
     });
   }
-  return out;
+  return { prs: out, total: rows.length };
 }
 
 const newestFirst = (a: { at: string }, b: { at: string }): number => Date.parse(b.at) - Date.parse(a.at);
