@@ -20,6 +20,7 @@ import WikiPanel from './panels/WikiPanel';
 import ExtraPanel, { extraKeys } from './panels/ExtraPanel';
 import TiyuvtaPanel from './panels/TiyuvtaPanel';
 import WebTrafficPanel from './panels/WebTrafficPanel';
+import ShippedPanel from './panels/ShippedPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
 import ItemDetail from './components/ItemDetail';
@@ -53,9 +54,16 @@ const VIEWS = [
 
 const NAV_GROUPS = ['Today', 'Work', 'Business', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
 
-/** extra-lane sections that belong on the business board's shelf rather than in a
- *  generic Plugins bucket — ops console and site analytics are business detail views */
-const BUSINESS_EXTRAS = new Set(['tiyuvta', 'webtraffic']);
+/** extra-lane sections with a home outside the generic Plugins bucket: the ops
+ *  console and site analytics are business detail views, the day's receipt sits with
+ *  Now under Today. Anything unlisted lands in Plugins with the generic description. */
+const EXTRA_HOME: Record<string, { group: (typeof NAV_GROUPS)[number]; description?: string }> = {
+  tiyuvta: { group: 'Business' },
+  webtraffic: { group: 'Business' },
+  shipped: { group: 'Today', description: 'Commits and pull requests that landed since the day started.' },
+};
+/** extra-lane sections that ship their own panel and must not also render generically */
+const BESPOKE_EXTRAS = new Set(['tiyuvta', 'webtraffic', 'shipped']);
 
 /** retired view ids whose deep links (desktop entries, palette muscle memory,
  *  NowView/pickup buttons) must keep landing somewhere sensible */
@@ -373,8 +381,8 @@ export default function App() {
   const extraViews = extraKeys(snapshot).map((k) => ({
     id: k,
     label: snapshot.extra[k]?.title ?? k,
-    group: (BUSINESS_EXTRAS.has(k) ? 'Business' : 'Plugins') as (typeof NAV_GROUPS)[number],
-    description: 'A collector-provided workspace.',
+    group: EXTRA_HOME[k]?.group ?? ('Plugins' as (typeof NAV_GROUPS)[number]),
+    description: EXTRA_HOME[k]?.description ?? 'A collector-provided workspace.',
   }));
   const allViews = [...coreViews, ...extraViews];
   const isKnownView = (v: string) => allViews.some((x) => x.id === v);
@@ -538,16 +546,17 @@ export default function App() {
           {activeView === 'streampile' && <StreampilePanel />}
           {activeView === 'knowledge' && <WikiPanel />}
           {/* plugin (extra-lane) sections render in the generic panel, unless they
-              ship their own — tiyuvta needs buttons and webtraffic needs series and
-              tables, so each has a panel and must not also render generically or
-              every row would appear twice. */}
+              ship their own (BESPOKE_EXTRAS): tiyuvta needs buttons, webtraffic and
+              shipped need series and tables, so each has a panel and must not also
+              render generically or every row would appear twice. */}
           {activeView === 'tiyuvta' && snapshot.extra?.tiyuvta && (
             <TiyuvtaPanel section={snapshot.extra.tiyuvta} />
           )}
           {activeView === 'webtraffic' && snapshot.extra?.webtraffic && (
             <WebTrafficPanel section={snapshot.extra.webtraffic} />
           )}
-          {activeView !== 'tiyuvta' && activeView !== 'webtraffic' && snapshot.extra?.[activeView] && (
+          {activeView === 'shipped' && snapshot.extra?.shipped && <ShippedPanel section={snapshot.extra.shipped} />}
+          {!BESPOKE_EXTRAS.has(activeView) && snapshot.extra?.[activeView] && (
             <ExtraPanel section={snapshot.extra[activeView]} sectionKey={activeView} />
           )}
         </main>

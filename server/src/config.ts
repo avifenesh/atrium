@@ -276,6 +276,7 @@ export const defaults = {
     reentryMs: 15_000,
     helperMs: 15_000,
     reposMs: 120_000,
+    shippedMs: 300_000,
   },
 
   notify: {
@@ -312,6 +313,17 @@ export const defaults = {
     /** a point-in-time notice (restart milestone, version change, new Xid count) has no
      *  "still happening" state, so it expires instead of waiting for a resolve */
     noticeTtlMs: 6 * 3_600_000,
+  },
+
+  /** Shipped today: commits you authored across every repo under paths.projectsDir
+   *  (and helper.nestedRepoRoots) since the local day start, plus the PRs GitHub says
+   *  you merged or opened. Read-only; no flags. */
+  shipped: {
+    /** hour the day rolls over. 4 means a 01:30 commit still counts for the evening
+     *  it belongs to; 0 is calendar midnight. */
+    dayStartHour: 4,
+    /** git --author patterns (any match counts). Empty = git config user.email + user.name. */
+    authors: [] as string[],
   },
 
   /** CRM public surface — the ONE part of atrium reachable off the machine, via a

@@ -66,7 +66,7 @@ the UI. Full key reference: [docs/config.md](docs/config.md).
 
 ## Features
 
-- **One snapshot, many sources** — GitHub (tasks/PRs/mentions/org queue), system health (CPU/mem/swap/GPU/disks/ports/units), schedule (cron + timers), email/calendar, subscriptions, notes, cloud, backups — each polled on its own interval, failure-isolated.
+- **One snapshot, many sources** — GitHub (tasks/PRs/mentions/org queue), system health (CPU/mem/swap/GPU/disks/ports/units), schedule (cron + timers), email/calendar, subscriptions, notes, cloud, backups, and the day's receipt (commits and PRs you shipped since the day started) — each polled on its own interval, failure-isolated.
 - **Global quiet switch** — mute anything visually, or `enforced` to actually pause the upstream source. Muted items archive, they don't clutter.
 - **Live, no reload** — full snapshot then per-section deltas over SSE; sparklines survive daemon restarts.
 - **MCP-native** — an LLM host can read the whole dashboard through `atrium_*` tools; query tools carry `readOnlyHint` so they auto-run in gated mode.

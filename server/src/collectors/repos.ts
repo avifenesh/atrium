@@ -18,7 +18,7 @@ function git(path: string, args: string[]): Promise<string | null> {
 }
 
 /** "git@github.com:owner/name.git" | "https://github.com/owner/name" -> "owner/name" */
-function parseOrigin(url: string | null): string | null {
+export function parseOrigin(url: string | null): string | null {
   const raw = url?.trim();
   if (!raw) return null;
   const m = raw.match(/[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
@@ -62,7 +62,7 @@ async function readRepo(name: string, path: string): Promise<RepoInfo | null> {
 }
 
 /** Run fn over items with at most `limit` in flight. */
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   await Promise.all(
@@ -92,6 +92,19 @@ async function nestedRepoCandidates(): Promise<{ name: string; path: string }[]>
   return candidates;
 }
 
+/** Every candidate repo dir: one level under projectsDir (symlinked project dirs
+ *  count, dotdirs don't) plus the configured nested roots, deduplicated by path.
+ *  Shared with the shipped collector so both boards walk the same set. */
+export async function listRepoDirs(): Promise<{ name: string; path: string }[]> {
+  const root = config.paths.projectsDir;
+  const entries = await readdir(root, { withFileTypes: true });
+  const dirs = entries
+    .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || e.isSymbolicLink()))
+    .map((e) => ({ name: e.name, path: join(root, e.name) }));
+  dirs.push(...await nestedRepoCandidates());
+  return [...new Map(dirs.map((entry) => [entry.path, entry])).values()];
+}
+
 // last-good: a transient failure keeps the previous list with its real updatedAt;
 // updatedAt stays null until the first success so never-collected can't read as fresh
 let lastGood: ReposState | null = null;
@@ -102,14 +115,7 @@ const collector: Collector = {
   async run() {
     let state: ReposState;
     try {
-      const root = config.paths.projectsDir;
-      const entries = await readdir(root, { withFileTypes: true });
-      // one level deep; symlinked project dirs count, dotdirs don't
-      const dirs = entries
-        .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || e.isSymbolicLink()))
-        .map((e) => ({ name: e.name, path: join(root, e.name) }));
-      dirs.push(...await nestedRepoCandidates());
-      const uniqueDirs = [...new Map(dirs.map((entry) => [entry.path, entry])).values()];
+      const uniqueDirs = await listRepoDirs();
       const repos = (await mapPool(uniqueDirs, PARALLEL, (d) => readRepo(d.name, d.path))).filter(
         (r): r is RepoInfo => r !== null,
       );
