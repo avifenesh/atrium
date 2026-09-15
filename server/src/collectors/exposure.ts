@@ -1,44 +1,73 @@
-// Exposure counters — the numbers other people keep for us, badly.
+// Exposure counters: the numbers other people keep for us, badly.
 //
 // GitHub's traffic API keeps FOURTEEN DAYS and returns only the top ten referrers.
 // Hugging Face gives an individual account one rolling 30-day download number and no
-// history at all. Both are the best evidence available about how the business is
-// found, and both age out silently, so the only way to have a series is to write the
+// history at all. Both are the best evidence available about how your open-source work
+// is found, and both age out silently, so the only way to have a series is to write the
 // number down before it disappears.
 //
-// The snapshot writer is native now (core/exposure-snapshot.ts, ported from the
-// darklanes script): the portfolio — repos, HF models, crates — is business
-// configuration and lives in the signals watch file, edited from the UI. The daily
-// JSON files keep their format and directory, so every already-recorded day and its
-// backups stay valid. A legacy external `exposure.command` still runs when the
-// portfolio is empty, for forks that kept their own writer.
+// This is a personal counter for the owner's OSS projects, not a business surface: the
+// business (tiyuvta) reports its reach in the CRM. The portfolio (repos, HF models,
+// crates) is config (`exposure.portfolio`). The daily JSON files keep their format and
+// directory, so every already-recorded day and its backups stay valid. A legacy external
+// `exposure.command` still runs when the portfolio is empty, for forks that kept their
+// own writer.
 //
-// Published as counter signals with day-over-day deltas plus a 30-day spark series,
-// which is what the business board draws its trends from.
+// Published to the plugin lane: summary rows with day-over-day deltas for the generic
+// panel and MCP, and the full counter list (with 30-day spark series) in `data`.
 
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { config } from '../config.js';
-import { writeExposureSnapshot } from '../core/exposure-snapshot.js';
-import { signals } from '../signals.js';
-import { sh } from '../util.js';
-import type { SignalItem } from '../../../shared/types.js';
+import { writeExposureSnapshot, type ExposurePortfolio } from '../core/exposure-snapshot.js';
+import { store } from '../state.js';
+import { iso, sh } from '../util.js';
+import type { ExtraRow } from '../../../shared/types.js';
 import type { Collector } from './registry.js';
 
-interface ExposureConfig {
-  /** legacy: argv of an external snapshot writer — used only when the portfolio is empty */
-  command: string[];
-  /** where the daily <UTC-date>.json files live */
-  snapshotDir: string;
+const TITLE = 'exposure';
+
+function settings(): { command: string[]; snapshotDir: string; portfolio: ExposurePortfolio } {
+  const raw = config.exposure;
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  return {
+    command: list(raw.command),
+    snapshotDir: typeof raw.snapshotDir === 'string' ? raw.snapshotDir : '',
+    portfolio: { repos: list(raw.portfolio?.repos), hfModels: list(raw.portfolio?.hfModels), crates: list(raw.portfolio?.crates) },
+  };
 }
 
-function settings(): ExposureConfig {
-  const raw = (config as unknown as { exposure?: Partial<ExposureConfig> }).exposure ?? {};
-  return {
-    command: Array.isArray(raw.command) ? raw.command : [],
-    snapshotDir: typeof raw.snapshotDir === 'string' ? raw.snapshotDir : '',
-  };
+/** One recorded number with its movement since the previous recorded day. */
+export interface ExposureCounter {
+  id: string;
+  /** what the number belongs to: a repo, a model card, a crate, a referrer */
+  entity: string;
+  /** which number: stars, views 14d, downloads 30d, ... */
+  title: string;
+  detail: string | null;
+  url: string | null;
+  count: number | null;
+  delta: number | null;
+  /** oldest first, one point per recorded day, when at least two exist */
+  spark?: number[];
+  /** the snapshot date the number was read from */
+  occurredAt: string | null;
+}
+
+const fmtCount = (n: number | null): string => (n === null ? 'not recorded' : n.toLocaleString('en-US'));
+const fmtDelta = (d: number | null): string => (d === null || d === 0 ? '' : ` (${d > 0 ? '+' : ''}${d.toLocaleString('en-US')})`);
+
+function publish(items: ExposureCounter[], error: string | null, note?: string): void {
+  const rows: ExtraRow[] = note
+    ? [{ label: 'portfolio', value: note }]
+    : items.slice(0, 40).map((i) => ({
+        label: `${i.entity} · ${i.title}`,
+        value: `${fmtCount(i.count)}${fmtDelta(i.delta)}`,
+        href: i.url ?? undefined,
+        tone: i.delta !== null && i.delta > 0 ? 'ok' : undefined,
+      }));
+  store.setExtra(TITLE, { title: TITLE, updatedAt: iso(), up: error === null, error, rows, data: { items } });
 }
 
 interface RepoEntry {
@@ -113,9 +142,7 @@ const collector: Collector = {
   intervalMs: 6 * 60 * 60_000,
 
   async run() {
-    const { command, snapshotDir } = settings();
-    const watch = signals.watch();
-    const portfolio = { repos: watch.repos, hfModels: watch.hfModels, crates: watch.crates };
+    const { command, snapshotDir, portfolio } = settings();
     const configured = portfolio.repos.length + portfolio.hfModels.length + portfolio.crates.length > 0;
     const dir = snapshotDir || join(homedir(), '.local', 'share', 'atrium', 'exposure');
 
@@ -144,7 +171,7 @@ const collector: Collector = {
         failure = error instanceof Error ? error.message.slice(0, 300) : String(error);
       }
     } else {
-      await signals.publish('exposure', [], null); // unconfigured is the fresh-install default
+      publish([], null, 'not configured: set exposure.portfolio (repos, hfModels, crates)'); // the fresh-install default
       return;
     }
 
@@ -153,7 +180,7 @@ const collector: Collector = {
     const previous = history.at(-2) ?? null;
     const fallbackRepo = portfolio.repos[0] ?? 'repo';
 
-    const items: Array<Omit<SignalItem, 'firstSeenAt'>> = [];
+    const items: ExposureCounter[] = [];
     if (snapshot) {
       // per-key day series across the recent files, oldest first — the trend spark
       const series = (pick: (s: Snapshot) => number | null | undefined): number[] =>
@@ -169,8 +196,6 @@ const collector: Collector = {
       ) => {
         items.push({
           id: `exposure:${key}`,
-          source: 'exposure',
-          kind: 'counter',
           entity,
           title,
           detail: opts.detail ?? null,
@@ -246,9 +271,10 @@ const collector: Collector = {
         });
       }
       if (quietCards.length) {
+        const hfOrg = portfolio.hfModels[0]?.split('/')[0] ?? null;
         counter('hf:quiet', `hf: ${quietCards.length} card(s) with no downloads/likes`, 'tracked, quiet', quietCards.length, undefined, {
-          detail: quietCards.slice(0, 6).join(', ') + (quietCards.length > 6 ? ', …' : ''),
-          url: 'https://huggingface.co/tiyuvta',
+          detail: quietCards.slice(0, 6).join(', ') + (quietCards.length > 6 ? ', ...' : ''),
+          url: hfOrg ? `https://huggingface.co/${hfOrg}` : null,
         });
       }
       for (const crate of snapshot.crates) {
@@ -263,7 +289,7 @@ const collector: Collector = {
 
     const today = new Date().toISOString().slice(0, 10);
     const error = failure ?? (snapshot ? null : `no snapshot for ${today} in ${dir}`);
-    await signals.publish('exposure', items, error);
+    publish(items, error);
   },
 };
 

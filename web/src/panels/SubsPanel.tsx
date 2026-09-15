@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import type { CloudState, Snapshot, SubService } from '../../../shared/types';
+import type { Snapshot, SubService } from '../../../shared/types';
 import { connectSpotify, spotifySetClient } from '../api';
 import { CopyText, Dot, EmptyState, RelTime, Row } from '../components/ui';
 
@@ -211,73 +211,6 @@ function Uptime({ launched }: { launched: string | null }) {
   );
 }
 
-/** cloud — ec2. INFORMATIONAL ONLY: running fleets are the owner's normal work
- *  state, so cost is data — neutral mist, never amber/coral, no alerts. */
-function CloudCard({ cloud, riseIndex }: { cloud: CloudState; riseIndex: number }) {
-  const { instances, totalMonthlyUsd, updatedAt, error } = cloud;
-  return (
-    <article className="panel-surface rise flex min-w-0 flex-col p-4" style={{ '--rise-i': riseIndex } as CSSProperties}>
-      <Row href="https://console.aws.amazon.com/ec2/home#Instances:">
-        <div className="flex w-full min-w-0 items-center gap-2">
-          <h3 className="min-w-0 truncate text-sm font-semibold text-mist">cloud — ec2</h3>
-          <span className="hover-cluster shrink-0 font-mono text-[10px] text-mist-faint">↗</span>
-          <span className="flex-1" />
-          <RelTime iso={updatedAt} />
-          <Dot status={updatedAt && !error ? 'running' : 'idle'} />
-        </div>
-      </Row>
-
-      {error && (
-        <div className="mt-1 truncate font-mono text-[11px] text-coral" title={error}>
-          {error}
-        </div>
-      )}
-
-      {instances.length > 0 ? (
-        <div className="mt-2 space-y-1 px-2.5">
-          {instances.map((i) => (
-            <div key={i.id} className="flex min-w-0 items-baseline gap-2">
-              <span className="min-w-0 truncate text-xs text-mist" title={i.name ? `${i.name} (${i.id})` : i.id}>
-                {i.name ?? i.id}
-              </span>
-              <span className="shrink-0 font-mono text-[10px] text-mist-faint">
-                {i.type}
-                {i.az ? ` · ${i.az}` : ''}
-              </span>
-              <span className="flex-1" />
-              <Uptime launched={i.launchedAt} />
-              <span className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums text-mist-dim">
-                {i.monthlyUsd !== null ? `$${i.monthlyUsd.toFixed(0)}/mo` : '—'}
-              </span>
-            </div>
-          ))}
-          {totalMonthlyUsd !== null && (
-            <div
-              className="flex items-baseline justify-between pt-1"
-              title="rough us-east-2 on-demand estimate × 730h; unknown types excluded"
-            >
-              <span className="text-[11px] text-mist-dim">est. total</span>
-              <span className="font-mono text-[11px] tabular-nums text-mist">${totalMonthlyUsd.toFixed(2)}/mo</span>
-            </div>
-          )}
-        </div>
-      ) : (
-        !error && (
-          <div className="mt-2 px-2.5 text-xs text-mist-faint">
-            {updatedAt === null ? 'Waiting for the first poll.' : 'No running instances.'}
-          </div>
-        )
-      )}
-
-      <div className="mt-auto min-w-0 pt-3">
-        <CopyText text="aws ec2 describe-instances" className="block w-full">
-          <span className="block truncate font-mono text-[10px] text-mist-faint">aws ec2 describe-instances</span>
-        </CopyText>
-      </div>
-    </article>
-  );
-}
-
 export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
   const { services, error } = snapshot.subs;
 
@@ -375,8 +308,6 @@ export default function SubsPanel({ snapshot }: { snapshot: Snapshot }) {
               </article>
             );
           })}
-        {/* older servers omit cloud — destructuring undefined would white-screen (no ErrorBoundary) */}
-        {snapshot.cloud && <CloudCard cloud={snapshot.cloud} riseIndex={services.length} />}
       </div>
     </div>
   );

@@ -147,11 +147,6 @@ export default function NowView({
           nextAction: parked[0].capsule?.nextAction ?? 'Resume this parked thread.',
         }
       : null);
-  // top mentions come from the unified signals section now — new-since-review first
-  const signalMentions = (snapshot.signals?.items ?? []).filter((s) => s.kind === 'mention' && s.url);
-  const reviewedAt = snapshot.signals?.lastReviewedAt ?? null;
-  const newMentions = signalMentions.filter((s) => !reviewedAt || s.firstSeenAt > reviewedAt);
-  const mentionRows = (newMentions.length > 0 ? newMentions : signalMentions).slice(0, 3);
   const itchRun = snapshot.itch?.runs?.[0] ?? null;
   const itchDays = itchAgeDays(itchRun?.stem ?? null);
 
@@ -349,36 +344,6 @@ export default function NowView({
                   Resume in Claude
                 </button>
               )}
-            </div>
-          </Panel>
-        )}
-
-        {mentionRows.length > 0 && (
-          <Panel
-            title="Mentions"
-            riseIndex={2}
-            right={
-              <button
-                type="button"
-                onClick={() => onNavigate('signals')}
-                className="cursor-pointer font-mono text-[11px] text-mist-faint hover:text-mist"
-              >
-                all
-              </button>
-            }
-          >
-            <div className="space-y-0.5">
-              {mentionRows.map((s) => (
-                <Row key={s.id} href={s.url ?? undefined} title={s.title}>
-                  <span className="w-1.5 shrink-0 self-center" aria-hidden="true">
-                    {(!reviewedAt || s.firstSeenAt > reviewedAt) && (
-                      <span className="block h-1.5 w-1.5 rounded-full bg-jade" />
-                    )}
-                  </span>
-                  <span className="shrink-0 font-mono text-[11px] text-mist-faint">{`${s.source} · ${s.entity}`}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-mist">{s.title}</span>
-                </Row>
-              ))}
             </div>
           </Panel>
         )}

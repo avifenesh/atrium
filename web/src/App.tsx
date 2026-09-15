@@ -8,8 +8,6 @@ import ForYouPanel from './panels/ForYouPanel';
 import AgentsPanel from './panels/AgentsPanel';
 import RevutoPanel from './panels/RevutoPanel';
 import SystemPanel from './panels/SystemPanel';
-import BusinessPanel from './panels/BusinessPanel';
-import SignalsPanel from './panels/SignalsPanel';
 import CommsPanel from './panels/CommsPanel';
 import SubsPanel from './panels/SubsPanel';
 import SchedulePanel from './panels/SchedulePanel';
@@ -18,8 +16,6 @@ import ItchPanel from './panels/ItchPanel';
 import StreampilePanel from './panels/StreampilePanel';
 import WikiPanel from './panels/WikiPanel';
 import ExtraPanel, { extraKeys } from './panels/ExtraPanel';
-import TiyuvtaPanel from './panels/TiyuvtaPanel';
-import WebTrafficPanel from './panels/WebTrafficPanel';
 import ShippedPanel from './panels/ShippedPanel';
 import MutesDrawer from './components/MutesDrawer';
 import FlagStrip from './components/FlagStrip';
@@ -41,10 +37,8 @@ const VIEWS = [
   { id: 'agents', label: 'Agents', group: 'Work', description: 'Active sessions, dispatches, and recent agent output.', collector: 'agents' },
   { id: 'revuto', label: 'Revuto', group: 'Work', description: 'Reviewer health, jobs, models, and recent outcomes.', collector: 'revuto' },
   { id: 'system', label: 'System', group: 'Machine', description: 'Capacity, listeners, processes, and service health.', collector: 'system' },
-  { id: 'business', label: 'Business', group: 'Business', description: 'Tiyuvta inference in one glance — money, leads, funnel, serving state.' },
-  { id: 'signals', label: 'Signals', group: 'Business', description: 'Mentions, demand, and the counters that show the business being found.' },
   { id: 'comms', label: 'Comms', group: 'Today', description: 'Unread mail and the calendar ahead.' },
-  { id: 'subs', label: 'Subscriptions', group: 'Machine', description: 'Services, cloud resources, and recurring costs.' },
+  { id: 'subs', label: 'Subscriptions', group: 'Machine', description: 'Services and recurring costs.' },
   { id: 'schedule', label: 'Schedule', group: 'Machine', description: 'Timers, cron jobs, and their latest runs.', collector: 'schedule' },
   { id: 'notes', label: 'Notes', group: 'Library', description: 'Find, read, and edit the notes on this machine.', collector: 'notes' },
   { id: 'itch', label: 'Itch', group: 'Explore', description: 'Research new ideas, compare them, and decide what is worth building.', collector: 'itch' },
@@ -52,18 +46,16 @@ const VIEWS = [
   { id: 'knowledge', label: 'Knowledge', group: 'Library', description: 'Projects, techniques, sources, and the links between them.' },
 ] as const;
 
-const NAV_GROUPS = ['Today', 'Work', 'Business', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
+const NAV_GROUPS = ['Today', 'Work', 'Machine', 'Explore', 'Library', 'Plugins'] as const;
 
-/** extra-lane sections with a home outside the generic Plugins bucket: the ops
- *  console and site analytics are business detail views, the day's receipt sits with
- *  Now under Today. Anything unlisted lands in Plugins with the generic description. */
+/** extra-lane sections with a home outside the generic Plugins bucket: the day's
+ *  receipt sits with Now under Today. Anything unlisted lands in Plugins with the
+ *  generic description. */
 const EXTRA_HOME: Record<string, { group: (typeof NAV_GROUPS)[number]; description?: string }> = {
-  tiyuvta: { group: 'Business' },
-  webtraffic: { group: 'Business' },
   shipped: { group: 'Today', description: 'Commits and pull requests that landed since the day started.' },
 };
 /** extra-lane sections that ship their own panel and must not also render generically */
-const BESPOKE_EXTRAS = new Set(['tiyuvta', 'webtraffic', 'shipped']);
+const BESPOKE_EXTRAS = new Set(['shipped']);
 
 /** retired view ids whose deep links (desktop entries, palette muscle memory,
  *  NowView/pickup buttons) must keep landing somewhere sensible */
@@ -211,9 +203,6 @@ export default function App() {
         system: 0,
         systemCls: 'text-mist-faint',
         itch: 0,
-        signals: 0,
-        business: 0,
-        businessCls: 'text-mist-faint',
       };
     // mirror the NowView hero: bot-authored and aging act-now items are shelf rows,
     // not attention — the badge must agree with what the hero calls "needs action"
@@ -248,18 +237,6 @@ export default function App() {
         : 'text-mist-faint';
     // optional-chain both: a stale server snapshot may lack revuto during rollout
     const revutoFails = snapshot.revuto?.up ? (snapshot.revuto.counts?.recentFailures ?? 0) : 0;
-    const reviewedAt = snapshot.signals?.lastReviewedAt ?? null;
-    const newSignals = (snapshot.signals?.items ?? []).filter(
-      (s) => (!reviewedAt || s.firstSeenAt > reviewedAt) && !s.lead,
-    ).length;
-    // ops attention: broken books / webhook failures are coral, waiting invoices amber
-    const tiyuvtaData = (snapshot.extra?.tiyuvta?.data ?? null) as {
-      dashboard?: { books?: { outOfBalance?: number } } | null;
-      webhookFailures?: unknown[] | null;
-      creditRequests?: unknown[] | null;
-    } | null;
-    const bizCrit = (tiyuvtaData?.dashboard?.books?.outOfBalance ?? 0) + (tiyuvtaData?.webhookFailures?.length ?? 0);
-    const bizWarn = tiyuvtaData?.creditRequests?.length ?? 0;
     return {
       tasks: taskIds.size,
       tasksCls: tasksAttention ? 'text-amber' : 'text-mist-faint',
@@ -273,9 +250,6 @@ export default function App() {
       systemCls,
       // optional-chain: a stale server snapshot may lack itch during rollout
       itch: snapshot.itch?.up && snapshot.itch.research.running ? 1 : 0,
-      signals: newSignals,
-      business: bizCrit + bizWarn,
-      businessCls: bizCrit > 0 ? 'text-coral' : 'text-amber',
     };
   }, [snapshot]);
 
@@ -401,7 +375,7 @@ export default function App() {
   const openItem = (repo: string, number: number) => setItem({ repo, number });
 
   // bottom-nav primaries on phone; everything else lives under "more"
-  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'foryou', 'business']);
+  const MOBILE_PRIMARY = new Set(['now', 'tasks', 'foryou', 'agents']);
   const mobilePrimaryViews = allViews.filter((v) => MOBILE_PRIMARY.has(v.id));
   const mobileMoreViews = allViews.filter((v) => !MOBILE_PRIMARY.has(v.id));
   const primaryActive = MOBILE_PRIMARY.has(activeView);
@@ -423,9 +397,6 @@ export default function App() {
       system: { n: badges.system, cls: badges.systemCls },
       // research running is work-in-progress — jade like agents, not amber
       itch: { n: badges.itch, cls: 'text-jade' },
-      // new outside attention is good news — jade, never an alarm color
-      signals: { n: badges.signals, cls: 'text-jade' },
-      business: { n: badges.business, cls: badges.businessCls },
     };
     const b = map[id];
     return b && b.n > 0 ? b : null;
@@ -523,8 +494,6 @@ export default function App() {
           {activeView === 'agents' && <AgentsPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'revuto' && <RevutoPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
           {activeView === 'system' && <SystemPanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
-          {activeView === 'business' && <BusinessPanel snapshot={snapshot} onNavigate={navigate} />}
-          {activeView === 'signals' && <SignalsPanel snapshot={snapshot} />}
           {activeView === 'comms' && <CommsPanel snapshot={snapshot} />}
           {activeView === 'subs' && <SubsPanel snapshot={snapshot} />}
           {activeView === 'schedule' && <SchedulePanel snapshot={snapshot} onOpenQuiet={openQuiet} />}
@@ -546,15 +515,9 @@ export default function App() {
           {activeView === 'streampile' && <StreampilePanel />}
           {activeView === 'knowledge' && <WikiPanel />}
           {/* plugin (extra-lane) sections render in the generic panel, unless they
-              ship their own (BESPOKE_EXTRAS): tiyuvta needs buttons, webtraffic and
-              shipped need series and tables, so each has a panel and must not also
-              render generically or every row would appear twice. */}
-          {activeView === 'tiyuvta' && snapshot.extra?.tiyuvta && (
-            <TiyuvtaPanel section={snapshot.extra.tiyuvta} />
-          )}
-          {activeView === 'webtraffic' && snapshot.extra?.webtraffic && (
-            <WebTrafficPanel section={snapshot.extra.webtraffic} />
-          )}
+              ship their own (BESPOKE_EXTRAS): shipped needs series and tables, so it
+              has a panel and must not also render generically or every row would
+              appear twice. */}
           {activeView === 'shipped' && snapshot.extra?.shipped && <ShippedPanel section={snapshot.extra.shipped} />}
           {!BESPOKE_EXTRAS.has(activeView) && snapshot.extra?.[activeView] && (
             <ExtraPanel section={snapshot.extra[activeView]} sectionKey={activeView} />

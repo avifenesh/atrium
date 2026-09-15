@@ -1,4 +1,8 @@
-// distribution — where tiyuvta is (and is not) listed.
+// distribution: where tiyuvta is (and is not) listed.
+//
+// PHASE 2: this is the one business surface without a CRM job yet. It moves into the
+// CRM (darklanes workers/crm) as a listings job and leaves atrium with it; until then it
+// renders as a plain plugin section here.
 //
 // The thesis: inference users come from pickers — OpenRouter's model page, LiteLLM's
 // provider table, Artificial Analysis charts, coding-tool provider dropdowns — not from

@@ -34,12 +34,9 @@ const VIEW_FOR: Record<string, string> = {
   revuto: 'revuto',
   itch: 'itch',
   backup: 'system',
-  cloud: 'subs',
   repos: 'tasks',
   google: 'comms',
   spotify: 'subs',
-  radar: 'signals',
-  tiyuvta: 'business',
   reentry: 'foryou',
   helper: 'foryou',
 };

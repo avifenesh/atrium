@@ -15,6 +15,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { config } from '../config.js';
 import { shTry } from '../util.js';
 
 export interface ExposurePortfolio {
@@ -40,23 +41,27 @@ interface RepoSnapshot {
   traffic: RepoTraffic;
 }
 
+/** The traffic endpoints need a token with repo access. Order: the env file named in
+ *  `exposure.githubTokenEnvPath` (a file the background unit can always read; the gh
+ *  keyring needs a D-Bus session a long-lived unit may not have), then GITHUB_TOKEN in
+ *  the environment, then `gh auth token`. */
 async function githubToken(): Promise<string | null> {
-  if (process.env.MEMRA_TRAFFIC_TOKEN) return process.env.MEMRA_TRAFFIC_TOKEN;
-  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
-  // a file the background service can always read comes before the gh keyring —
-  // the keyring needs the D-Bus session address a long-lived unit may not have
-  try {
-    const text = await readFile(resolve(homedir(), '.config/tiyuvta/github.env'), 'utf8');
-    for (const line of text.split('\n')) {
-      const match = line.match(/^\s*(?:export\s+)?(GITHUB_TOKEN|GH_TOKEN)\s*=\s*(.*)$/u);
-      if (match) {
-        const value = match[2].trim().replace(/^["']|["']$/gu, '');
-        if (value) return value;
+  const envPath = config.exposure.githubTokenEnvPath;
+  if (envPath) {
+    try {
+      const text = await readFile(resolve(envPath.replace(/^~(?=\/|$)/u, homedir())), 'utf8');
+      for (const line of text.split('\n')) {
+        const match = line.match(/^\s*(?:export\s+)?(GITHUB_TOKEN|GH_TOKEN)\s*=\s*(.*)$/u);
+        if (match) {
+          const value = match[2].trim().replace(/^["']|["']$/gu, '');
+          if (value) return value;
+        }
       }
+    } catch {
+      /* fall through */
     }
-  } catch {
-    /* fall through to the CLI */
   }
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
   const out = await shTry('gh', ['auth', 'token'], { timeoutMs: 10_000 });
   return out?.match(/\S+/u)?.[0] ?? null;
 }
