@@ -99,7 +99,7 @@ argument — see [examples/notify/](../examples/notify/).
 | `disabled` | `[]` | collector names to skip at registration. Agent sub-sources use `agents:<id>` |
 
 Disable-able collector names: `github`, `agents`, `system`, `schedule`, `comms`, `subs`,
-`notes`, `surreal`, `revuto`, `itch`, `cloud`, `backup`, `repos`, plus any plugin you add.
+`notes`, `surreal`, `revuto`, `itch`, `cloud`, `backup`, `repos`, `shipped`, plus any plugin you add.
 Agent sub-sources: `agents:revuto`, `agents:hermes`, `agents:itch`, `agents:any-mission`,
 `agents:eigen`, `agents:claude`, `agents:grok`, `agents:codex`, `agents:training`.
 
@@ -130,7 +130,19 @@ The workspace adapters use `streampile.base` (default `http://127.0.0.1:8077`) a
 systems into Atrium: Streampile still owns `/feed` and `/event`, and LLM Wiki still owns
 generation of the viewer artifact.
 
+### `shipped`
+
+The day's receipt: commits you authored across every repo under `paths.projectsDir` (and
+`helper.nestedRepoRoots`) since the local day start, plus the PRs `gh` says you merged or
+opened. Read-only, raises no flags.
+
+| key | default | meaning |
+| --- | --- | --- |
+| `dayStartHour` | `4` | hour the day rolls over; a 01:30 commit still counts for the evening it belongs to. `0` is calendar midnight |
+| `authors` | `[]` | `git --author` substrings, matched literally, any match counts. Empty = `git config user.email` and `user.name` |
+
 ### `poll`
 
 Per-collector poll intervals in milliseconds. Tune if a collector is too chatty or too
-sleepy for your machine.
+sleepy for your machine. `shippedMs` (default `300000`) is the one to raise if the repo
+walk shows up in your CPU graph.

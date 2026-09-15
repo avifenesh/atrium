@@ -175,6 +175,40 @@ process:
   nothing is wrong and when the writer has died, so the writer's heartbeat (here, `state.json`'s
   mtime) gets its own crit flag.
 
+## The day's receipt (the `shipped` collector)
+
+`shipped` answers one question at the end of a day: what actually landed? It runs one
+`git log` per repo under `paths.projectsDir` (the same set the `repos` collector walks,
+via its exported `listRepoDirs`) for commits you authored since the local day start, and
+two `gh search prs` calls for the PRs you merged and opened. It writes the plugin lane
+with summary `rows` for MCP and the generic panel, and a full `ShippedReport` in `data`
+for its own panel: an hour strip, per-repo bars, the commit list, the PR list.
+
+Choices worth copying if you build a retrospective board of your own:
+
+- **The day is not midnight.** `shipped.dayStartHour` (default 4) is the rollover, so a
+  01:30 commit stays with the evening it belongs to instead of opening a new empty day
+  under your hands.
+- **Refs, not the working tree.** `--branches --remotes` sees commits made in any
+  worktree of the repo (they share refs) and commits pushed from another machine,
+  while `refs/stash` and tags stay out; `--no-merges` drops "Merge pull request"
+  commits and keeps squash merges, which are ordinary commits. `wt-*` directories are
+  skipped for cost, and the report deduplicates by sha anyway so a repo cloned twice
+  counts once.
+- **Committer time, not author time.** A squash merge carries the author date of the
+  first draft, sometimes days old; the committer date is when it landed, which is the
+  fact this board reports.
+- **The search API is fine at this cadence.** The `github` collector bans `gh search`
+  because it polls every minute against a shared budget. Two calls every five minutes is
+  nothing, and the date filter gets one day of slack because it works on calendar dates
+  while the board works on a local day start; the parser trims the rest.
+- **Opened means still open.** The opened search carries `--state=open`; a PR opened today
+  and closed without a merge is not shipping and does not appear.
+- **A failed `git log` is not a quiet repo.** The two are told apart (`null` vs `[]`) and
+  failed repos are listed in the report and on the panel, so an undercount is never silent.
+- **No flags.** Nothing here needs attention. A board that exists to be looked at should
+  never page.
+
 ## Reusable bespoke collectors
 
 Most of the author's plugin collectors integrate private tooling, but one is published and

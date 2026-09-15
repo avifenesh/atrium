@@ -1572,3 +1572,64 @@ export interface Flag {
 // GET  /api/google/status      -> CommsState['google']
 // GET  /api/google/auth-url    -> { url } (open in browser; consent lands on /api/google/callback)
 // GET  /api/google/callback    -> completes oauth, stores atrium-owned token, returns html
+
+// ---------- shipped (plugin lane `data` contract) ----------
+// Written by server/src/collectors/shipped.ts, read by web/src/panels/ShippedPanel.tsx.
+// The extra lane carries `data` as unknown, so both sides cast to ShippedReport.
+
+/** One commit you authored since the day started, from any repo under projectsDir. */
+export interface ShippedCommit {
+  sha: string;
+  /** repo dir name as the repos collector names it (nested roots as "root/name") */
+  repo: string;
+  /** "owner/name" when origin is a GitHub remote; the UI links the sha through it */
+  origin: string | null;
+  /** committer time, ISO: when it landed, not when the first draft was written */
+  at: string;
+  subject: string;
+  add: number;
+  del: number;
+}
+
+export interface ShippedPR {
+  /** "owner/name" */
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  state: 'merged' | 'open';
+  /** merge time for merged, creation time for open; ISO */
+  at: string;
+}
+
+export interface ShippedRepoTotal {
+  repo: string;
+  origin: string | null;
+  commits: number;
+  add: number;
+  del: number;
+}
+
+export interface ShippedReport {
+  /** local day start the report counts from, ISO */
+  since: string;
+  dayStartHour: number;
+  /** git --author patterns that were matched */
+  authors: string[];
+  /** newest first, deduplicated by sha across repos */
+  commits: ShippedCommit[];
+  /** newest first: PRs merged today, plus PRs opened today that are still open. A PR
+   *  both opened and merged today appears once, as merged. */
+  prs: ShippedPR[];
+  /** 24 buckets counted from `since` */
+  byHour: number[];
+  /** most commits first */
+  byRepo: ShippedRepoTotal[];
+  totals: { commits: number; repos: number; add: number; del: number; prsMerged: number; prsOpened: number };
+  /** gh search failure; commits still count, the PR lists are empty */
+  prsError: string | null;
+  /** a search hit the row cap, so the PR counts are a floor */
+  prsCapped: boolean;
+  /** repos whose git log failed this cycle; their commits are missing from every count */
+  unreadable: string[];
+}

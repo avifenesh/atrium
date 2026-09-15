@@ -51,6 +51,7 @@ import tiyuvtaCollector from './collectors/tiyuvta.js';
 import distributionCollector from './collectors/distribution.js';
 import exposureCollector from './collectors/exposure.js';
 import webtrafficCollector from './collectors/webtraffic.js';
+import shippedCollector from './collectors/shipped.js';
 import { isAction as isTiyuvtaAction, runAction as runTiyuvtaAction } from './core/tiyuvta.js';
 import { proxyItch } from './itch-proxy.js';
 import { proxyStreampile } from './streampile-proxy.js';
@@ -85,6 +86,7 @@ for (const c of [
   distributionCollector,
   exposureCollector,
   webtrafficCollector,
+  shippedCollector,
 ]) {
   register(c);
 }
