@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import type { Snapshot, SubService } from '../../../shared/types';
 import { connectSpotify, spotifySetClient } from '../api';
-import { CopyText, Dot, EmptyState, RelTime, Row } from '../components/ui';
+import { CopyText, Dot, EmptyState, Row } from '../components/ui';
 
 /** Click on a card header lands on the service's own console. */
 const CONSOLE_URL: Record<string, string> = {
@@ -194,20 +194,6 @@ function CancelStatus({ iso }: { iso: string }) {
         {rel}
       </span>
     </>
-  );
-}
-
-function Uptime({ launched }: { launched: string | null }) {
-  if (!launched) return <span className="shrink-0 font-mono text-[11px] text-mist-faint">—</span>;
-  const s = Math.max(0, Math.floor((Date.now() - new Date(launched).getTime()) / 1000));
-  const rel = s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
-  return (
-    <span
-      className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-mist-faint"
-      title={`launched ${new Date(launched).toLocaleString()}`}
-    >
-      up {rel}
-    </span>
   );
 }
 
