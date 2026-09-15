@@ -228,6 +228,13 @@ export default function ShippedPanel({ section }: { section: ExtraSection }) {
             </div>
           )}
 
+          {report.unreadable.length > 0 && (
+            <div className="panel-surface rounded-lg p-4 text-sm text-amber">
+              {report.unreadable.length === 1 ? 'One repo' : `${count(report.unreadable.length)} repos`} could not be read this
+              cycle, so the counts are missing their commits: {report.unreadable.join(', ')}
+            </div>
+          )}
+
           <HourStrip report={report} />
 
           {quiet && (
@@ -239,7 +246,7 @@ export default function ShippedPanel({ section }: { section: ExtraSection }) {
           {!quiet && (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
               <RepoBars report={report} />
-              <Table title="pull requests" note={report.prsCapped ? 'merged and opened today · list capped, newest kept' : 'merged and opened today'}>
+              <Table title="pull requests" note={report.prsCapped ? 'merged today, open since today · list capped, newest kept' : 'merged today, open since today'}>
                 {report.prsError && <li className="text-sm text-mist-faint">unavailable, see above</li>}
                 {!report.prsError && report.prs.length === 0 && <li className="text-sm text-mist-faint">none today</li>}
                 {report.prs.slice(0, PR_CAP).map((p) => (

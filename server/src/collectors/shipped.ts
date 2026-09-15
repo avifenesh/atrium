@@ -37,11 +37,13 @@ async function resolveAuthors(): Promise<string[]> {
   return [email, name].map((s) => s?.trim() ?? '').filter(Boolean);
 }
 
+/** null = the log itself failed (unreadable tree, timeout), which the report must
+ *  say; [] = not a repo, or a repo with nothing landed today. */
 async function repoCommits(
   dir: { name: string; path: string },
   since: Date,
   authors: string[],
-): Promise<ShippedCommit[]> {
+): Promise<ShippedCommit[] | null> {
   // a plain directory inside a git-tracked parent would otherwise report the parent's log
   try {
     await stat(join(dir.path, '.git'));
@@ -59,7 +61,8 @@ async function repoCommits(
     ],
     { timeoutMs: GIT_TIMEOUT_MS },
   );
-  if (!raw?.trim()) return []; // unreadable, or nothing landed today
+  if (raw === null) return null;
+  if (!raw.trim()) return []; // nothing landed today
   const origin = parseOrigin(await shTry('git', ['-C', dir.path, 'remote', 'get-url', 'origin']));
   return parseGitLog(raw, dir.name, origin);
 }
@@ -73,7 +76,8 @@ async function githubPrs(since: Date): Promise<{ prs: ShippedPR[]; error: string
   try {
     const [merged, opened] = await Promise.all([
       sh('gh', ['search', 'prs', '--author=@me', '--merged', `--merged-at=>=${from}`, '--sort', 'updated', '--order', 'desc', '--limit', String(PR_LIMIT), '--json', PR_FIELDS], { timeoutMs: GH_TIMEOUT_MS }),
-      sh('gh', ['search', 'prs', '--author=@me', `--created=>=${from}`, '--sort', 'created', '--order', 'desc', '--limit', String(PR_LIMIT), '--json', PR_FIELDS], { timeoutMs: GH_TIMEOUT_MS }),
+      // --state=open: a PR opened today and closed without a merge is not shipping
+      sh('gh', ['search', 'prs', '--author=@me', '--state=open', `--created=>=${from}`, '--sort', 'created', '--order', 'desc', '--limit', String(PR_LIMIT), '--json', PR_FIELDS], { timeoutMs: GH_TIMEOUT_MS }),
     ]);
     const mergedRows = parsePrRows(merged, 'merged', since);
     const openedRows = parsePrRows(opened, 'open', since);
@@ -105,6 +109,7 @@ function rows(r: ShippedReport): ExtraRow[] {
     { label: 'since', value: `${localDate(since)} ${String(since.getHours()).padStart(2, '0')}:00` },
   ];
   if (r.prsError) out.push({ label: 'github', value: r.prsError.slice(0, 160), tone: 'err' });
+  if (r.unreadable.length) out.push({ label: 'unreadable repos', value: r.unreadable.join(', ').slice(0, 160), tone: 'warn' });
   return out;
 }
 
@@ -131,10 +136,11 @@ const collector: Collector = {
         since,
         dayStartHour: config.shipped.dayStartHour,
         authors,
-        commits: perRepo.flat(),
+        commits: perRepo.flatMap((c) => c ?? []),
         prs: gh.prs,
         prsError: gh.error,
         prsCapped: gh.capped,
+        unreadable: dirs.filter((_, i) => perRepo[i] === null).map((d) => d.name),
       });
       lastGood = { report, at: iso() };
       store.setExtra('shipped', { title: TITLE, updatedAt: lastGood.at, up: true, error: null, rows: rows(report), data: report });

@@ -93,4 +93,14 @@ test('buildReport dedupes by sha, buckets by hour from since, and lets merged be
   assert.deepEqual(report.totals, { commits: 4, repos: 3, add: 16, del: 6, prsMerged: 1, prsOpened: 1 });
   assert.equal(report.since, since.toISOString());
   assert.equal(report.prsCapped, false);
+  assert.deepEqual(report.unreadable, []);
+});
+
+test('buildReport carries unreadable repos, sorted, so an undercount is never silent', () => {
+  const report = buildReport({
+    since: new Date('2026-09-15T04:00:00.000Z'), dayStartHour: 4, authors: ['me'], commits: [], prs: [], prsError: null,
+    unreadable: ['zeta', 'alpha'],
+  });
+  assert.deepEqual(report.unreadable, ['alpha', 'zeta']);
+  assert.equal(report.totals.commits, 0);
 });

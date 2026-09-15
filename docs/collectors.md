@@ -202,6 +202,10 @@ Choices worth copying if you build a retrospective board of your own:
   because it polls every minute against a shared budget. Two calls every five minutes is
   nothing, and the date filter gets one day of slack because it works on calendar dates
   while the board works on a local day start; the parser trims the rest.
+- **Opened means still open.** The opened search carries `--state=open`; a PR opened today
+  and closed without a merge is not shipping and does not appear.
+- **A failed `git log` is not a quiet repo.** The two are told apart (`null` vs `[]`) and
+  failed repos are listed in the report and on the panel, so an undercount is never silent.
 - **No flags.** Nothing here needs attention. A board that exists to be looked at should
   never page.
 

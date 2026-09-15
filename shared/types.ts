@@ -1618,7 +1618,8 @@ export interface ShippedReport {
   authors: string[];
   /** newest first, deduplicated by sha across repos */
   commits: ShippedCommit[];
-  /** newest first; a PR both opened and merged today appears once, as merged */
+  /** newest first: PRs merged today, plus PRs opened today that are still open. A PR
+   *  both opened and merged today appears once, as merged. */
   prs: ShippedPR[];
   /** 24 buckets counted from `since` */
   byHour: number[];
@@ -1629,4 +1630,6 @@ export interface ShippedReport {
   prsError: string | null;
   /** a search hit the row cap, so the PR counts are a floor */
   prsCapped: boolean;
+  /** repos whose git log failed this cycle; their commits are missing from every count */
+  unreadable: string[];
 }

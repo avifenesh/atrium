@@ -110,6 +110,7 @@ export function buildReport(input: {
   prs: ShippedPR[];
   prsError: string | null;
   prsCapped?: boolean;
+  unreadable?: string[];
 }): ShippedReport {
   // a repo cloned twice (or a worktree that slipped past the wt- filter) yields the
   // same sha from two paths; the first path in scan order keeps it
@@ -162,5 +163,6 @@ export function buildReport(input: {
     },
     prsError: input.prsError,
     prsCapped: input.prsCapped ?? false,
+    unreadable: [...(input.unreadable ?? [])].sort(),
   };
 }
