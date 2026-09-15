@@ -99,7 +99,7 @@ argument — see [examples/notify/](../examples/notify/).
 | `disabled` | `[]` | collector names to skip at registration. Agent sub-sources use `agents:<id>` |
 
 Disable-able collector names: `github`, `agents`, `system`, `schedule`, `comms`, `subs`,
-`notes`, `surreal`, `revuto`, `itch`, `cloud`, `backup`, `repos`, `shipped`, plus any plugin you add.
+`notes`, `surreal`, `revuto`, `itch`, `backup`, `repos`, `shipped`, `exposure`, `distribution`, plus any plugin you add.
 Agent sub-sources: `agents:revuto`, `agents:hermes`, `agents:itch`, `agents:any-mission`,
 `agents:eigen`, `agents:claude`, `agents:grok`, `agents:codex`, `agents:training`.
 
@@ -129,6 +129,20 @@ The workspace adapters use `streampile.base` (default `http://127.0.0.1:8077`) a
 `wiki.viewerPath` (default `~/projects/llm-wiki/tools/viewer.html`). They do not move those
 systems into Atrium: Streampile still owns `/feed` and `/event`, and LLM Wiki still owns
 generation of the viewer artifact.
+
+### `exposure`
+
+A personal counter for your open-source projects: the numbers GitHub, Hugging Face and
+crates.io keep for you and let expire, written down once a day so a series exists.
+
+| key | default | meaning |
+| --- | --- | --- |
+| `portfolio.repos` | `[]` | GitHub repos as `owner/name` (stars, 14-day views and clones, top referrers; traffic needs a `gh` token with repo access) |
+| `portfolio.hfModels` | `[]` | Hugging Face model ids, or `org/*` for every card under an account (30-day downloads, likes) |
+| `portfolio.crates` | `[]` | crates.io crate names (total and recent downloads) |
+| `githubTokenEnvPath` | `''` | env file with `GITHUB_TOKEN` or `GH_TOKEN` for the traffic endpoints, read in place. Empty = `GITHUB_TOKEN`, then `gh auth token` |
+| `snapshotDir` | `~/.local/share/atrium/exposure` | where the daily `<UTC-date>.json` files live |
+| `command` | `[]` | legacy: argv of an external writer, run only when the portfolio is empty |
 
 ### `shipped`
 
